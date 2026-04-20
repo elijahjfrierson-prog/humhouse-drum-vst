@@ -1,0 +1,23 @@
+build/
+build-*/
+cmake-build-*/
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# JUCE generated
+JuceLibraryCode/

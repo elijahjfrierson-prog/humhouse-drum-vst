@@ -1,0 +1,114 @@
+name: Build plugin artifacts
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (VST3 + AU, universal .dmg)
+            os: macos-14
+            artifact: AI-Drum-VST-macOS
+          - name: Windows (VST3)
+            os: windows-2022
+            artifact: AI-Drum-VST-Windows-x64
+          - name: Linux (VST3)
+            os: ubuntu-22.04
+            artifact: AI-Drum-VST-Linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libfreetype6-dev libfontconfig1-dev \
+            libgl1-mesa-dev libxrender-dev libxcomposite-dev libxext-dev
+
+      - name: Configure (macOS, universal)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      # ---------- macOS: package a drag-to-install DMG ----------
+      - name: Package .dmg (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          DMG_OUT: AI-Drum-VST-macOS.dmg
+        run: |
+          chmod +x scripts/package_macos_dmg.sh
+          ./scripts/package_macos_dmg.sh
+          mkdir -p artifacts
+          mv "$DMG_OUT" artifacts/
+
+      # ---------- Windows: copy VST3 bundle ----------
+      - name: Stage artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Copy-Item -Recurse "build/AIDrumVST_artefacts/Release/VST3/AI Drum VST.vst3" artifacts/
+
+      # ---------- Linux: copy VST3 bundle ----------
+      - name: Stage artifacts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p artifacts
+          cp -R "build/AIDrumVST_artefacts/Release/VST3/AI Drum VST.vst3" artifacts/
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts/
+          if-no-files-found: error
+
+      # ---------- Zip + attach to GitHub Release on tagged releases ----------
+      - name: Zip artifacts for release (non-macOS)
+        if: github.event_name == 'release' && runner.os != 'macOS'
+        shell: bash
+        run: |
+          cd artifacts
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            7z a -tzip "../${{ matrix.artifact }}.zip" .
+          else
+            zip -r "../${{ matrix.artifact }}.zip" .
+          fi
+
+      - name: Copy .dmg out for release (macOS)
+        if: github.event_name == 'release' && runner.os == 'macOS'
+        run: cp "artifacts/AI-Drum-VST-macOS.dmg" .
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ runner.os == 'macOS' && 'AI-Drum-VST-macOS.dmg' || format('{0}.zip', matrix.artifact) }}
