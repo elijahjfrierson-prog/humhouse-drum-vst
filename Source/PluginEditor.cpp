@@ -3,7 +3,7 @@
 AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p)
 {
-    setSize (640, 380);
+    setSize (680, 440);
 
     titleLabel.setFont (juce::Font (juce::FontOptions (22.0f, juce::Font::bold)));
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -32,6 +32,18 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     patternLengthLabel.attachToComponent (&patternLengthBox, false);
     addAndMakeVisible (patternLengthBox);
     addAndMakeVisible (patternLengthLabel);
+
+    // Genre combo
+    {
+        juce::StringArray genreNames;
+        for (const auto& n : aidrum::genreDisplayNames())
+            genreNames.add (juce::String (n));
+        genreBox.addItemList (genreNames, 1);
+    }
+    genreLabel.setJustificationType (juce::Justification::centred);
+    genreLabel.attachToComponent (&genreBox, false);
+    addAndMakeVisible (genreBox);
+    addAndMakeVisible (genreLabel);
 
     // Mode combo
     modeBox.addItem ("Groove", 1);
@@ -68,6 +80,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     velocityAttachment      = std::make_unique<SliderAttachment> (apvts, "velocity",      velocitySlider);
     humanizeAttachment      = std::make_unique<SliderAttachment> (apvts, "humanize",      humanizeSlider);
     patternLengthAttachment = std::make_unique<ComboAttachment>  (apvts, "patternLength", patternLengthBox);
+    genreAttachment         = std::make_unique<ComboAttachment>  (apvts, "genre",         genreBox);
     modeAttachment          = std::make_unique<ComboAttachment>  (apvts, "mode",          modeBox);
 }
 
@@ -91,11 +104,12 @@ void AIDrumAudioProcessorEditor::resized()
     velocitySlider  .setBounds (knobRow.removeFromLeft (knobW).reduced (8, 22));
     humanizeSlider  .setBounds (knobRow.reduced (8, 22));
 
-    // Middle row: pattern length + mode combos.
-    auto comboRow = area.removeFromTop (70);
-    const int comboW = comboRow.getWidth() / 2;
-    patternLengthBox.setBounds (comboRow.removeFromLeft (comboW).reduced (20, 30));
-    modeBox         .setBounds (comboRow.reduced (20, 30));
+    // Middle row: genre + pattern length + mode combos.
+    auto comboRow = area.removeFromTop (80);
+    const int comboW = comboRow.getWidth() / 3;
+    genreBox        .setBounds (comboRow.removeFromLeft (comboW).reduced (12, 34));
+    patternLengthBox.setBounds (comboRow.removeFromLeft (comboW).reduced (12, 34));
+    modeBox         .setBounds (comboRow.reduced (12, 34));
 
     // Bottom: big round "+" button.
     auto bottom = area.reduced (10);

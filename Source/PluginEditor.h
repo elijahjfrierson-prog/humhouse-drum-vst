@@ -34,6 +34,9 @@ private:
     juce::ComboBox    patternLengthBox;
     juce::Label       patternLengthLabel { {}, "Pattern Length" };
 
+    juce::ComboBox    genreBox;
+    juce::Label       genreLabel      { {}, "Genre" };
+
     juce::ComboBox    modeBox;
     juce::Label       modeLabel       { {}, "Mode" };
 
@@ -45,6 +48,7 @@ private:
     std::unique_ptr<SliderAttachment> velocityAttachment;
     std::unique_ptr<SliderAttachment> humanizeAttachment;
     std::unique_ptr<ComboAttachment>  patternLengthAttachment;
+    std::unique_ptr<ComboAttachment>  genreAttachment;
     std::unique_ptr<ComboAttachment>  modeAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AIDrumAudioProcessorEditor)

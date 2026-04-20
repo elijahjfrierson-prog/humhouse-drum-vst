@@ -10,11 +10,20 @@ namespace
     constexpr const char* kParamVelocity      = "velocity";
     constexpr const char* kParamHumanize      = "humanize";
     constexpr const char* kParamPatternLength = "patternLength";
+    constexpr const char* kParamGenre         = "genre";
     constexpr const char* kParamMode          = "mode"; // 0 = Groove, 1 = Fill
 
     const juce::StringArray kPatternLengthChoices {
         "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars"
     };
+
+    juce::StringArray buildGenreChoices()
+    {
+        juce::StringArray arr;
+        for (const auto& n : aidrum::genreDisplayNames())
+            arr.add (juce::String (n));
+        return arr;
+    }
 }
 
 double AIDrumAudioProcessor::patternLengthBeatsFromChoice (int choiceIndex)
@@ -40,6 +49,8 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
     aidrum::GenerationRequest req;
     req.lengthInBeats = patternLengthBeatsFromChoice (
         (int) apvts.getRawParameterValue (kParamPatternLength)->load());
+    req.genre = static_cast<aidrum::Genre> (
+        (int) apvts.getRawParameterValue (kParamGenre)->load());
     currentPattern = backend.generate (req);
 }
 
@@ -68,6 +79,10 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamPatternLength, 1 }, "Pattern Length",
         kPatternLengthChoices, 4)); // default: 1 bar
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { kParamGenre, 1 }, "Genre",
+        buildGenreChoices(), 0)); // default: Auto
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamMode, 1 }, "Mode",
@@ -101,6 +116,8 @@ void AIDrumAudioProcessor::requestGeneration (aidrum::GenerationMode mode)
     req.humanize      = apvts.getRawParameterValue (kParamHumanize)->load();
     req.lengthInBeats = patternLengthBeatsFromChoice (
                             (int) apvts.getRawParameterValue (kParamPatternLength)->load());
+    req.genre         = static_cast<aidrum::Genre> (
+                            (int) apvts.getRawParameterValue (kParamGenre)->load());
     req.tempoBpm      = lastBpm.load (std::memory_order_relaxed);
 
     auto pattern = backend.generate (req);

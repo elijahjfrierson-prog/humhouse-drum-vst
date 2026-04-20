@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace aidrum
 {
@@ -13,11 +14,32 @@ namespace aidrum
         Fill
     };
 
+    enum class Genre : int
+    {
+        Auto = 0,
+        HardRock,
+        ClassicRock,
+        Shoegaze,
+        Metal,
+        Metalcore,
+        Jazz,
+        Funk,
+        RnB,
+        HipHop,
+        Trap,
+        Pop,
+        Country,
+        Count
+    };
+
+    const std::vector<std::string>& genreDisplayNames();
+
     struct GenerationRequest
     {
         GenerationMode mode          = GenerationMode::Groove;
-        float          variation     = 0.5f;  // 0..1 — how much each generation deviates
-        float          complexity    = 0.5f;  // 0..1 — sparse → busy
+        Genre          genre         = Genre::Auto;
+        float          variation     = 0.5f;  // 0..1
+        float          complexity    = 0.5f;  // 0..1
         float          velocity      = 1.0f;  // 0..1 — master velocity scale
         float          humanize      = 0.25f; // 0..1 — timing + velocity jitter
         double         tempoBpm      = 120.0;
@@ -29,10 +51,10 @@ namespace aidrum
 
     // Stub AI backend.
     //
-    // The production implementation will bridge to a Python module
-    // (see python_backend/ai_drum_backend.py) via pybind11 or a
-    // subprocess. For now this returns deterministic canned patterns
-    // so the plugin can be wired end-to-end.
+    // Bridges to a Python module (see python_backend/ai_drum_backend.py)
+    // once wired via pybind11. For now the C++ implementation ships a
+    // per-genre rule-based generator so the plugin is fully playable
+    // out of the box.
     class AIBackend
     {
     public:
@@ -42,10 +64,12 @@ namespace aidrum
         MidiPattern generate (const GenerationRequest& request);
 
     private:
-        MidiPattern makeGroove (const GenerationRequest& r) const;
-        MidiPattern makeFill   (const GenerationRequest& r) const;
+        // Resolves Genre::Auto to a concrete genre using the RNG.
+        static Genre resolveGenre (Genre requested, std::uint64_t seed);
 
-        // Post-process: apply master velocity and humanize (timing + velocity jitter).
+        MidiPattern makeGroove (const GenerationRequest& r, Genre resolvedGenre) const;
+        MidiPattern makeFill   (const GenerationRequest& r, Genre resolvedGenre) const;
+
         static void finalize (MidiPattern& pattern, const GenerationRequest& r, std::uint64_t seed);
     };
 }
