@@ -5,9 +5,30 @@ using APVTS = juce::AudioProcessorValueTreeState;
 
 namespace
 {
-    constexpr const char* kParamVariation = "variation";
-    constexpr const char* kParamDensity   = "density";
-    constexpr const char* kParamMode      = "mode"; // 0 = Groove, 1 = Fill
+    constexpr const char* kParamVariation     = "variation";
+    constexpr const char* kParamComplexity    = "complexity";
+    constexpr const char* kParamVelocity      = "velocity";
+    constexpr const char* kParamHumanize      = "humanize";
+    constexpr const char* kParamPatternLength = "patternLength";
+    constexpr const char* kParamMode          = "mode"; // 0 = Groove, 1 = Fill
+
+    const juce::StringArray kPatternLengthChoices {
+        "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars"
+    };
+}
+
+double AIDrumAudioProcessor::patternLengthBeatsFromChoice (int choiceIndex)
+{
+    switch (choiceIndex)
+    {
+        case 0: return 0.25;  // 1/16 note
+        case 1: return 0.5;   // 1/8 note
+        case 2: return 1.0;   // 1/4 note
+        case 3: return 2.0;   // 1/2 bar
+        case 4: return 4.0;   // 1 bar
+        case 5: return 8.0;   // 2 bars
+        default: return 4.0;
+    }
 }
 
 AIDrumAudioProcessor::AIDrumAudioProcessor()
@@ -16,7 +37,10 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
       apvts (*this, nullptr, "state", createLayout())
 {
     // Seed with a simple default groove.
-    currentPattern = backend.generate ({});
+    aidrum::GenerationRequest req;
+    req.lengthInBeats = patternLengthBeatsFromChoice (
+        (int) apvts.getRawParameterValue (kParamPatternLength)->load());
+    currentPattern = backend.generate (req);
 }
 
 AIDrumAudioProcessor::~AIDrumAudioProcessor() = default;
@@ -30,8 +54,20 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { kParamDensity, 1 }, "Density",
+        juce::ParameterID { kParamComplexity, 1 }, "Complexity",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { kParamVelocity, 1 }, "Velocity",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.9f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { kParamHumanize, 1 }, "Humanize",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { kParamPatternLength, 1 }, "Pattern Length",
+        kPatternLengthChoices, 4)); // default: 1 bar
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamMode, 1 }, "Mode",
@@ -42,8 +78,8 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
 
 void AIDrumAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerBlock*/)
 {
-    playheadBeats = 0.0;
-    lastBpm       = 120.0;
+    playheadBeats.store (0.0, std::memory_order_relaxed);
+    lastBpm.store (120.0, std::memory_order_relaxed);
     juce::ignoreUnused (sampleRate);
 }
 
@@ -58,16 +94,22 @@ bool AIDrumAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
 void AIDrumAudioProcessor::requestGeneration (aidrum::GenerationMode mode)
 {
     aidrum::GenerationRequest req;
-    req.mode      = mode;
-    req.variation = apvts.getRawParameterValue (kParamVariation)->load();
-    req.density   = apvts.getRawParameterValue (kParamDensity)->load();
-    req.tempoBpm  = lastBpm;
+    req.mode          = mode;
+    req.variation     = apvts.getRawParameterValue (kParamVariation)->load();
+    req.complexity    = apvts.getRawParameterValue (kParamComplexity)->load();
+    req.velocity      = apvts.getRawParameterValue (kParamVelocity)->load();
+    req.humanize      = apvts.getRawParameterValue (kParamHumanize)->load();
+    req.lengthInBeats = patternLengthBeatsFromChoice (
+                            (int) apvts.getRawParameterValue (kParamPatternLength)->load());
+    req.tempoBpm      = lastBpm.load (std::memory_order_relaxed);
 
     auto pattern = backend.generate (req);
 
-    std::lock_guard<std::mutex> lock (patternMutex);
-    currentPattern = std::move (pattern);
-    playheadBeats  = 0.0;
+    {
+        std::lock_guard<std::mutex> lock (patternMutex);
+        currentPattern = std::move (pattern);
+    }
+    playheadBeats.store (0.0, std::memory_order_release);
 }
 
 aidrum::MidiPattern AIDrumAudioProcessor::getCurrentPattern() const
@@ -93,7 +135,7 @@ void AIDrumAudioProcessor::renderPatternToMidiBuffer (juce::MidiBuffer& midiOut,
     const double secondsPerBeat = 60.0 / std::max (1.0, bpm);
     const double blockBeats     = (static_cast<double> (numSamples) / sampleRate) / secondsPerBeat;
 
-    const double blockStartBeat = playheadBeats;
+    const double blockStartBeat = playheadBeats.load (std::memory_order_acquire);
     const double blockEndBeat   = blockStartBeat + blockBeats;
 
     for (const auto& note : pattern.notes)
@@ -124,7 +166,8 @@ void AIDrumAudioProcessor::renderPatternToMidiBuffer (juce::MidiBuffer& midiOut,
     }
 
     // Wrap playhead within pattern length.
-    playheadBeats = std::fmod (blockEndBeat, pattern.lengthInBeats);
+    playheadBeats.store (std::fmod (blockEndBeat, pattern.lengthInBeats),
+                         std::memory_order_release);
 }
 
 void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
@@ -133,31 +176,33 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
+    // Don't let incoming MIDI leak into our generated pattern output.
+    // acceptsMidi() is true so hosts may route a MIDI keyboard here;
+    // producesMidi() is also true so whatever remains in `midi` is
+    // forwarded to downstream instruments. We generate everything fresh.
+    midi.clear();
+
     // Try to pull tempo from the host.
-    double bpm = lastBpm;
+    double bpm = lastBpm.load (std::memory_order_relaxed);
+
     if (auto* ph = getPlayHead())
     {
-        if (auto info = ph->getPosition())
+        if (auto pos = ph->getPosition(); pos.hasValue())
         {
-            if (auto hostBpm = info->getBpm())
+            if (auto hostBpm = pos->getBpm(); hostBpm.hasValue())
                 bpm = *hostBpm;
 
-            // If the host is actually playing, sync playhead to its ppq position.
-            if (info->getIsPlaying())
-            {
-                if (auto ppq = info->getPpqPosition())
-                {
-                    std::lock_guard<std::mutex> lock (patternMutex);
-                    const double len = std::max (1e-6, currentPattern.lengthInBeats);
-                    playheadBeats = std::fmod (*ppq, len);
-                    if (playheadBeats < 0.0) playheadBeats += len;
-                }
-            }
+            if (auto ppq = pos->getPpqPosition(); ppq.hasValue())
+                playheadBeats.store (*ppq, std::memory_order_release);
         }
     }
-    lastBpm = bpm;
 
-    renderPatternToMidiBuffer (midi, buffer.getNumSamples(), getSampleRate(), bpm);
+    lastBpm.store (bpm, std::memory_order_relaxed);
+
+    renderPatternToMidiBuffer (midi,
+                               buffer.getNumSamples(),
+                               getSampleRate(),
+                               bpm);
 }
 
 juce::AudioProcessorEditor* AIDrumAudioProcessor::createEditor()
@@ -177,7 +222,7 @@ void AIDrumAudioProcessor::setStateInformation (const void* data, int sizeInByte
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
 }
 
-// -------------------------------------------------------------------------
+// JUCE plugin entry point
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new AIDrumAudioProcessor();

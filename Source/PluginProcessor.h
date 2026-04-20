@@ -55,15 +55,19 @@ private:
                                     double            sampleRate,
                                     double            bpm);
 
+    // Maps the Pattern Length choice index to a length in beats.
+    static double patternLengthBeatsFromChoice (int choiceIndex);
+
     juce::AudioProcessorValueTreeState apvts;
     aidrum::AIBackend                  backend;
 
     mutable std::mutex       patternMutex;
     aidrum::MidiPattern      currentPattern;
 
-    // Playback position (in beats) across blocks when host isn't providing ppq.
-    double   playheadBeats = 0.0;
-    double   lastBpm       = 120.0;
+    // Playback position (in beats) across blocks when the host isn't providing ppq.
+    // Read/written from the audio thread and reset from the UI thread — must be atomic.
+    std::atomic<double>      playheadBeats { 0.0 };
+    std::atomic<double>      lastBpm       { 120.0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AIDrumAudioProcessor)
 };
