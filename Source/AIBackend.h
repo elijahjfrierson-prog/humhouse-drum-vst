@@ -42,6 +42,21 @@ namespace aidrum
         Count
     };
 
+    // v1.6.0 \u2014 one of the five bundled character kits. Each one has its
+    // own kick/snare placement profile so the same COMPLEXITY value produces
+    // slightly different feels between genres (PopRock = straight backbeat,
+    // NuRock = syncopated, AltRock = laid-back, IndieLofi = half-time hip-hop,
+    // Thrash = aggressive double-kick drive).
+    enum class BundledKit : int
+    {
+        PopRock = 0,
+        NuRock,
+        AltRock,
+        IndieLofi,
+        Thrash,
+        Count
+    };
+
     const std::vector<std::string>& genreDisplayNames();
 
     struct GenerationRequest
@@ -71,6 +86,10 @@ namespace aidrum
 
         // Drumkit voicing (v0.7.0): remaps GM notes + velocity/ghost curves.
         DrumKit        kit           = DrumKit::LudwigSupraphonicClassicRock;
+
+        // v1.6.0 \u2014 the selected bundled character kit. Controls kick/snare
+        // placement profile on top of the Genre-driven cymbal/backbone feel.
+        BundledKit     bundledKit    = BundledKit::PopRock;
 
         // v1.3.0 session-player state: counts the index of this region in the
         // arrangement so phrase-level dynamics (crescendos, bar 7/8 builds,

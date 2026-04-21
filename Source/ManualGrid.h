@@ -29,20 +29,20 @@ namespace aidrum
 
         ManualGrid()
         {
+            // v1.6.0 — simplified 5-row step sequencer (user request). The
+            // expanded 11-row grid was confusing; drummers think in KICK /
+            // SNARE / HAT / CRASH / TOM buckets, so the manual mode mirrors
+            // that. "ADD TO ARRANGEMENT" commits the 16-bar grid as a new
+            // region at the end of the arrangement.
+            //
             // Ordered top → bottom: cymbals at the top, kick at the bottom
             // — mirrors how drummers notate kits.
             rows = {
-                { "CRASH",   49, juce::Colour (GothicPalette::kAccentSoft) },
-                { "CHINA",   52, juce::Colour (GothicPalette::kAccent)     },
-                { "RIDE",    51, juce::Colour (GothicPalette::kAccentSoft) },
-                { "OPN HAT", 46, juce::Colour (GothicPalette::kAccentSoft) },
-                { "CLS HAT", 42, juce::Colour (GothicPalette::kAccentSoft) },
-                { "HI TOM",  48, juce::Colour (GothicPalette::kAccent)     },
-                { "MID TOM", 45, juce::Colour (GothicPalette::kAccent)     },
-                { "LO TOM",  41, juce::Colour (GothicPalette::kAccent)     },
-                { "RIM",     37, juce::Colour (GothicPalette::kMuted)      },
-                { "SNARE",   38, juce::Colour (GothicPalette::kBone)       },
-                { "KICK",    36, juce::Colour (GothicPalette::kAccentDeep) },
+                { "CRASH",  49, juce::Colour (GothicPalette::kAccentSoft) },
+                { "HI-HAT", 42, juce::Colour (GothicPalette::kAccentSoft) },
+                { "TOM",    45, juce::Colour (GothicPalette::kAccent)     },
+                { "SNARE",  38, juce::Colour (GothicPalette::kBone)       },
+                { "KICK",   36, juce::Colour (GothicPalette::kAccentDeep) },
             };
             setInterceptsMouseClicks (true, false);
         }

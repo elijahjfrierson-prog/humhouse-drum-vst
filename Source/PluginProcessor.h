@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 class AIDrumAudioProcessor : public juce::AudioProcessor,
@@ -72,6 +73,22 @@ public:
     // (Logic-style) re-appears and the user picks their starting pattern.
     void clearArrangement();
 
+    // v1.6.0 — STARTER GROOVES. The plugin ships with a library of
+    // hand-played drum grooves (analysed from user-supplied WAVs). This
+    // API drops one into the arrangement as a new region. Call with
+    // index < 0 or >= starterCount for no-op.
+    int  starterGrooveCount() const;
+    juce::String starterGrooveName (int index) const;
+    void appendStarterGroove (int index);
+
+    // v1.6.0 — COPY / PASTE region. Copy stores a snapshot of the region
+    // at `index`; paste appends the stored snapshot as a new region at the
+    // end of the arrangement. Used by the arrangement strip's
+    // Ctrl+C / Ctrl+V keybindings and the COPY / PASTE buttons.
+    void copyRegionToClipboard (int index);
+    bool hasCopiedRegion() const;
+    void pasteCopiedRegion();
+
     // Returns a copy of the full arrangement for UI rendering (thread-safe).
     std::vector<aidrum::MidiPattern> getArrangement() const;
 
@@ -123,15 +140,14 @@ public:
 
     // --- v1.0.0 Transport API -------------------------------------------
     // Audio-generating transport for the Standalone app (and anywhere a
-    // host doesn't drive the playhead). Play/Pause/Stop/Loop mirror the
-    // buttons in the UI.
+    // host doesn't drive the playhead). Play/Pause/Stop mirror the
+    // buttons in the UI. v1.6.0 removed loop: arrangement plays the
+    // whole composition front→end then stops.
     enum class TransportState : int { Stopped = 0, Playing, Paused };
 
     void play();
     void pause();
     void stop();
-    void setLooping (bool shouldLoop);
-    bool isLooping() const;
     TransportState getTransportState() const;
 
     // Audio level, 0..1. UI-facing master drum-synth gain so users can
@@ -184,6 +200,10 @@ private:
     mutable std::mutex                  arrangementMutex;
     std::vector<aidrum::MidiPattern>    arrangement; // concatenated regions
 
+    // v1.6.0 \u2014 region clipboard (COPY / PASTE).
+    mutable std::mutex                  clipboardMutex;
+    std::optional<aidrum::MidiPattern>  clipboardPattern;
+
     // v0.8.0 — manual pattern (16-bar step grid, user-editable).
     mutable std::mutex                  manualMutex;
     aidrum::MidiPattern                 manualPattern;   // GM notes, length = numBars * 4 beats
@@ -201,7 +221,6 @@ private:
 
     // v1.0.0 — transport state + internal clock (used when no host drives us).
     std::atomic<int>         transportState    { (int) TransportState::Stopped };
-    std::atomic<bool>        loopingEnabled    { true };
     std::atomic<bool>        hostTransportSeen { false };
     std::atomic<float>       outputLevel       { 0.85f };
 

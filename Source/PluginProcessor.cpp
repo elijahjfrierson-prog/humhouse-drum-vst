@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "StarterGrooves.generated.h"
 
 #include <algorithm>
 #include <numeric>
@@ -103,6 +104,16 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
         loadedKitPath = "Built-in PopRock";
     }
 
+    // v1.6.0 — per-bus default trims: kick and snare lead, cymbals drop to
+    // accent level so they never overpower the backbeat. Toms sit a hair
+    // below nominal too (they come in for fills).
+    busMixer.params_ref ((int) aidrum::Bus::ClosedHat).gainDb.store (-6.0f);
+    busMixer.params_ref ((int) aidrum::Bus::OpenHat)  .gainDb.store (-6.0f);
+    busMixer.params_ref ((int) aidrum::Bus::Ride)     .gainDb.store (-6.0f);
+    busMixer.params_ref ((int) aidrum::Bus::Crash)    .gainDb.store (-6.0f);
+    busMixer.params_ref ((int) aidrum::Bus::China)    .gainDb.store (-6.0f);
+    busMixer.params_ref ((int) aidrum::Bus::Toms)     .gainDb.store (-1.5f);
+
     // v1.5.0 — Live-knob regeneration. Every APVTS parameter (variation,
     // velocity, complexity, fill complexity, humanize, swing, etc.) hot-
     // mutates the last arrangement region the moment the knob moves,
@@ -171,7 +182,7 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamComplexity, 1 }, "Complexity",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamVelocity, 1 }, "Velocity",
@@ -239,7 +250,7 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
     // v1.5.0 — Fill complexity knob, independent of overall complexity.
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamFillComplexity, 1 }, "Fill Complexity",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.35f));
 
     // v1.5.0 — Manual grid step division (Logic-style 1/16, 1/32, 1/64).
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
@@ -349,6 +360,13 @@ AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
     // v1.5.0 — fillComplexity knob is independent of the overall complexity
     // knob; this lets users dial "simple groove + intricate fills" or vice-versa.
     req.fillComplexity = apvts.getRawParameterValue (kParamFillComplexity)->load();
+
+    // v1.6.0 — which of the 5 bundled character kits is loaded drives the
+    // kick/snare placement profile (PopRock = straight, NuRock = syncopated,
+    // AltRock = laid-back, IndieLofi = half-time, Thrash = double-kick drive).
+    const int bundledIndex = (int) apvts.getRawParameterValue (kParamBundledKit)->load();
+    if (bundledIndex >= 0 && bundledIndex < (int) aidrum::BundledKit::Count)
+        req.bundledKit = static_cast<aidrum::BundledKit> (bundledIndex);
     return req;
 }
 
@@ -359,19 +377,23 @@ void AIDrumAudioProcessor::appendRegion (aidrum::GenerationMode requestedMode)
     // v1.3.0 phraseBar: region index in the arrangement so the backend
     // can evolve the performance (fills vary every 8 bars, dynamics
     // breathe across phrases, fills never repeat).
+    aidrum::MidiPattern previous;
+    bool hasPrevious = false;
     {
         std::lock_guard<std::mutex> lock (arrangementMutex);
         req.phraseBar = static_cast<int> (arrangement.size());
+        if (! arrangement.empty())
+        {
+            previous = arrangement.back();
+            hasPrevious = true;
+        }
     }
 
-    // v1.3.0 Session-player fill cadence. Logic's Drummer caps every 8-bar
-    // phrase with a fill. We replicate that: whenever a region falls on bar
-    // 7 (mod 8) of the arrangement, promote it to a Fill regardless of
-    // the fillsProb knob. Between those, the knob still drives random
-    // sprinkled fills like before.
+    // v1.6.0 — 8-bar phrase cap is the ONLY place we auto-promote a region
+    // to a Fill. Between caps the fillsProb knob is still available.
+    const bool phraseCap = (req.phraseBar % 8) == 7;
     if (requestedMode == aidrum::GenerationMode::Groove)
     {
-        const bool phraseCap = (req.phraseBar % 8) == 7;
         if (phraseCap)
             req.mode = aidrum::GenerationMode::Fill;
         else if (req.fillsProb > 0.0f)
@@ -383,7 +405,15 @@ void AIDrumAudioProcessor::appendRegion (aidrum::GenerationMode requestedMode)
         }
     }
 
-    auto pattern = backend.generate (req);
+    // v1.6.0 — Groove regions appended via `+` duplicate the previous
+    // region's pattern so the arrangement stays cohesive across bars
+    // (the user explicitly asked for "complement, don't randomize").
+    // Fills and first-region always generate fresh.
+    aidrum::MidiPattern pattern;
+    if (req.mode == aidrum::GenerationMode::Groove && hasPrevious)
+        pattern = previous;
+    else
+        pattern = backend.generate (req);
 
     std::lock_guard<std::mutex> lock (arrangementMutex);
     arrangement.push_back (std::move (pattern));
@@ -417,6 +447,69 @@ void AIDrumAudioProcessor::clearArrangement()
     std::lock_guard<std::mutex> lock (arrangementMutex);
     arrangement.clear();
     playheadBeats.store (0.0, std::memory_order_release);
+}
+
+// ============================================================================
+// v1.6.0 STARTER GROOVES
+// ============================================================================
+
+int AIDrumAudioProcessor::starterGrooveCount() const
+{
+    return static_cast<int> (aidrum::starterGrooveLibrary().size());
+}
+
+juce::String AIDrumAudioProcessor::starterGrooveName (int index) const
+{
+    const auto& lib = aidrum::starterGrooveLibrary();
+    if (index < 0 || index >= static_cast<int> (lib.size()))
+        return {};
+    return juce::String (std::string (lib[(size_t) index].name));
+}
+
+void AIDrumAudioProcessor::appendStarterGroove (int index)
+{
+    const auto& lib = aidrum::starterGrooveLibrary();
+    if (index < 0 || index >= static_cast<int> (lib.size()))
+        return;
+
+    aidrum::MidiPattern pat = lib[(size_t) index].pattern;
+    // Force tempo onto the pattern so the arrangement strip sees a length
+    // that matches what the user hears.
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    arrangement.push_back (std::move (pat));
+}
+
+// ============================================================================
+// v1.6.0 COPY / PASTE region
+// ============================================================================
+
+void AIDrumAudioProcessor::copyRegionToClipboard (int index)
+{
+    std::lock_guard<std::mutex> lockA (arrangementMutex);
+    if (index < 0 || index >= static_cast<int> (arrangement.size()))
+        return;
+    aidrum::MidiPattern snap = arrangement[(size_t) index];
+    std::lock_guard<std::mutex> lockC (clipboardMutex);
+    clipboardPattern = std::move (snap);
+}
+
+bool AIDrumAudioProcessor::hasCopiedRegion() const
+{
+    std::lock_guard<std::mutex> lock (clipboardMutex);
+    return clipboardPattern.has_value();
+}
+
+void AIDrumAudioProcessor::pasteCopiedRegion()
+{
+    aidrum::MidiPattern toAppend;
+    {
+        std::lock_guard<std::mutex> lock (clipboardMutex);
+        if (! clipboardPattern.has_value())
+            return;
+        toAppend = *clipboardPattern;
+    }
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    arrangement.push_back (std::move (toAppend));
 }
 
 std::vector<aidrum::MidiPattern> AIDrumAudioProcessor::getArrangement() const
@@ -713,69 +806,52 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
 
     const double blockStartBeat = playheadBeats.load (std::memory_order_acquire);
     const double blockEndBeat   = blockStartBeat + blockBeats;
-    const bool   looping        = loopingEnabled.load (std::memory_order_acquire);
 
-    // If looping is OFF, clamp the emission window at the arrangement end
-    // so the song plays once and stops.
-    const double emissionEnd = looping ? blockEndBeat : std::min (blockEndBeat, total);
+    // v1.6.0 — no looping. Arrangement plays the whole composition
+    // front→end then stops. Emission window is clamped at `total`.
+    const double emissionEnd = std::min (blockEndBeat, total);
 
-    // Loop arrangement: for each pass, emit notes that fall within [blockStart, blockEnd).
-    double loopOffset = 0.0;
-    // Walk enough loop copies to cover this block.
-    while (loopOffset <= emissionEnd + total)
+    // Emit notes from each region, concatenated linearly from bar 1 to the end.
+    double regionOffset = 0.0;
+    for (const auto& region : snapshot)
     {
-        double regionOffset = loopOffset;
-        for (const auto& region : snapshot)
+        const double regionLen = std::max (0.001, region.lengthInBeats);
+        for (const auto& note : region.notes)
         {
-            const double regionLen = std::max (0.001, region.lengthInBeats);
-            for (const auto& note : region.notes)
+            const double onBeat  = regionOffset + note.startBeat;
+            const double offBeat = onBeat + std::max (0.01, note.lengthBeat);
+
+            if (onBeat >= blockStartBeat && onBeat < emissionEnd)
             {
-                const double onBeat  = regionOffset + note.startBeat;
-                const double offBeat = onBeat + std::max (0.01, note.lengthBeat);
-
-                if (onBeat >= blockStartBeat && onBeat < emissionEnd)
-                {
-                    const int sample = static_cast<int> (
-                        (onBeat - blockStartBeat) * secondsPerBeat * sampleRate);
-                    midiOut.addEvent (
-                        juce::MidiMessage::noteOn (10, note.noteNumber,
-                            static_cast<juce::uint8> (
-                                juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f))),
-                        juce::jlimit (0, numSamples - 1, sample));
-                }
-
-                if (offBeat >= blockStartBeat && offBeat < emissionEnd)
-                {
-                    const int sample = static_cast<int> (
-                        (offBeat - blockStartBeat) * secondsPerBeat * sampleRate);
-                    midiOut.addEvent (juce::MidiMessage::noteOff (10, note.noteNumber),
-                                      juce::jlimit (0, numSamples - 1, sample));
-                }
+                const int sample = static_cast<int> (
+                    (onBeat - blockStartBeat) * secondsPerBeat * sampleRate);
+                midiOut.addEvent (
+                    juce::MidiMessage::noteOn (10, note.noteNumber,
+                        static_cast<juce::uint8> (
+                            juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f))),
+                    juce::jlimit (0, numSamples - 1, sample));
             }
-            regionOffset += regionLen;
+
+            if (offBeat >= blockStartBeat && offBeat < emissionEnd)
+            {
+                const int sample = static_cast<int> (
+                    (offBeat - blockStartBeat) * secondsPerBeat * sampleRate);
+                midiOut.addEvent (juce::MidiMessage::noteOff (10, note.noteNumber),
+                                  juce::jlimit (0, numSamples - 1, sample));
+            }
         }
-        loopOffset += total;
+        regionOffset += regionLen;
     }
 
-    // Advance (and optionally wrap) the playhead.
-    if (looping)
+    // Advance the playhead; when we pass the end, auto-stop and rewind so
+    // Play starts from bar 1 next press.
+    const double next = std::min (blockEndBeat, total);
+    playheadBeats.store (next, std::memory_order_release);
+    if (next >= total - 1.0e-6)
     {
-        playheadBeats.store (std::fmod (blockEndBeat, total),
-                             std::memory_order_release);
-    }
-    else
-    {
-        const double next = std::min (blockEndBeat, total);
-        playheadBeats.store (next, std::memory_order_release);
-
-        // When the arrangement ends and looping is off, auto-stop so the
-        // Play button becomes 'start from 0' again next press.
-        if (next >= total - 1.0e-6)
-        {
-            transportState.store ((int) TransportState::Stopped,
-                                  std::memory_order_release);
-            playheadBeats.store (0.0, std::memory_order_release);
-        }
+        transportState.store ((int) TransportState::Stopped,
+                              std::memory_order_release);
+        playheadBeats.store (0.0, std::memory_order_release);
     }
 }
 
@@ -812,10 +888,11 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
                 if (hostIsPlaying)
                 {
-                    // Wrap host ppq into our arrangement length so looping still works.
+                    // v1.6.0 — no internal looping. Clamp host ppq to arrangement
+                    // length so we play once through and then emit silence.
                     const double total = getArrangementTotalBeats();
                     if (total > 0.0)
-                        playheadBeats.store (std::fmod (std::max (0.0, *ppq), total),
+                        playheadBeats.store (std::min (std::max (0.0, *ppq), total),
                                              std::memory_order_release);
                 }
             }
@@ -908,16 +985,6 @@ void AIDrumAudioProcessor::stop()
     transportState.store ((int) TransportState::Stopped, std::memory_order_release);
     playheadBeats.store (0.0, std::memory_order_release);
     drumSynth.reset();
-}
-
-void AIDrumAudioProcessor::setLooping (bool shouldLoop)
-{
-    loopingEnabled.store (shouldLoop, std::memory_order_release);
-}
-
-bool AIDrumAudioProcessor::isLooping() const
-{
-    return loopingEnabled.load (std::memory_order_acquire);
 }
 
 AIDrumAudioProcessor::TransportState AIDrumAudioProcessor::getTransportState() const

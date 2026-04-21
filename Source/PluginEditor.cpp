@@ -628,15 +628,6 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     halfTimeButton.setTooltip ("HALF-TIME — backbeat moves to 3 instead of 2 & 4, giving every groove a slower, heavier feel.");
     addAndMakeVisible (halfTimeButton);
 
-    loopButton.setClickingTogglesState (true);
-    loopButton.setToggleState (processorRef.isLooping(), juce::dontSendNotification);
-    loopButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
-    loopButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
-    loopButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kMuted));
-    loopButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
-    loopButton.setTooltip ("LOOP — when the playhead hits the end of the arrangement, wrap back to bar 1 instead of stopping.");
-    loopButton.onClick = [this] { processorRef.setLooping (loopButton.getToggleState()); };
-    addAndMakeVisible (loopButton);
 
     // APPEND (+) button — now *appends* instead of replacing.
     plusButton.onClick = [this]
@@ -692,6 +683,52 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (playButton);
     addAndMakeVisible (pauseButton);
     addAndMakeVisible (stopButton);
+
+    // v1.6.0 — STARTER GROOVES combobox: pick a hand-played groove from the
+    // analysed library and drop it into the arrangement as a new region.
+    starterBox.addItem ("STARTER GROOVE ...", 1);
+    for (int i = 0; i < processorRef.starterGrooveCount(); ++i)
+        starterBox.addItem (processorRef.starterGrooveName (i), i + 2);
+    starterBox.setSelectedId (1, juce::dontSendNotification);
+    starterBox.setTooltip ("STARTER — pick a hand-played Logic-style groove template; it drops in as a new region at the end of the arrangement.");
+    starterBox.onChange = [this]
+    {
+        const int sel = starterBox.getSelectedId();
+        if (sel >= 2)
+        {
+            processorRef.appendStarterGroove (sel - 2);
+            plusButton.bump();
+            arrangementStrip.repaint();
+        }
+        starterBox.setSelectedId (1, juce::dontSendNotification);
+    };
+    starterLabel.setText ("STARTER", juce::dontSendNotification);
+    starterLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (starterBox);
+    addAndMakeVisible (starterLabel);
+
+    // v1.6.0 — COPY / PASTE region buttons. COPY snapshots the currently
+    // selected region (fallback: last region); PASTE appends the snapshot
+    // as a new region at the end of the arrangement. Keyboard shortcuts
+    // Ctrl+C / Ctrl+V are wired up in the ArrangementStrip.
+    styleSmallBtn (copyRegionButton);
+    styleSmallBtn (pasteRegionButton);
+    copyRegionButton .setTooltip ("COPY — snapshot the selected arrangement region (or the last one if none selected). Paste duplicates it at the end.");
+    pasteRegionButton.setTooltip ("PASTE — append the most recently copied region to the end of the arrangement.");
+    copyRegionButton.onClick  = [this]
+    {
+        const auto arr = processorRef.getArrangement();
+        const int idx = (int) arr.size() - 1;
+        if (idx >= 0)
+            processorRef.copyRegionToClipboard (idx);
+    };
+    pasteRegionButton.onClick = [this]
+    {
+        processorRef.pasteCopiedRegion();
+        arrangementStrip.repaint();
+    };
+    addAndMakeVisible (copyRegionButton);
+    addAndMakeVisible (pasteRegionButton);
 
     // MANUAL mode toggle — swaps the arrangement strip for the interactive grid.
     styleSmallBtn (manualButton);
@@ -866,7 +903,6 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     hiHatBox        .setTooltip ("HI-HAT — Dynamic (genre default), or force Closed / Open / Ride cymbal.");
     drumKitBox      .setTooltip ("DRUM KIT — 20 models from jazz Ludwig to thrash Sonor. Each remaps GM notes + velocity / ghost / accent curves for a distinct timbre in your sampler.");
     halfTimeButton  .setTooltip ("HALF-TIME — snare on beat 3 only (kick on 1). Classic hip-hop / shoegaze feel.");
-    loopButton      .setTooltip ("LOOP — when enabled, the arrangement wraps to the start automatically at the end.");
 
     plusButton      .setTooltip ("APPEND — generate a new region with current settings and add it after the last one.");
     undoButton      .setTooltip ("UNDO — remove the last appended region from the arrangement.");
@@ -1012,14 +1048,12 @@ void AIDrumAudioProcessorEditor::resized()
     auto action = area.removeFromTop (92);
 
     auto transportCluster = action.removeFromLeft (260).reduced (4, 16);
-    const int transportW = (transportCluster.getWidth() - 18) / 4;
+    const int transportW = (transportCluster.getWidth() - 12) / 3;
     playButton .setBounds (transportCluster.removeFromLeft (transportW));
     transportCluster.removeFromLeft (6);
     pauseButton.setBounds (transportCluster.removeFromLeft (transportW));
     transportCluster.removeFromLeft (6);
     stopButton .setBounds (transportCluster.removeFromLeft (transportW));
-    transportCluster.removeFromLeft (6);
-    loopButton .setBounds (transportCluster.removeFromLeft (transportW));
 
     auto exportCluster = action.removeFromRight (260).reduced (4, 16);
     dragHandle.setBounds (exportCluster.removeFromTop (26).reduced (2));
@@ -1046,6 +1080,17 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (6);
 
+    // v1.6.0 — STARTER GROOVES dropdown + COPY / PASTE region buttons.
+    auto starterBar = area.removeFromTop (30);
+    starterLabel     .setBounds (starterBar.removeFromLeft (70).reduced (2));
+    starterBox       .setBounds (starterBar.removeFromLeft (260).reduced (2));
+    starterBar.removeFromLeft (10);
+    copyRegionButton .setBounds (starterBar.removeFromLeft (80).reduced (2));
+    starterBar.removeFromLeft (4);
+    pasteRegionButton.setBounds (starterBar.removeFromLeft (80).reduced (2));
+
+    area.removeFromTop (4);
+
     // MANUAL / MIXER / LOAD KIT / UNLOAD / UI SCALE toggle bar.
     auto manualBar = area.removeFromTop (30);
     manualButton   .setBounds (manualBar.removeFromLeft (120).reduced (2));
@@ -1064,7 +1109,6 @@ void AIDrumAudioProcessorEditor::resized()
 
     // Kit path readout fills whatever horizontal space is left in the middle.
     kitPathLabel.setBounds (manualBar.reduced (4, 0));
-    loopButton.toFront (false);
 
     area.removeFromTop (4);
 

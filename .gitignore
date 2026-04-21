@@ -21,3 +21,10 @@ venv/
 
 # JUCE generated
 JuceLibraryCode/
+
+# v1.6.0 — raw starter-groove audio is large (~200 MB). Kept locally only;
+# the analysed MIDI templates live in Source/StarterGrooves.generated.h
+# which IS committed.
+tools/starter_grooves/
+tools/starter_grooves_caf/
+Resources/Fonts/

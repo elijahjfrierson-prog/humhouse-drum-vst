@@ -311,143 +311,288 @@ namespace aidrum
         return pattern;
     }
 
+    // v1.6.0 \u2014 per-bundled-kit kick/snare character profile. Each of the
+    // five character kits (PopRock / NuRock / AltRock / IndieLofi / Thrash)
+    // gets its own backbone flavour on top of the genre-driven cymbal feel.
+    //
+    // NONE of these fields introduce per-bar randomness \u2014 the generator is
+    // fully deterministic for a fixed (genre, kit, complexity, variation,
+    // phraseBar) tuple. The ONLY thing that makes the pattern busier is the
+    // COMPLEXITY knob.
+    struct KitGrooveProfile
+    {
+        // Extra kick placements (in 16th steps across a bar, 0..15). Each is
+        // only triggered above the kick's complexity threshold.
+        struct KickHit { int step16; float velScale; float complexityGate; };
+        std::vector<KickHit> extraKicks;
+
+        // Snare backbeat displacement in beats (negative = lay back).
+        double snareLayback = 0.0;
+        // Kick backbeat displacement in beats.
+        double kickLayback  = 0.0;
+        // Complexity gate above which ghost snares start appearing.
+        float  ghostGate    = 0.30f;
+        // Ghost snare density scale.
+        float  ghostScale   = 1.0f;
+        // If true, kit always plays a half-time backbeat (snare on 3 only).
+        bool   halfTimeFeel = false;
+        // If true, layer a 16th-note double-kick gallop above complexity 0.55.
+        bool   doubleKick   = false;
+        // Hi-hat 1/16 threshold (complexity knob must exceed this to upgrade
+        // 1/8 hat to 1/16 hat). PopRock opens up earlier than AltRock.
+        float  hatSixteenthGate = 0.55f;
+        // Hat eighth-note threshold (complexity knob must exceed this to
+        // upgrade 1/4 hat to 1/8 hat).
+        float  hatEighthGate    = 0.18f;
+        // Snare alternate voice probability (sidestick / clap / rim) gated by
+        // variation, not by randomness per bar.
+        float  variationSideStick = 0.0f;
+    };
+
+    static KitGrooveProfile kitProfileFor (BundledKit k)
+    {
+        KitGrooveProfile p;
+        switch (k)
+        {
+            case BundledKit::PopRock:
+                // Classic straight backbeat: kick on 1 + 3, snare on 2 + 4.
+                // As complexity rises, add the "and of 3" kick (classic pop-rock
+                // pickup) then the "e of 4" ghost.
+                p.extraKicks = { { 10, 0.90f, 0.45f }, { 8,  0.85f, 0.75f } };
+                p.hatEighthGate    = 0.12f;
+                p.hatSixteenthGate = 0.60f;
+                p.ghostGate        = 0.35f;
+                p.ghostScale       = 1.0f;
+                break;
+
+            case BundledKit::NuRock:
+                // Syncopated: kick on 1, "and of 2", 3, "and of 3".
+                p.extraKicks = { { 6,  0.95f, 0.25f },   // "and of 2"
+                                 { 10, 0.90f, 0.35f },   // "and of 3"
+                                 { 14, 0.80f, 0.65f } }; // "and of 4"
+                p.hatEighthGate    = 0.10f;
+                p.hatSixteenthGate = 0.45f;
+                p.ghostGate        = 0.30f;
+                p.ghostScale       = 1.1f;
+                p.variationSideStick = 0.25f;
+                break;
+
+            case BundledKit::AltRock:
+                // Laid-back grunge: snare pulled late, kick a hair behind,
+                // sparse ghosts. Less 1/16 hat even at high complexity.
+                p.extraKicks = { { 10, 0.85f, 0.55f } }; // "and of 3" comes in late
+                p.snareLayback = -0.012;
+                p.kickLayback  = -0.006;
+                p.hatEighthGate    = 0.20f;
+                p.hatSixteenthGate = 0.75f;   // rarely goes to 1/16
+                p.ghostGate        = 0.45f;
+                p.ghostScale       = 0.75f;
+                break;
+
+            case BundledKit::IndieLofi:
+                // Half-time hip-hop feel: kick on 1, snare on 3, loads of room.
+                p.extraKicks = { { 10, 0.80f, 0.50f }, // "and of 3"
+                                 { 3,  0.75f, 0.60f }  // "e of 1" pickup
+                               };
+                p.halfTimeFeel = true;
+                p.snareLayback = -0.018; // deep pocket
+                p.kickLayback  = -0.004;
+                p.hatEighthGate    = 0.30f;
+                p.hatSixteenthGate = 0.85f;
+                p.ghostGate        = 0.25f;
+                p.ghostScale       = 1.2f; // ghost-heavy D'Angelo feel
+                p.variationSideStick = 0.35f;
+                break;
+
+            case BundledKit::Thrash:
+                // Aggressive: kick on every beat + gallop as complexity rises.
+                p.extraKicks = { { 2,  0.95f, 0.10f },   // "e of 1"
+                                 { 6,  0.95f, 0.15f },   // "and of 2"
+                                 { 10, 0.95f, 0.20f },   // "and of 3"
+                                 { 14, 0.95f, 0.25f } }; // "and of 4"
+                p.doubleKick       = true;
+                p.hatEighthGate    = 0.05f; // tight hats always
+                p.hatSixteenthGate = 0.35f; // opens up fast
+                p.ghostGate        = 0.60f;
+                p.ghostScale       = 0.6f;
+                break;
+
+            case BundledKit::Count:
+                break;
+        }
+        return p;
+    }
+
     MidiPattern AIBackend::makeGroove (const GenerationRequest& r, Genre genre) const
     {
-        const GenreProfile g = profileFor (genre);
+        const GenreProfile     g  = profileFor (genre);
+        const KitGrooveProfile kp = kitProfileFor (r.bundledKit);
 
         MidiPattern pattern;
         pattern.lengthInBeats = std::max (kSixteenth, r.lengthInBeats);
 
-        std::mt19937_64 rng (r.seed);
-        std::uniform_real_distribution<float> unit (0.0f, 1.0f);
-
         const int numSixteenths = static_cast<int> (std::round (pattern.lengthInBeats / kSixteenth));
+        const int beatsTotal    = std::max (1, (int) std::round (pattern.lengthInBeats));
+
         const int timeKeeper = g.rideNotHat ? g.rideCymbal : g.mainCymbal;
+        const float cx  = std::clamp (r.complexity, 0.0f, 1.0f);
+        const float var = std::clamp (r.variation, 0.0f, 1.0f);
+        const bool  halfTime = r.halfTime || kp.halfTimeFeel;
 
-        // Scale sparse genres back when Complexity is low.
-        const float kickSync  = g.kickProbSync * (0.5f + 0.5f * r.complexity);
-        const float ghost     = g.ghostProb    * (0.3f + 0.7f * r.complexity);
-        const float openHat   = g.openHatProb  * (0.4f + 0.6f * r.variation);
+        // --------------------------------------------------------------
+        // 1) CYMBAL LAYER \u2014 accents only, rules-based.
+        //
+        // User rule (v1.6.0): "the cymbals should not be so randomized and
+        // constant. only based on complexity should they hit. focus on 1-bar,
+        // 1/2-bar and 1/4 hits for all cymbals. The user can edit the rest
+        // in MIDI."
+        //
+        // Mapping (deterministic, no RNG):
+        //   - cx  < hatEighthGate       : hat on every 1/4 (downbeats only)
+        //   - cx  < hatSixteenthGate    : hat on every 1/8
+        //   - cx >= hatSixteenthGate    : hat on every 1/16
+        // Open-hat / ride-bell accents fall on 1/2-bar boundaries as variation
+        // rises. A crash lands on the first downbeat if this is the first
+        // region of a phrase (phraseBar % 8 == 0).
+        // --------------------------------------------------------------
+        int hatDivisor = 4; // 1 hat per quarter
+        if (cx >= kp.hatEighthGate)    hatDivisor = 2; // 1/8
+        if (cx >= kp.hatSixteenthGate) hatDivisor = 1; // 1/16
 
-        // ---- Time-keeping layer ------------------------------------------
         if (g.triplets)
         {
-            // Swing/triplet feel: ride on triplets per beat.
-            const int beats = std::max (1, (int) std::round (pattern.lengthInBeats));
-            for (int beat = 0; beat < beats; ++beat)
+            // Jazz ride stays on triplets regardless (characteristic voicing).
+            for (int beat = 0; beat < beatsTotal; ++beat)
             {
                 const double b = static_cast<double> (beat);
-                addNote (pattern, g.rideCymbal, g.velBase, b,                  kEighth);
-                // Jazz ride pattern: "spang, a-lang" = quarter, 8th-triplet, 8th-triplet
+                addNote (pattern, g.rideCymbal, g.velBase, b, kEighth);
                 if ((beat % 2) == 1)
                 {
                     addNote (pattern, g.rideCymbal, g.velBase * 0.75f, b + 2.0 / 3.0, 1.0 / 3.0);
-                    addNote (pattern, kRideBell,   g.velBase * 0.5f,  b + 1.0 / 3.0, 1.0 / 3.0);
-                }
-            }
-        }
-        else if (g.trapHats)
-        {
-            // Trap: rolling closed hats with 32nd/triplet bursts based on complexity.
-            for (int step = 0; step < numSixteenths; ++step)
-            {
-                const double beat = kSixteenth * step;
-                // Base 16th hat
-                addNote (pattern, g.mainCymbal, g.velBase, beat, 0.0625);
-                // Rolls: subdivide into 32nds
-                if (unit (rng) < 0.25f + 0.65f * r.complexity)
-                    addNote (pattern, g.mainCymbal, g.velBase * 0.7f, beat + 0.125, 0.0625);
-                // Occasional 16th-triplet burst
-                if (unit (rng) < r.complexity * 0.2f)
-                {
-                    for (int t = 1; t <= 2; ++t)
-                        addNote (pattern, g.mainCymbal, g.velBase * 0.6f,
-                                 beat + kSixteenth * (t / 3.0), 0.0625);
+                    addNote (pattern, kRideBell,    g.velBase * 0.5f,  b + 1.0 / 3.0, 1.0 / 3.0);
                 }
             }
         }
         else
         {
-            for (int step = 0; step < numSixteenths; ++step)
+            for (int step = 0; step < numSixteenths; step += hatDivisor)
             {
                 const double beat = kSixteenth * step;
-                const int    s16  = step % 16;
+                // Accent downbeats (every 1/4) a bit harder than off-beats.
+                const bool isQuarterAccent = (step % 4) == 0;
+                const float vel = isQuarterAccent ? g.velAccent * 0.85f
+                                                  : g.velBase  * 0.75f;
+                addNote (pattern, timeKeeper, vel, beat,
+                         hatDivisor == 1 ? 0.0625 : (hatDivisor == 2 ? 0.125 : 0.25));
+            }
 
-                // 8th-note main cymbal, with complexity-driven 16th doubling.
-                if (s16 % 2 == 0)
+            // 1/2-bar open-hat accent (on the "and of 2" of each bar), gated by
+            // complexity + variation. Only a single hit per half-bar.
+            if (! g.rideNotHat && cx > 0.4f)
+            {
+                for (int barStart = 0; barStart < numSixteenths; barStart += 16)
                 {
-                    const float vel = g.velBase + 0.10f * unit (rng) * r.variation;
-                    addNote (pattern, timeKeeper, vel, beat, 0.125);
-                }
-                else if (unit (rng) < r.complexity * 0.85f)
-                {
-                    addNote (pattern, timeKeeper, g.velBase * 0.75f, beat, 0.0625);
+                    const double beat = kSixteenth * (barStart + 6); // and-of-2
+                    if (beat < pattern.lengthInBeats)
+                        addNote (pattern, g.altCymbal, g.velBase * 0.9f, beat, 0.25);
                 }
             }
+
+            // 1-bar crash accent: first downbeat of the first bar of a phrase.
+            if ((r.phraseBar % 8) == 0 && pattern.lengthInBeats >= 2.0)
+                addNote (pattern, g.crashCymbal, g.velAccent, 0.0, 1.0);
         }
 
-        // ---- Kick + snare backbone ---------------------------------------
-        const int beatsTotal = std::max (1, (int) std::round (pattern.lengthInBeats));
+        // --------------------------------------------------------------
+        // 2) KICK / SNARE BACKBONE \u2014 deterministic "boom boom bap".
+        //
+        // User rule: "all instruments besides toms should consistently stay
+        // with 1/4 and 1-bar hits with the ability to add the complexity to
+        // make it turn into 1/16 hit. you should never start fast but a
+        // simple pattern like 'boom boom bap'."
+        //
+        // Mapping:
+        //   - Base: kick on beats 0 & 2, snare on beats 1 & 3 (half-time: kick
+        //     on 0 only, snare on 2 only).
+        //   - COMPLEXITY gates additional kicks at per-kit 1/16 positions
+        //     (see kitProfileFor) and ghost snare notes.
+        //   - Per-kit laybacks shift kick/snare a hair early or late.
+        // --------------------------------------------------------------
+        const double kickLay  = kp.kickLayback;
+        const double snareLay = kp.snareLayback;
+
         for (int beat = 0; beat < beatsTotal; ++beat)
         {
-            const double b = static_cast<double> (beat);
+            const double b         = static_cast<double> (beat);
             const int    beatOfBar = beat % 4;
 
-            bool isKickDownbeat  = g.fourOnFloor
-                                    ? true
-                                    : (beatOfBar == 0 || beatOfBar == 2);
+            bool isKickDownbeat  = (beatOfBar == 0 || beatOfBar == 2);
             bool isSnareBackbeat = (beatOfBar == 1 || beatOfBar == 3);
-
-            if (r.halfTime)
+            if (halfTime)
             {
-                // Half-time feel: snare only on beat 3, kick only on beat 1.
                 isKickDownbeat  = (beatOfBar == 0);
                 isSnareBackbeat = (beatOfBar == 2);
             }
+            if (g.fourOnFloor) isKickDownbeat = true;
 
-            if (isKickDownbeat && unit (rng) < g.kickProbBase + 0.5f * (1.0f - r.complexity))
-                addNote (pattern, kKick, g.velAccent, b, 0.25);
+            if (isKickDownbeat)
+                addNote (pattern, kKick, g.velAccent, b + kickLay, 0.25);
 
             if (isSnareBackbeat)
             {
-                const int snare = (g.trainBeat && unit (rng) < 0.3f) ? g.snareAlt : g.snareMain;
-                addNote (pattern, snare, g.velAccent, b, 0.25);
-
+                const bool sideStickPick = (var >= 0.65f) && (kp.variationSideStick > 0.0f)
+                                            && ((beat % 8) == 1);
+                const int snareNote = sideStickPick ? g.snareAlt : g.snareMain;
+                addNote (pattern, snareNote, g.velAccent, b + snareLay, 0.25);
                 if (g.useClap)
-                    addNote (pattern, g.clap, g.velAccent * 0.9f, b, 0.25);
+                    addNote (pattern, g.clap, g.velAccent * 0.9f, b + snareLay, 0.25);
             }
-
-            // Kick syncopation on the "e" or "a" of each beat.
-            if (unit (rng) < kickSync * 0.5f)
-                addNote (pattern, kKick, g.velBase, b + 0.75, 0.25);
-
-            // Country train beat: snare on every quarter.
-            if (g.trainBeat && ! isSnareBackbeat)
-                addNote (pattern, g.snareAlt, g.velBase * 0.8f, b, 0.25);
-
-            // Metal double-kick: sixteenth-note gallop under each beat.
-            if (g.doubleKick && unit (rng) < 0.4f + 0.55f * r.complexity)
-            {
-                addNote (pattern, kKick, g.velBase, b + 0.25, 0.25);
-                addNote (pattern, kKick, g.velBase, b + 0.75, 0.25);
-            }
-
-            // Ghost snares on 16ths between backbeats.
-            for (int sub = 1; sub < 4; ++sub)
-            {
-                if (unit (rng) < ghost * (isSnareBackbeat ? 0.3f : 1.0f))
-                    addNote (pattern, g.snareMain, 0.25f + 0.25f * unit (rng),
-                             b + sub * kSixteenth, 0.125);
-            }
-
-            // Open hat accent on the "and" of every other beat.
-            if (! g.rideNotHat && (beatOfBar % 2 == 1) && unit (rng) < openHat)
-                addNote (pattern, g.altCymbal, g.velBase * 0.9f, b + 0.5, 0.25);
         }
 
-        // Boom-bap specifics: kick on the "and" of 2 in the first bar.
-        if (g.boomBap && pattern.lengthInBeats >= 4.0)
-            addNote (pattern, kKick, g.velAccent * 0.9f, 2.5, 0.25);
+        // Per-kit extra kicks: placed at quantised 1/16 steps and gated by
+        // complexity. No RNG \u2014 strictly rules-based.
+        for (const auto& k : kp.extraKicks)
+        {
+            if (cx < k.complexityGate) continue;
+            for (int bar = 0; bar < numSixteenths; bar += 16)
+            {
+                const int step = bar + k.step16;
+                if (step >= numSixteenths) break;
+                const double beat = kSixteenth * step;
+                addNote (pattern, kKick, g.velBase * k.velScale, beat + kickLay, 0.125);
+            }
+        }
+
+        // Double-kick gallop (Thrash only): at high complexity, fill in the
+        // "e" and "a" positions of every beat.
+        if (kp.doubleKick && cx > 0.55f)
+        {
+            for (int beat = 0; beat < beatsTotal; ++beat)
+            {
+                const double b = static_cast<double> (beat);
+                addNote (pattern, kKick, g.velBase * 0.85f, b + kSixteenth,     0.125);
+                addNote (pattern, kKick, g.velBase * 0.85f, b + kSixteenth * 3, 0.125);
+            }
+        }
+
+        // Snare ghost notes: appear deterministically once complexity crosses
+        // the kit's ghostGate. Placement = "e" + "a" of every beat, attenuated.
+        if (cx > kp.ghostGate)
+        {
+            const float ghostVel = 0.25f + 0.25f * (cx - kp.ghostGate) / std::max (0.05f, 1.0f - kp.ghostGate);
+            const float scaled   = ghostVel * kp.ghostScale;
+            for (int beat = 0; beat < beatsTotal; ++beat)
+            {
+                const int beatOfBar = beat % 4;
+                const bool isBackbeat = halfTime ? (beatOfBar == 2)
+                                                 : (beatOfBar == 1 || beatOfBar == 3);
+                if (isBackbeat) continue; // don't ghost over the main snare hit
+                const double b = static_cast<double> (beat);
+                addNote (pattern, g.snareMain, scaled, b + kSixteenth,     0.125);
+                if (cx > kp.ghostGate + 0.25f)
+                    addNote (pattern, g.snareMain, scaled * 0.8f, b + kSixteenth * 3, 0.125);
+            }
+        }
 
         return pattern;
     }
@@ -749,6 +894,19 @@ namespace aidrum
         const float timingGain = 0.4f + 1.6f * hz;      // humanize amplifies jitter
         const float ghostDropoutProb = 0.05f + 0.08f * hz;
 
+        // v1.6.0 \u2014 VELOCITY knob is now a true "bedroom \u2192 stadium" dial.
+        //
+        // User rule: "VELOCITY 0 = bedroom whisper playing, 100 = stadium
+        // crashing playing". We remap r.velocity (0..1) onto a curve that
+        // significantly compresses at the low end (jazz-brush territory)
+        // and overdrives slightly at the top. Applied BEFORE the phrase-level
+        // velScale / phraseVel / humanize jitter so those still breathe on
+        // top of the master intensity.
+        const float intensity = std::clamp (r.velocity, 0.0f, 1.0f);
+        const float velFloor  = 0.27f;                   // ~35 MIDI velocity
+        const float velCeil   = 1.05f;                   // slight overdrive
+        const float intensityCurve = velFloor + (velCeil - velFloor) * intensity;
+
         // Phrase-level velocity breathing: crescendo/decrescendo across 8-bar
         // phrases. Drummers don't play every bar the same dynamic; they rise
         // into fills and lay back mid-phrase.
@@ -778,7 +936,7 @@ namespace aidrum
             const double j = static_cast<double> (unit (rng)) - 0.5;
             const double shift = (off.push + off.spread * 2.0 * j) * timingGain;
 
-            note.velocity  = std::clamp (note.velocity * r.velocity * phraseVel * velScale
+            note.velocity  = std::clamp (note.velocity * intensityCurve * phraseVel * velScale
                                           + 0.10f * hz * (unit (rng) - 0.5f),
                                          0.01f, 1.0f);
             note.startBeat = std::clamp (note.startBeat + shift,

@@ -129,13 +129,18 @@ private:
 
     // Toggle.
     juce::TextButton          halfTimeButton { "HALF-TIME" };
-    juce::TextButton          loopButton     { "LOOP" };
 
     // Action buttons.
     PlusButton                plusButton;
     juce::Label               plusHelper     { {}, "APPEND" };
     juce::TextButton          undoButton     { "UNDO" };
     juce::TextButton          clearButton    { "CLEAR" };
+
+    // v1.6.0 STARTER GROOVES dropdown + COPY / PASTE region buttons.
+    juce::ComboBox            starterBox;
+    juce::Label               starterLabel   { {}, "STARTER" };
+    juce::TextButton          copyRegionButton  { "COPY" };
+    juce::TextButton          pasteRegionButton { "PASTE" };
     juce::TextButton          saveMidiButton { "SAVE MIDI" };
     juce::TextButton          playButton     { "PLAY" };
     juce::TextButton          pauseButton    { "PAUSE" };
@@ -145,7 +150,7 @@ private:
     // v0.8.0 Manual mode.
     juce::TextButton          manualButton   { "MANUAL" };
     juce::TextButton          clearManualButton { "CLEAR GRID" };
-    juce::TextButton          commitManualButton { "APPEND TO ARR." };
+    juce::TextButton          commitManualButton { "ADD TO ARRANGEMENT" };
 
     // v1.1.0 Mixer
     juce::TextButton          mixerButton    { "MIXER" };
