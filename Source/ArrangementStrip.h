@@ -57,9 +57,9 @@ namespace aidrum
             const auto appendButton = getAppendButtonBounds (inner);
             inner = inner.withTrimmedRight (appendButton.getWidth() + 10.0f);
 
-            // v1.6.1 — reserve a narrow column on the left for per-lane labels
-            // (CRASH / HI-HAT / TOM / SNARE / KICK). Matches the manual grid
-            // layout so you always know which row fires which instrument.
+            // v1.6.1-rc.2 — reserve a narrow column on the left for per-lane
+            // labels (CRASH / RIDE / HI-HAT / TOM / SNARE / KICK). 6 lanes
+            // now — RIDE is explicit instead of being lumped with crashes.
             constexpr float kLabelColumn = 54.0f;
             constexpr float kHeaderRow   = 14.0f;
             auto labelArea = inner.removeFromLeft (kLabelColumn);
@@ -70,30 +70,32 @@ namespace aidrum
             const double totalBeats = std::max (1.0, last.totalBeats);
             const float  pxPerBeat  = inner.getWidth() / (float) totalBeats;
 
-            // --- v1.6.1 lane definitions — 5 fixed rows, each a distinct
-            // colour. Top → bottom: CRASH, HI-HAT, TOM, SNARE, KICK. Order
-            // mirrors the manual grid so the editor is consistent.
+            // --- v1.6.1-rc.2 lane definitions — 6 fixed rows, each a distinct
+            // colour. Top → bottom: CRASH, RIDE, HI-HAT, TOM, SNARE, KICK.
+            // Order mirrors the manual grid so the editor is consistent.
             struct Lane { const char* label; juce::uint32 col; };
-            static const Lane kLanes[5] = {
+            static const Lane kLanes[6] = {
                 { "CRASH",  0xffff6f9c },  // pink rose
+                { "RIDE",   0xff6ec6ff },  // sky blue (new in rc.2)
                 { "HI-HAT", 0xffffc857 },  // amber
                 { "TOM",    0xff9d7dff },  // lilac
                 { "SNARE",  0xffede7f6 },  // bone white
                 { "KICK",   0xff3ee0c1 },  // teal
             };
-            const int   kNumLanes = 5;
+            const int   kNumLanes = 6;
             const float laneH     = inner.getHeight() / (float) kNumLanes;
 
             auto laneFor = [] (int n) -> int
             {
-                // 0=CRASH (cymbals incl. ride/china), 1=HI-HAT, 2=TOM,
-                // 3=SNARE (+ clap / rimshot), 4=KICK
-                if (n == 35 || n == 36)                                      return 4;
-                if (n == 37 || n == 38 || n == 39 || n == 40)                return 3;
+                // 0=CRASH (49/55/57/52/china), 1=RIDE (51/53/59), 2=HI-HAT,
+                // 3=TOM, 4=SNARE (+ clap / rimshot), 5=KICK
+                if (n == 35 || n == 36)                                      return 5;
+                if (n == 37 || n == 38 || n == 39 || n == 40)                return 4;
                 if (n == 41 || n == 43 || n == 45 || n == 47
-                    || n == 48 || n == 50)                                   return 2;
-                if (n == 42 || n == 44 || n == 46)                           return 1;
-                return 0;  // 49/51/52/53/55/57/59 etc — all cymbals
+                    || n == 48 || n == 50)                                   return 3;
+                if (n == 42 || n == 44 || n == 46)                           return 2;
+                if (n == 51 || n == 53 || n == 59)                           return 1;
+                return 0;  // 49/52/55/57 etc — crashes/china
             };
 
             // --- Lane labels + alternating lane bands ---------------------

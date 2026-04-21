@@ -29,20 +29,18 @@ namespace aidrum
 
         ManualGrid()
         {
-            // v1.6.0 — simplified 5-row step sequencer (user request). The
-            // expanded 11-row grid was confusing; drummers think in KICK /
-            // SNARE / HAT / CRASH / TOM buckets, so the manual mode mirrors
-            // that. "ADD TO ARRANGEMENT" commits the 16-bar grid as a new
-            // region at the end of the arrangement.
-            //
-            // Ordered top → bottom: cymbals at the top, kick at the bottom
-            // — mirrors how drummers notate kits.
+            // v1.6.1-rc.2 — 6-row step sequencer. RIDE is now its own row
+            // between CRASH and HI-HAT so ride patterns and crash accents
+            // can be programmed independently. Ordered top → bottom:
+            // cymbals at the top, kick at the bottom — mirrors how drummers
+            // notate kits and matches the arrangement grid lane order.
             rows = {
-                { "CRASH",  49, juce::Colour (GothicPalette::kAccentSoft) },
-                { "HI-HAT", 42, juce::Colour (GothicPalette::kAccentSoft) },
-                { "TOM",    45, juce::Colour (GothicPalette::kAccent)     },
-                { "SNARE",  38, juce::Colour (GothicPalette::kBone)       },
-                { "KICK",   36, juce::Colour (GothicPalette::kAccentDeep) },
+                { "CRASH",  49, juce::Colour (0xffff6f9c) },  // pink rose
+                { "RIDE",   51, juce::Colour (0xff6ec6ff) },  // sky blue
+                { "HI-HAT", 42, juce::Colour (0xffffc857) },  // amber
+                { "TOM",    45, juce::Colour (0xff9d7dff) },  // lilac
+                { "SNARE",  38, juce::Colour (0xffede7f6) },  // bone
+                { "KICK",   36, juce::Colour (0xff3ee0c1) },  // teal
             };
             setInterceptsMouseClicks (true, false);
         }

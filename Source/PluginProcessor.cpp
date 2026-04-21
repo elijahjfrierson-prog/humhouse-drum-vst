@@ -807,51 +807,80 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
     const double blockStartBeat = playheadBeats.load (std::memory_order_acquire);
     const double blockEndBeat   = blockStartBeat + blockBeats;
 
-    // v1.6.0 — no looping. Arrangement plays the whole composition
-    // front→end then stops. Emission window is clamped at `total`.
-    const double emissionEnd = std::min (blockEndBeat, total);
+    // v1.6.1-rc.2 — a SINGLE region loops forever (so users can sketch
+    // on one groove without re-pressing play); TWO OR MORE regions play
+    // through end-to-end and STOP (so a composed arrangement doesn't
+    // snap back every 4 bars). This is what the user asked for
+    // explicitly: "the pattern should NOT LOOP EVERY 4 BARS … it should
+    // only loop if there is one pattern".
+    const bool loopSingleRegion = (snapshot.size() == 1);
 
-    // Emit notes from each region, concatenated linearly from bar 1 to the end.
-    double regionOffset = 0.0;
-    for (const auto& region : snapshot)
+    auto emitNotesInWindow = [&] (double winStart, double winEnd, double phaseOffset)
     {
-        const double regionLen = std::max (0.001, region.lengthInBeats);
-        for (const auto& note : region.notes)
+        // Walk each region's notes and emit those whose beat-position
+        // (plus phaseOffset wrap) lands inside [winStart, winEnd).
+        double regionOffset = 0.0;
+        for (const auto& region : snapshot)
         {
-            const double onBeat  = regionOffset + note.startBeat;
-            const double offBeat = onBeat + std::max (0.01, note.lengthBeat);
-
-            if (onBeat >= blockStartBeat && onBeat < emissionEnd)
+            const double regionLen = std::max (0.001, region.lengthInBeats);
+            for (const auto& note : region.notes)
             {
-                const int sample = static_cast<int> (
-                    (onBeat - blockStartBeat) * secondsPerBeat * sampleRate);
-                midiOut.addEvent (
-                    juce::MidiMessage::noteOn (10, note.noteNumber,
-                        static_cast<juce::uint8> (
-                            juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f))),
-                    juce::jlimit (0, numSamples - 1, sample));
-            }
+                const double onBeat  = regionOffset + note.startBeat + phaseOffset;
+                const double offBeat = onBeat + std::max (0.01, note.lengthBeat);
 
-            if (offBeat >= blockStartBeat && offBeat < emissionEnd)
-            {
-                const int sample = static_cast<int> (
-                    (offBeat - blockStartBeat) * secondsPerBeat * sampleRate);
-                midiOut.addEvent (juce::MidiMessage::noteOff (10, note.noteNumber),
-                                  juce::jlimit (0, numSamples - 1, sample));
+                if (onBeat >= winStart && onBeat < winEnd)
+                {
+                    const int sample = static_cast<int> (
+                        (onBeat - blockStartBeat) * secondsPerBeat * sampleRate);
+                    midiOut.addEvent (
+                        juce::MidiMessage::noteOn (10, note.noteNumber,
+                            static_cast<juce::uint8> (
+                                juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f))),
+                        juce::jlimit (0, numSamples - 1, sample));
+                }
+
+                if (offBeat >= winStart && offBeat < winEnd)
+                {
+                    const int sample = static_cast<int> (
+                        (offBeat - blockStartBeat) * secondsPerBeat * sampleRate);
+                    midiOut.addEvent (juce::MidiMessage::noteOff (10, note.noteNumber),
+                                      juce::jlimit (0, numSamples - 1, sample));
+                }
             }
+            regionOffset += regionLen;
         }
-        regionOffset += regionLen;
-    }
+    };
 
-    // Advance the playhead; when we pass the end, auto-stop and rewind so
-    // Play starts from bar 1 next press.
-    const double next = std::min (blockEndBeat, total);
-    playheadBeats.store (next, std::memory_order_release);
-    if (next >= total - 1.0e-6)
+    if (loopSingleRegion)
     {
-        transportState.store ((int) TransportState::Stopped,
-                              std::memory_order_release);
-        playheadBeats.store (0.0, std::memory_order_release);
+        // Wrap-emit: each loop iteration covers `total` beats, shifted
+        // by k*total. Emit every loop cycle that intersects this block.
+        const int firstCycle = (int) std::floor (blockStartBeat / total);
+        const int lastCycle  = (int) std::floor ((blockEndBeat - 1e-9) / total);
+        for (int cycle = firstCycle; cycle <= lastCycle; ++cycle)
+            emitNotesInWindow (blockStartBeat, blockEndBeat, (double) cycle * total);
+
+        // Advance playhead and wrap so the UI playhead keeps scrubbing
+        // bar-1 → end → bar-1 without ever stopping.
+        double next = blockEndBeat;
+        while (next >= total) next -= total;
+        playheadBeats.store (next, std::memory_order_release);
+    }
+    else
+    {
+        const double emissionEnd = std::min (blockEndBeat, total);
+        emitNotesInWindow (blockStartBeat, emissionEnd, 0.0);
+
+        // Advance; when we pass the end, auto-stop and rewind so Play
+        // starts from bar 1 next press.
+        const double next = std::min (blockEndBeat, total);
+        playheadBeats.store (next, std::memory_order_release);
+        if (next >= total - 1.0e-6)
+        {
+            transportState.store ((int) TransportState::Stopped,
+                                  std::memory_order_release);
+            playheadBeats.store (0.0, std::memory_order_release);
+        }
     }
 }
 

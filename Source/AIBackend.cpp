@@ -618,8 +618,8 @@ namespace aidrum
         OffbeatChinaStabs,     // 1/2 bar: china hits on offbeats
         HatToCrashBuild,       // 1/2 bar: open-hat then crash lead-in
         LinearKickSnareTom,    // 1 bar: no two hits at same time — linear
-        JazzRideComping,       // 1 bar: ride comping + bass punctuation
-        TrapHatRoll            // 1/2 bar: 32nd-note hat roll + 808 kick
+        JazzRideComping,       // 1 bar: ride comping + kick punctuation
+        TrapHatRoll            // 1/2 bar: 32nd-note hat roll + kick
     };
 
     MidiPattern AIBackend::makeFill (const GenerationRequest& r, Genre genre) const
@@ -810,7 +810,7 @@ namespace aidrum
 
             case FillTemplate::JazzRideComping:
             {
-                // Jazz fill: ride spang-a-lang plus snare comp + bass punctuation.
+                // Jazz fill: ride spang-a-lang plus snare comp + kick punctuation.
                 const int beats = std::max (1, (int) std::round (pattern.lengthInBeats));
                 for (int beat = 0; beat < beats; ++beat)
                 {

@@ -53,22 +53,44 @@ def band_energy(stft_mag, sr, edges):
 
 
 def classify_onset(stft_mag, sr, frame_idx, hop):
-    """Pick the most likely GM drum for a single onset frame.
+    """Classify a single onset by spectral centroid + band-energy ratios.
 
-    v1.6.1 — tighter attack window, explicit decay measurement, and a
-    hierarchical decision tree so ghost notes classify as SNARE rather
-    than falling through to the closed-hat fallback.
+    v1.6.1-rc.2 — rewritten to be strict & conservative. We ONLY emit
+    KICK / SNARE / CLOSED_HAT / RIDE / CRASH / LOW_TOM / MID_TOM. Any
+    ambiguous hit falls back to CLOSED_HAT (quietest mis-classification
+    from a listener's perspective). Decision is centroid-first so that
+    "obviously a kick" (very low centroid) can never become a hat, and
+    "obviously a cymbal" (centroid > 5 kHz with long ring) can never
+    become a kick.
     """
-    # Attack: just the onset frame + 1-2 frames after. Short window so
-    # ghost-note energy isn't averaged out by the surrounding hats.
+    # Use TWO windows: a tiny attack spec (1 frame) dominated by the
+    # stick/click transient, and a body spec (frames 3..8) that captures
+    # the resonant decay. Kicks have low-dominant bodies even when the
+    # attack frame has a broadband click; snares have mid-heavy bodies;
+    # cymbals sustain high-band energy for many frames.
     f0 = max(0, frame_idx)
-    f1 = min(stft_mag.shape[1], frame_idx + 3)
-    spec = stft_mag[:, f0:f1].mean(axis=1)
+    atk_end = min(stft_mag.shape[1], frame_idx + 2)
+    body_start = min(stft_mag.shape[1], frame_idx + 3)
+    body_end = min(stft_mag.shape[1], frame_idx + 9)
+    atk_spec  = stft_mag[:, f0:atk_end].mean(axis=1)
+    if body_end > body_start:
+        body_spec = stft_mag[:, body_start:body_end].mean(axis=1)
+    else:
+        body_spec = atk_spec
+    spec = atk_spec  # legacy alias for centroid calc
     freqs = np.linspace(0.0, sr / 2.0, spec.shape[0])
+    if spec.sum() < 1e-7:
+        return K_CLOSED_HAT
+
+    def band_of(s, lo, hi):
+        m = (freqs >= lo) & (freqs < hi)
+        return float(s[m].mean()) if m.any() else 0.0
 
     def band(lo, hi):
-        m = (freqs >= lo) & (freqs < hi)
-        return float(spec[m].mean()) if m.any() else 0.0
+        return band_of(atk_spec, lo, hi)
+
+    def bband(lo, hi):
+        return band_of(body_spec, lo, hi)
 
     sub_e   = band(*BAND_EDGES["sub"])
     kick_e  = band(*BAND_EDGES["kick"])
@@ -81,58 +103,106 @@ def classify_onset(stft_mag, sr, frame_idx, hop):
     low_total  = sub_e + kick_e
     mid_total  = low_e + body_e
     high_total = hi_e + air_e
-    total      = low_total + mid_total + high_total + 1e-9
 
-    # Spectral centroid (Hz) — cheap, effective snare vs hat disambiguator.
+    # Spectral centroid — the single most reliable signal.
     centroid = float(np.sum(spec * freqs) / (np.sum(spec) + 1e-9))
 
-    # Sustain in high band: open hat / ride / crash ring far longer than
-    # closed hat. Measure how many frames (~5.3 ms each @ hop=256/48k)
-    # stay above 45% of the onset-frame high-band energy.
+    # High-band sustain: how long does the energy in 4.5–16 kHz stay above
+    # 40% of its attack-frame peak? Closed hat ~3-6 frames, ride ~12-20,
+    # open hat / crash ~25+.
     sustain_frames = 0
-    if high_total > 1e-6 and frame_idx < stft_mag.shape[1] - 6:
-        peak_hi = band_energy(stft_mag[:, frame_idx:frame_idx + 1], sr, BAND_EDGES["air"]).mean()
-        thresh = 0.45 * peak_hi
-        for k in range(frame_idx + 1, min(stft_mag.shape[1], frame_idx + 40)):
-            if stft_mag[:, k].mean() < thresh:
-                break
-            sustain_frames += 1
+    if frame_idx < stft_mag.shape[1] - 6:
+        peak_hi = band_energy(stft_mag[:, frame_idx:frame_idx + 1], sr,
+                              (BAND_EDGES["hi"][0], BAND_EDGES["air"][1])).mean()
+        if peak_hi > 1e-6:
+            thresh = 0.4 * peak_hi
+            for k in range(frame_idx + 1, min(stft_mag.shape[1], frame_idx + 45)):
+                hi_k = band_energy(stft_mag[:, k:k + 1], sr,
+                                   (BAND_EDGES["hi"][0], BAND_EDGES["air"][1])).mean()
+                if hi_k < thresh:
+                    break
+                sustain_frames += 1
 
-    # --- Decision tree --------------------------------------------------
-    # 1. Strong sub/kick energy dominating the low end → KICK.
-    if low_total > high_total * 1.6 and sub_e + kick_e > 0.03:
+    # Body-window energies (100 ms after attack). Kicks show dominant
+    # low-band energy in the body even if their attack-frame click was
+    # broadband; cymbals keep their high-band energy high in the body.
+    body_sub   = bband(*BAND_EDGES["sub"])
+    body_kick  = bband(*BAND_EDGES["kick"])
+    body_low   = bband(*BAND_EDGES["low"])
+    body_body  = bband(*BAND_EDGES["body"])
+    body_hi    = bband(*BAND_EDGES["hi"])
+    body_air   = bband(*BAND_EDGES["air"])
+    body_lows  = body_sub + body_kick
+    body_highs = body_hi + body_air
+
+    # Body-window centroid — stable against attack-frame click artefacts.
+    if body_spec.sum() > 1e-7:
+        body_centroid = float(np.sum(body_spec * freqs) / (np.sum(body_spec) + 1e-9))
+    else:
+        body_centroid = centroid
+
+    # --- STRICT decision tree ------------------------------------------
+    # rc.2 final — uses BODY spec (post-attack decay) as the primary
+    # signal. Attack-frame click artefacts lie for kicks (their click
+    # can register as broadband), but 80 ms later the kick is a pure
+    # low-frequency sine — so the body centroid is reliable.
+
+    # 1. KICK — diagnostic: a kick's body window (≈60–180 ms after
+    #    attack) has MASSIVE low-band energy (sub+kick bands) that
+    #    dwarfs every other band. Body centroid is NOT reliable
+    #    because broadband room noise in the tail pulls it up, but
+    #    the absolute low-band energy is unambiguous.
+    body_mid_total = body_low + body_body
+    if body_lows > body_mid_total * 2.0 and body_lows > body_highs * 5.0 \
+       and body_lows > 0.3:
+        return K_KICK
+    # Weak-kick fallback: even at low overall level, if lows dominate
+    # by a wide margin relative to everything else, it's a kick.
+    if body_lows > body_mid_total * 3.0 and body_lows > body_highs * 10.0 \
+       and body_lows > 0.05:
         return K_KICK
 
-    # 2. Snare: crack band leads OR mid-body dominates with some high
-    #    sparkle. Covers loud backbeats AND quiet ghost notes.
-    if crack_e > body_e * 0.6 and crack_e > hi_e * 0.7:
-        return K_SNARE
-    if body_e > low_e * 1.1 and crack_e > hi_e * 0.35 and high_total > 0.004:
-        return K_SNARE
-
-    # 3. Cymbals — top-heavy spectrum, long ring.
-    if high_total > mid_total * 1.3 and high_total > low_total * 1.5:
-        # Very long, air-heavy ring → crash. Medium ring → ride.
-        if sustain_frames > 18 and air_e > hi_e * 0.9:
+    # 2. CYMBAL FAMILY — centroid up in the air / hi band, sustained
+    #    high-frequency energy. Sub-branch on sustain length: long →
+    #    crash, medium → ride, short → closed hat.
+    if centroid > 5000.0 and high_total > mid_total and high_total > low_total:
+        if sustain_frames >= 22 and air_e > hi_e * 0.8:
             return K_CRASH
-        if sustain_frames > 10:
-            return K_OPEN_HAT if air_e > hi_e * 1.25 else K_RIDE
+        if sustain_frames >= 10:
+            return K_RIDE
         return K_CLOSED_HAT
 
-    # 4. Tom: mid-body with modest high content; pitch-pick by low/mid ratio.
-    if mid_total > high_total * 1.1 and mid_total > 0.015:
-        if sub_e > body_e * 0.8 and low_e > body_e * 0.4:
-            return K_LOW_TOM
-        if body_e > low_e * 1.1:
+    # 3. SNARE — anything in the mid centroid range (≈ 500 Hz up to
+    #    5 kHz) that has at least a token amount of crack energy. This
+    #    is the WIDEST band because a real snare covers a huge tonal
+    #    range (deep-tuned wooden snare at 700 Hz → piccolo at 4 kHz).
+    if 500.0 <= centroid <= 5000.0 and crack_e > 0.001:
+        # Reject if it's clearly a tom (no crack, body dominates).
+        if crack_e < body_e * 0.3 and body_e > crack_e * 3.0 \
+           and centroid < 1200.0 and high_total < mid_total * 0.4:
+            # likely a tom
+            if sub_e > body_e * 0.6:
+                return K_LOW_TOM
             return K_MID_TOM
-        return K_HIGH_TOM
-
-    # 5. Fall-through: use centroid to avoid defaulting everything to hi-hat.
-    #    Low centroid + any low energy → treat as low tom rather than hat.
-    if centroid < 900.0 and low_total > 0.005:
-        return K_LOW_TOM
-    if centroid < 2500.0 and body_e > 0.01:
         return K_SNARE
+
+    # 4. HIGH-CENTROID leftover — centroid 3.5–5 kHz with low sustain
+    #    that wasn't picked up by the snare branch: call it a hat.
+    if centroid > 3500.0:
+        if sustain_frames >= 22:
+            return K_CRASH
+        if sustain_frames >= 10:
+            return K_RIDE
+        return K_CLOSED_HAT
+
+    # 5. MID-TOM fallback for body-heavy hits below 500 Hz centroid
+    #    (sub-bass toms, dropped snares with no crack).
+    if mid_total > high_total * 1.3 and crack_e < body_e * 0.4:
+        if sub_e > body_e * 0.6:
+            return K_LOW_TOM
+        return K_MID_TOM
+
+    # 6. Ultimate fall-through — treat as closed hat (quiet ghost).
     return K_CLOSED_HAT
 
 
@@ -174,28 +244,21 @@ def analyze_wav(path: pathlib.Path):
     hop = 256
     stft = np.abs(librosa.stft(y, n_fft=1024, hop_length=hop))
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
-    # v1.6.1 — lower delta + shorter wait so ghost notes and quiet hats get
-    # captured instead of being suppressed by the louder backbeat. Two
-    # passes: a tight one for accent hits, and a sensitive one whose extra
-    # onsets we add only if they land between detected accents.
-    strong_frames = librosa.onset.onset_detect(
+    # v1.6.1-rc.2 — single conservative pass. The ghost-note pass from rc.1
+    # was creating garbage onsets that got mis-classified. 40 ms minimum
+    # separation prevents the detector from double-triggering on long
+    # hits (crashes, rides, open hats).
+    onset_frames = librosa.onset.onset_detect(
         onset_envelope=onset_env, sr=sr, hop_length=hop,
-        backtrack=True, delta=0.12, wait=2,
+        backtrack=True, delta=0.15, wait=3,
     )
-    ghost_frames = librosa.onset.onset_detect(
-        onset_envelope=onset_env, sr=sr, hop_length=hop,
-        backtrack=True, delta=0.05, wait=1,
-    )
-    merged = sorted(set(int(f) for f in np.concatenate([strong_frames, ghost_frames])))
-    # Drop ghost frames that are within 25 ms of an already-detected strong
-    # onset — those are just the detector re-triggering on the same hit.
-    min_sep = int(0.025 * sr / hop)
-    onset_frames = []
-    for f in merged:
-        if onset_frames and f - onset_frames[-1] < min_sep:
+    min_sep = int(0.040 * sr / hop)
+    filtered = []
+    for f in onset_frames:
+        if filtered and f - filtered[-1] < min_sep:
             continue
-        onset_frames.append(f)
-    onset_frames = np.array(onset_frames, dtype=int)
+        filtered.append(int(f))
+    onset_frames = np.array(filtered, dtype=int)
     if onset_frames.size == 0:
         return None
 
