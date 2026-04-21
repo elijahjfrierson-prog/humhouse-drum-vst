@@ -1,38 +1,44 @@
-# AI Drum VST
+# HumHouse Drums
 
-Scaffold for an AI-powered drum VST3 plugin built with [JUCE](https://juce.com).
-This initial scaffold ships:
+A gothic, Logic-Drummer-style generative drum instrument built with
+[JUCE](https://juce.com). Ships as:
 
-- A JUCE-based VST3/Standalone plugin target (CMake-driven, fetches JUCE 8 automatically).
-- A minimal UI with a **Generate** button, **Variation** and **Density** knobs, and a **Groove / Fill** mode selector.
-- A stub `AIBackend` (C++) and mirrored `ai_drum_backend.py` Python module that return deterministic drum patterns — ready to be swapped for a real model (Magenta MusicRNN, a diffusion drum model, etc.).
-- An internal MIDI sequencer that loops the generated pattern, syncs to the host's BPM and PPQ position, and emits notes on MIDI channel 10 using the General MIDI drum map.
+- **Standalone app** (macOS, Windows, Linux) — runs without a DAW.
+- **VST3 plugin** — Ableton Live, FL Studio, Reaper, Cubase, Studio One, Bitwig.
+- **AU plugin** (macOS only) — required for Logic Pro and GarageBand.
 
-## Downloadable plugin binaries
+Features a **+** (append) button for Logic-Drummer-style groove chaining,
+a live multi-region piano-roll visualizer, 12 genres + Auto, Velocity /
+Humanize / Complexity / Swing / Fills knobs, Half-Time toggle and a
+Hi-Hat override combo. Drag the handle to drop the full arrangement
+as a `.mid` directly into your DAW.
+
+## Downloadable binaries
 
 Binaries are produced by the GitHub Actions workflow
 (`.github/workflows/build.yml`) on every push and on every GitHub Release:
 
-| Platform | Formats                     | Release asset                        |
-|----------|-----------------------------|--------------------------------------|
-| macOS    | Universal `.vst3` + `.component` (AU), drag-to-install | `AI-Drum-VST-macOS.dmg`        |
-| Windows  | `.vst3`                     | `AI-Drum-VST-Windows-x64.zip`        |
-| Linux    | `.vst3`                     | `AI-Drum-VST-Linux-x86_64.zip`       |
+| Platform | Formats                                              | Release asset                        |
+|----------|------------------------------------------------------|--------------------------------------|
+| macOS    | Universal `.vst3` + `.component` (AU), drag-to-install | `HumHouse-Drums-macOS.dmg`           |
+| Windows  | `.vst3` + Standalone `.exe`                          | `HumHouse-Drums-Windows-x64.zip`     |
+| Linux    | `.vst3` + Standalone binary                          | `HumHouse-Drums-Linux-x86_64.zip`    |
 
-Cutting a GitHub Release (`git tag v0.1.0 && git push --tags` → *Create release from tag*)
+Cutting a GitHub Release (`git tag vX.Y.Z && git push --tags` → *Create release from tag*)
 runs the workflow and uploads all three assets — a real drag-to-install
-macOS `.dmg`, a Windows `.vst3` zip, and a Linux `.vst3` zip — so anyone
-can download them from the release page without a GitHub login.
+macOS `.dmg`, a Windows zip, and a Linux zip — so anyone can download
+them from the release page without a GitHub login.
 
 ### macOS `.dmg` contents
 
 `scripts/package_macos_dmg.sh` produces a DMG that mounts to a volume
-named **AI Drum VST** with:
+named **HumHouse Drums** with:
 
-- `AI Drum VST.vst3` — universal binary (arm64 + x86_64), loads in
+- `HumHouse Drums.vst3` — universal binary (arm64 + x86_64), loads in
   FL Studio, Ableton Live, Reaper, Cubase, Studio One, Bitwig, etc.
-- `AI Drum VST.component` — Audio Unit, **required for Logic Pro and
+- `HumHouse Drums.component` — Audio Unit, **required for Logic Pro and
   GarageBand** (Logic does not load VST3).
+- `HumHouse Drums.app` — standalone app.
 - `VST3 Plug-Ins` → symlink to `/Library/Audio/Plug-Ins/VST3`
 - `Audio Unit Plug-Ins` → symlink to `/Library/Audio/Plug-Ins/Components`
 - `README.txt` with install instructions.
@@ -46,8 +52,8 @@ Builds are ad-hoc signed by default. The first time a DAW loads the
 plugin, macOS Gatekeeper may block it. Fix:
 
 ```bash
-xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/AI Drum VST.vst3"
-xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/AI Drum VST.component"
+xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/HumHouse Drums.vst3"
+xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/HumHouse Drums.component"
 ```
 
 For a fully trusted install, add an `APPLE_DEVELOPER_ID` repo secret (e.g.
@@ -71,13 +77,15 @@ to `AIDRUM_FORMATS` and point JUCE at the SDK via `juce_set_aax_sdk_path(...)`.
 .
 ├── CMakeLists.txt             # Top-level CMake; fetches JUCE via FetchContent
 ├── Source/
-│   ├── PluginProcessor.{h,cpp}  # AudioProcessor: sequencer + host sync + APVTS
-│   ├── PluginEditor.{h,cpp}     # GUI: Generate button, knobs, mode combo
-│   ├── AIBackend.{h,cpp}        # C++ stub AI backend (canned patterns)
+│   ├── PluginProcessor.{h,cpp}  # Arrangement engine + host sync + APVTS
+│   ├── PluginEditor.{h,cpp}     # Gothic GUI: +, arrangement grid, knobs
+│   ├── AIBackend.{h,cpp}        # Rule-based genre-aware drum generator
+│   ├── ArrangementStrip.h       # Multi-region piano-roll visualizer
+│   ├── GothicLookAndFeel.h      # Black / purple / bone palette + styling
 │   └── MidiPattern.h            # Shared pattern/note data types
 ├── python_backend/
 │   └── ai_drum_backend.py       # Python stub mirror; target for pybind11 bridge
-└── resources/                  # Placeholder for future samples / model assets
+└── scripts/package_macos_dmg.sh # macOS DMG packager
 ```
 
 ## Build
@@ -100,8 +108,8 @@ cmake --build build --config Release -j
 CMake fetches JUCE 8 the first time you configure (pin the version via
 `-DJUCE_VERSION=8.0.4`). Artifacts land under `build/AIDrumVST_artefacts/Release/`:
 
-- `VST3/AI Drum VST.vst3` — drop into your DAW's VST3 path.
-- `Standalone/AI Drum VST` — runs as a standalone app for quick testing.
+- `VST3/HumHouse Drums.vst3` — drop into your DAW's VST3 path.
+- `Standalone/HumHouse Drums` — runs as a standalone app for quick testing.
 
 Standard VST3 install locations:
 
@@ -113,20 +121,10 @@ Standard VST3 install locations:
 
 ## Using the plugin
 
-1. Load **AI Drum VST** as an instrument track in your DAW.
-2. Route the plugin's MIDI output to a drum sampler (Battery, Addictive Drums, SitalaFree, etc.) or use a follow-up instrument channel. The stub emits General MIDI drums on channel 10.
-3. Pick **Groove** or **Fill**, adjust **Variation** and **Density**, hit **Generate**. The pattern starts looping immediately and re-syncs to the host's PPQ on play.
-
-## Roadmap
-
-The stub backend is intentionally simple. Next steps:
-
-1. **Replace the C++ stub** in `Source/AIBackend.cpp` with a call into `python_backend/ai_drum_backend.py` via [pybind11](https://github.com/pybind/pybind11). The Python module already returns a JSON-shaped dict that maps 1:1 to `aidrum::MidiPattern`.
-2. **Train / wire a real model**: Magenta's `DrumRNN` or `GrooVAE` over the [Groove MIDI Dataset](https://magenta.tensorflow.org/datasets/groove) for MIDI generation; a diffusion model for raw drum-sample synthesis (cf. Emergent Drums 2).
-3. **Contextual generation**: read the host's key (via `juce::AudioPlayHead::CurrentPositionInfo::timeSignatureNumerator/denominator`) and feed it into the model.
-4. **Drag-and-drop MIDI export**: expose the current pattern as a temp `.mid` file and use `juce::DragAndDropContainer::performExternalDragDropOfFiles` so users can drag patterns straight into their DAW.
-5. **Built-in sampler**: bundle a small drum kit (`juce::Synthesiser` + `juce::SamplerVoice`) so the plugin produces audio on its own.
-
-## License
-
-TBD — add a license before distributing.
+1. Press **+** (APPEND) to append a new generated region to the arrangement.
+2. Press **UNDO** to remove the last region or **CLEAR** to start over.
+3. Adjust **Genre / Length / Mode** plus **Swing / Fills / Half-Time / Hi-Hat**
+   to shape the next region before you append it.
+4. Drag the **DRAG MIDI → DAW** handle onto a track in your DAW to drop the
+   entire arrangement as a single MIDI file. **SAVE MIDI** writes it to
+   disk instead.

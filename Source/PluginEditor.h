@@ -1,7 +1,7 @@
 #pragma once
 
+#include "ArrangementStrip.h"
 #include "GothicLookAndFeel.h"
-#include "PatternStrip.h"
 #include "PluginProcessor.h"
 
 #include <JuceHeader.h>
@@ -29,8 +29,9 @@ private:
         float glow = 0.0f;
     };
 
-    // Drag-to-DAW chip.
-    class MidiDragHandle : public juce::Component
+    // Drag-to-DAW chip — drags the FULL arrangement as a single .mid file.
+    class MidiDragHandle : public juce::Component,
+                           public juce::SettableTooltipClient
     {
     public:
         explicit MidiDragHandle (AIDrumAudioProcessor& p) : processorRef (p) {}
@@ -47,43 +48,62 @@ private:
 
     AIDrumAudioProcessor&     processorRef;
     aidrum::GothicLookAndFeel gothicLnf;
+    juce::TooltipWindow       tooltipWindow { this, 350 };
 
-    juce::Label               titleLabel    { {}, "AI  DRUM  VST" };
-    juce::Label               subtitleLabel { {}, "\u2020 generative drum \u2020" };
+    juce::Label               titleLabel    { {}, "HUMHOUSE  DRUMS" };
+    juce::Label               subtitleLabel { {}, "\u2020 hum. house. haunt. \u2020" };
 
-    aidrum::PatternStrip      patternStrip;
+    aidrum::ArrangementStrip  arrangementStrip;
 
+    // Main knobs.
     juce::Slider              variationSlider, complexitySlider, velocitySlider, humanizeSlider;
     juce::Label               variationLabel  { {}, "VARIATION"  };
     juce::Label               complexityLabel { {}, "COMPLEXITY" };
     juce::Label               velocityLabel   { {}, "VELOCITY"   };
     juce::Label               humanizeLabel   { {}, "HUMANIZE"   };
 
-    juce::ComboBox            genreBox;
-    juce::ComboBox            patternLengthBox;
-    juce::ComboBox            modeBox;
+    // Drummer knobs (v0.6.0).
+    juce::Slider              swingSlider, fillsSlider;
+    juce::Label               swingLabel { {}, "SWING" };
+    juce::Label               fillsLabel { {}, "FILLS" };
+
+    // Combos.
+    juce::ComboBox            genreBox, patternLengthBox, modeBox, hiHatBox, drumKitBox;
     juce::Label               genreLabel         { {}, "GENRE"    };
     juce::Label               patternLengthLabel { {}, "LENGTH"   };
     juce::Label               modeLabel          { {}, "MODE"     };
+    juce::Label               hiHatLabel         { {}, "HI-HAT"   };
+    juce::Label               drumKitLabel       { {}, "DRUM KIT" };
 
+    // Toggle.
+    juce::TextButton          halfTimeButton { "HALF-TIME" };
+
+    // Action buttons.
     PlusButton                plusButton;
-    juce::Label               plusHelper         { {}, "SUMMON" };
-
-    juce::TextButton          saveMidiButton     { "SAVE MIDI" };
-    MidiDragHandle            dragHandle         { processorRef };
+    juce::Label               plusHelper     { {}, "APPEND" };
+    juce::TextButton          undoButton     { "UNDO" };
+    juce::TextButton          clearButton    { "CLEAR" };
+    juce::TextButton          saveMidiButton { "SAVE MIDI" };
+    MidiDragHandle            dragHandle     { processorRef };
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ComboAttachment  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     std::unique_ptr<SliderAttachment> variationAttachment;
     std::unique_ptr<SliderAttachment> complexityAttachment;
     std::unique_ptr<SliderAttachment> velocityAttachment;
     std::unique_ptr<SliderAttachment> humanizeAttachment;
+    std::unique_ptr<SliderAttachment> swingAttachment;
+    std::unique_ptr<SliderAttachment> fillsAttachment;
     std::unique_ptr<ComboAttachment>  genreAttachment;
     std::unique_ptr<ComboAttachment>  patternLengthAttachment;
     std::unique_ptr<ComboAttachment>  modeAttachment;
+    std::unique_ptr<ComboAttachment>  hiHatAttachment;
+    std::unique_ptr<ComboAttachment>  drumKitAttachment;
+    std::unique_ptr<ButtonAttachment> halfTimeAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AIDrumAudioProcessorEditor)
 };

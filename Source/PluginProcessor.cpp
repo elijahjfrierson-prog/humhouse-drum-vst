@@ -1,6 +1,10 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <algorithm>
+#include <numeric>
+#include <random>
+
 using APVTS = juce::AudioProcessorValueTreeState;
 
 namespace
@@ -13,8 +17,21 @@ namespace
     constexpr const char* kParamGenre         = "genre";
     constexpr const char* kParamMode          = "mode"; // 0 = Groove, 1 = Fill
 
+    // v0.6.0 Logic-Drummer controls
+    constexpr const char* kParamSwing         = "swing";
+    constexpr const char* kParamFillsProb     = "fillsProb";
+    constexpr const char* kParamHalfTime      = "halfTime";
+    constexpr const char* kParamHiHat         = "hiHat";
+
+    // v0.7.0 DrumKit voicing
+    constexpr const char* kParamDrumKit       = "drumKit";
+
     const juce::StringArray kPatternLengthChoices {
         "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars"
+    };
+
+    const juce::StringArray kHiHatChoices {
+        "Dynamic", "Closed", "Open", "Ride"
     };
 
     juce::StringArray buildGenreChoices()
@@ -45,13 +62,9 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "state", createLayout())
 {
-    // Seed with a simple default groove.
-    aidrum::GenerationRequest req;
-    req.lengthInBeats = patternLengthBeatsFromChoice (
-        (int) apvts.getRawParameterValue (kParamPatternLength)->load());
-    req.genre = static_cast<aidrum::Genre> (
-        (int) apvts.getRawParameterValue (kParamGenre)->load());
-    currentPattern = backend.generate (req);
+    // Seed arrangement with a single initial groove so the visualizer has
+    // something to draw on first launch.
+    arrangement.push_back (backend.generate (buildRequestForMode (aidrum::GenerationMode::Groove)));
 }
 
 AIDrumAudioProcessor::~AIDrumAudioProcessor() = default;
@@ -88,6 +101,34 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
         juce::ParameterID { kParamMode, 1 }, "Mode",
         juce::StringArray { "Groove", "Fill" }, 0));
 
+    // v0.6.0 Logic-Drummer controls
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { kParamSwing, 1 }, "Swing",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { kParamFillsProb, 1 }, "Fills",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { kParamHalfTime, 1 }, "Half-Time", false));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { kParamHiHat, 1 }, "Hi-Hat",
+        kHiHatChoices, 0));
+
+    // v0.7.0 DrumKit — 20 labeled kits, each with unique GM voicing
+    // + velocity / ghost / accent profile.
+    {
+        juce::StringArray kitNames;
+        for (const auto& n : aidrum::drumKitDisplayNames())
+            kitNames.add (juce::String (n));
+        params.push_back (std::make_unique<juce::AudioParameterChoice> (
+            juce::ParameterID { kParamDrumKit, 1 }, "Drum Kit",
+            kitNames,
+            (int) aidrum::DrumKit::LudwigSupraphonicClassicRock));
+    }
+
     return { params.begin(), params.end() };
 }
 
@@ -106,72 +147,143 @@ bool AIDrumAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
     return out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
 }
 
-void AIDrumAudioProcessor::requestGeneration (aidrum::GenerationMode mode)
+aidrum::GenerationRequest
+AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
 {
     aidrum::GenerationRequest req;
     req.mode          = mode;
-    req.variation     = apvts.getRawParameterValue (kParamVariation)->load();
+    req.variation     = apvts.getRawParameterValue (kParamVariation )->load();
     req.complexity    = apvts.getRawParameterValue (kParamComplexity)->load();
-    req.velocity      = apvts.getRawParameterValue (kParamVelocity)->load();
-    req.humanize      = apvts.getRawParameterValue (kParamHumanize)->load();
+    req.velocity      = apvts.getRawParameterValue (kParamVelocity  )->load();
+    req.humanize      = apvts.getRawParameterValue (kParamHumanize  )->load();
     req.lengthInBeats = patternLengthBeatsFromChoice (
                             (int) apvts.getRawParameterValue (kParamPatternLength)->load());
     req.genre         = static_cast<aidrum::Genre> (
                             (int) apvts.getRawParameterValue (kParamGenre)->load());
     req.tempoBpm      = lastBpm.load (std::memory_order_relaxed);
 
+    req.swing         = apvts.getRawParameterValue (kParamSwing)    ->load();
+    req.fillsProb     = apvts.getRawParameterValue (kParamFillsProb)->load();
+    req.halfTime      = apvts.getRawParameterValue (kParamHalfTime) ->load() > 0.5f;
+    req.hiHatMode     = static_cast<aidrum::HiHatMode> (
+                            (int) apvts.getRawParameterValue (kParamHiHat)->load());
+    req.kit           = static_cast<aidrum::DrumKit> (
+                            (int) apvts.getRawParameterValue (kParamDrumKit)->load());
+    return req;
+}
+
+void AIDrumAudioProcessor::appendRegion (aidrum::GenerationMode requestedMode)
+{
+    auto req = buildRequestForMode (requestedMode);
+
+    // Fills-probability: chance to reshape a Groove call into a Fill, so
+    // chained groove chains occasionally inject a fill like Logic's Drummer.
+    if (requestedMode == aidrum::GenerationMode::Groove && req.fillsProb > 0.0f)
+    {
+        std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
+        std::uniform_real_distribution<float> unit (0.0f, 1.0f);
+        if (unit (rng) < req.fillsProb)
+            req.mode = aidrum::GenerationMode::Fill;
+    }
+
     auto pattern = backend.generate (req);
 
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    arrangement.push_back (std::move (pattern));
+    // Note: deliberately do NOT reset the playhead here — we want the
+    // sequencer to keep rolling into the newly-appended region.
+}
+
+void AIDrumAudioProcessor::undoLastRegion()
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (arrangement.size() > 1)
+        arrangement.pop_back();
+}
+
+void AIDrumAudioProcessor::clearArrangement()
+{
+    auto fresh = backend.generate (buildRequestForMode (aidrum::GenerationMode::Groove));
+
     {
-        std::lock_guard<std::mutex> lock (patternMutex);
-        currentPattern = std::move (pattern);
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        arrangement.clear();
+        arrangement.push_back (std::move (fresh));
     }
+
     playheadBeats.store (0.0, std::memory_order_release);
+}
+
+std::vector<aidrum::MidiPattern> AIDrumAudioProcessor::getArrangement() const
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    return arrangement;
+}
+
+double AIDrumAudioProcessor::getArrangementTotalBeats() const
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    double total = 0.0;
+    for (const auto& p : arrangement)
+        total += std::max (0.001, p.lengthInBeats);
+    return total;
+}
+
+double AIDrumAudioProcessor::getPlayheadBeats() const
+{
+    return playheadBeats.load (std::memory_order_acquire);
 }
 
 aidrum::MidiPattern AIDrumAudioProcessor::getCurrentPattern() const
 {
-    std::lock_guard<std::mutex> lock (patternMutex);
-    return currentPattern;
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    return arrangement.empty() ? aidrum::MidiPattern{} : arrangement.back();
 }
 
-bool AIDrumAudioProcessor::writeCurrentPatternAsMidiFile (const juce::File& dest) const
+bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) const
 {
-    aidrum::MidiPattern pattern;
+    std::vector<aidrum::MidiPattern> snapshot;
     {
-        std::lock_guard<std::mutex> lock (patternMutex);
-        pattern = currentPattern;
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        snapshot = arrangement;
     }
 
-    if (pattern.notes.empty() || pattern.lengthInBeats <= 0.0)
+    double total = 0.0;
+    for (const auto& p : snapshot)
+        total += std::max (0.0, p.lengthInBeats);
+
+    if (snapshot.empty() || total <= 0.0)
         return false;
 
-    // Standard Type-1, 960 PPQ.
     constexpr short kPPQ = 960;
 
     juce::MidiMessageSequence seq;
     seq.addEvent (juce::MidiMessage::timeSignatureMetaEvent (4, 4));
-    seq.addEvent (juce::MidiMessage::tempoMetaEvent (static_cast<int> (500000))); // 120 BPM
+    seq.addEvent (juce::MidiMessage::tempoMetaEvent (500000)); // 120 BPM
 
-    for (const auto& note : pattern.notes)
+    double regionOffset = 0.0;
+    for (const auto& region : snapshot)
     {
-        const double onTicks  = note.startBeat * kPPQ;
-        const double offTicks = (note.startBeat + std::max (0.01, note.lengthBeat)) * kPPQ;
-        const auto   vel      = static_cast<juce::uint8> (juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f));
+        for (const auto& note : region.notes)
+        {
+            const double onTicks  = (regionOffset + note.startBeat) * kPPQ;
+            const double offTicks = (regionOffset + note.startBeat
+                                     + std::max (0.01, note.lengthBeat)) * kPPQ;
+            const auto vel = static_cast<juce::uint8> (
+                juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f));
 
-        // GM drums live on MIDI channel 10.
-        auto on  = juce::MidiMessage::noteOn  (10, note.noteNumber, vel);
-        auto off = juce::MidiMessage::noteOff (10, note.noteNumber);
-        on.setTimeStamp (onTicks);
-        off.setTimeStamp (offTicks);
-
-        seq.addEvent (on);
-        seq.addEvent (off);
+            auto on  = juce::MidiMessage::noteOn  (10, note.noteNumber, vel);
+            auto off = juce::MidiMessage::noteOff (10, note.noteNumber);
+            on .setTimeStamp (onTicks);
+            off.setTimeStamp (offTicks);
+            seq.addEvent (on);
+            seq.addEvent (off);
+        }
+        regionOffset += std::max (0.0, region.lengthInBeats);
     }
 
-    // End-of-track at pattern length.
     auto eot = juce::MidiMessage::endOfTrack();
-    eot.setTimeStamp (pattern.lengthInBeats * kPPQ);
+    eot.setTimeStamp (regionOffset * kPPQ);
     seq.addEvent (eot);
 
     seq.updateMatchedPairs();
@@ -191,18 +303,24 @@ bool AIDrumAudioProcessor::writeCurrentPatternAsMidiFile (const juce::File& dest
     return false;
 }
 
-void AIDrumAudioProcessor::renderPatternToMidiBuffer (juce::MidiBuffer& midiOut,
-                                                      int               numSamples,
-                                                      double            sampleRate,
-                                                      double            bpm)
+void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midiOut,
+                                                          int               numSamples,
+                                                          double            sampleRate,
+                                                          double            bpm)
 {
-    aidrum::MidiPattern pattern;
+    std::vector<aidrum::MidiPattern> snapshot;
     {
-        std::lock_guard<std::mutex> lock (patternMutex);
-        pattern = currentPattern;
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        snapshot = arrangement;
     }
 
-    if (pattern.notes.empty() || pattern.lengthInBeats <= 0.0)
+    if (snapshot.empty())
+        return;
+
+    double total = 0.0;
+    for (const auto& p : snapshot)
+        total += std::max (0.001, p.lengthInBeats);
+    if (total <= 0.0)
         return;
 
     const double secondsPerBeat = 60.0 / std::max (1.0, bpm);
@@ -211,35 +329,45 @@ void AIDrumAudioProcessor::renderPatternToMidiBuffer (juce::MidiBuffer& midiOut,
     const double blockStartBeat = playheadBeats.load (std::memory_order_acquire);
     const double blockEndBeat   = blockStartBeat + blockBeats;
 
-    for (const auto& note : pattern.notes)
+    // Loop arrangement: for each pass, emit notes that fall within [blockStart, blockEnd).
+    double loopOffset = 0.0;
+    // Walk enough loop copies to cover this block.
+    while (loopOffset <= blockEndBeat + total)
     {
-        // Loop the pattern across blocks.
-        for (double loopOffset = 0.0;
-             loopOffset <= blockEndBeat + pattern.lengthInBeats;
-             loopOffset += pattern.lengthInBeats)
+        double regionOffset = loopOffset;
+        for (const auto& region : snapshot)
         {
-            const double onBeat  = note.startBeat + loopOffset;
-            const double offBeat = onBeat + note.lengthBeat;
-
-            if (onBeat >= blockStartBeat && onBeat < blockEndBeat)
+            const double regionLen = std::max (0.001, region.lengthInBeats);
+            for (const auto& note : region.notes)
             {
-                const int sample = static_cast<int> ((onBeat - blockStartBeat) * secondsPerBeat * sampleRate);
-                midiOut.addEvent (juce::MidiMessage::noteOn  (10, note.noteNumber,
-                                                              static_cast<juce::uint8> (note.velocity * 127.0f)),
-                                  juce::jlimit (0, numSamples - 1, sample));
-            }
+                const double onBeat  = regionOffset + note.startBeat;
+                const double offBeat = onBeat + std::max (0.01, note.lengthBeat);
 
-            if (offBeat >= blockStartBeat && offBeat < blockEndBeat)
-            {
-                const int sample = static_cast<int> ((offBeat - blockStartBeat) * secondsPerBeat * sampleRate);
-                midiOut.addEvent (juce::MidiMessage::noteOff (10, note.noteNumber),
-                                  juce::jlimit (0, numSamples - 1, sample));
+                if (onBeat >= blockStartBeat && onBeat < blockEndBeat)
+                {
+                    const int sample = static_cast<int> (
+                        (onBeat - blockStartBeat) * secondsPerBeat * sampleRate);
+                    midiOut.addEvent (
+                        juce::MidiMessage::noteOn (10, note.noteNumber,
+                            static_cast<juce::uint8> (
+                                juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f))),
+                        juce::jlimit (0, numSamples - 1, sample));
+                }
+
+                if (offBeat >= blockStartBeat && offBeat < blockEndBeat)
+                {
+                    const int sample = static_cast<int> (
+                        (offBeat - blockStartBeat) * secondsPerBeat * sampleRate);
+                    midiOut.addEvent (juce::MidiMessage::noteOff (10, note.noteNumber),
+                                      juce::jlimit (0, numSamples - 1, sample));
+                }
             }
+            regionOffset += regionLen;
         }
+        loopOffset += total;
     }
 
-    // Wrap playhead within pattern length.
-    playheadBeats.store (std::fmod (blockEndBeat, pattern.lengthInBeats),
+    playheadBeats.store (std::fmod (blockEndBeat, total),
                          std::memory_order_release);
 }
 
@@ -272,10 +400,10 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     lastBpm.store (bpm, std::memory_order_relaxed);
 
-    renderPatternToMidiBuffer (midi,
-                               buffer.getNumSamples(),
-                               getSampleRate(),
-                               bpm);
+    renderArrangementToMidiBuffer (midi,
+                                   buffer.getNumSamples(),
+                                   getSampleRate(),
+                                   bpm);
 }
 
 juce::AudioProcessorEditor* AIDrumAudioProcessor::createEditor()

@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <vector>
 
 class AIDrumAudioProcessor : public juce::AudioProcessor
 {
@@ -41,24 +42,48 @@ public:
     // --- Plugin-specific API --------------------------------------------
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
 
-    // Trigger a new generation from the editor. Thread-safe.
-    void requestGeneration (aidrum::GenerationMode mode);
+    // v0.6.0 — Logic-Drummer-style arrangement API.
+    // Generates a new region with current params and appends it to the arrangement.
+    void appendRegion (aidrum::GenerationMode mode);
 
-    // Returns a copy of the most-recently-generated pattern (thread-safe).
+    // Removes the most-recently-appended region (keeps at least one region).
+    void undoLastRegion();
+
+    // Wipes the arrangement back to a single freshly-generated region.
+    void clearArrangement();
+
+    // Returns a copy of the full arrangement for UI rendering (thread-safe).
+    std::vector<aidrum::MidiPattern> getArrangement() const;
+
+    // Sum of all region lengths in beats.
+    double getArrangementTotalBeats() const;
+
+    // Returns the current audio-thread playhead position in beats (wraps 0..totalBeats).
+    double getPlayheadBeats() const;
+
+    // Legacy single-pattern accessor — returns the latest (last) region in the arrangement.
     aidrum::MidiPattern getCurrentPattern() const;
 
-    // Writes the current pattern to `dest` as a standard Type-0 MIDI file.
-    // Returns true on success. Used by "Save MIDI" and "Drag to DAW" in the
-    // editor — works identically in standalone and plugin mode.
-    bool writeCurrentPatternAsMidiFile (const juce::File& dest) const;
+    // Writes the ENTIRE arrangement (every region concatenated) to `dest`
+    // as a Type-1 MIDI file. Used by both "Save MIDI" and "Drag to DAW".
+    bool writeArrangementAsMidiFile (const juce::File& dest) const;
+
+    // Backwards-compat alias — also dumps the full arrangement.
+    bool writeCurrentPatternAsMidiFile (const juce::File& dest) const
+    {
+        return writeArrangementAsMidiFile (dest);
+    }
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
-    void renderPatternToMidiBuffer (juce::MidiBuffer& midiOut,
-                                    int               numSamples,
-                                    double            sampleRate,
-                                    double            bpm);
+    // Builds a GenerationRequest from current APVTS state.
+    aidrum::GenerationRequest buildRequestForMode (aidrum::GenerationMode mode) const;
+
+    void renderArrangementToMidiBuffer (juce::MidiBuffer& midiOut,
+                                        int               numSamples,
+                                        double            sampleRate,
+                                        double            bpm);
 
     // Maps the Pattern Length choice index to a length in beats.
     static double patternLengthBeatsFromChoice (int choiceIndex);
@@ -66,11 +91,11 @@ private:
     juce::AudioProcessorValueTreeState apvts;
     aidrum::AIBackend                  backend;
 
-    mutable std::mutex       patternMutex;
-    aidrum::MidiPattern      currentPattern;
+    mutable std::mutex                  arrangementMutex;
+    std::vector<aidrum::MidiPattern>    arrangement; // concatenated regions
 
     // Playback position (in beats) across blocks when the host isn't providing ppq.
-    // Read/written from the audio thread and reset from the UI thread — must be atomic.
+    // Read/written from the audio thread — must be atomic.
     std::atomic<double>      playheadBeats { 0.0 };
     std::atomic<double>      lastBpm       { 120.0 };
 

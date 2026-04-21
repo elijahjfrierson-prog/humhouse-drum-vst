@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DrumKit.h"
 #include "MidiPattern.h"
 
 #include <cstdint>
@@ -12,6 +13,15 @@ namespace aidrum
     {
         Groove,
         Fill
+    };
+
+    // Logic-Drummer-style hi-hat voicing override.
+    enum class HiHatMode : int
+    {
+        Dynamic = 0,  // use genre default (closed/ride/train/etc.)
+        Closed,       // force GM closed hat (42)
+        Open,         // force GM open hat  (46)
+        Ride          // force GM ride      (51)
     };
 
     enum class Genre : int
@@ -47,6 +57,15 @@ namespace aidrum
         int            denominator   = 4;
         double         lengthInBeats = 4.0;   // 0.25 (1/16) … 8.0 (2 bars)
         std::uint64_t  seed          = 0;     // 0 = random
+
+        // Logic-Drummer-style controls (v0.6.0)
+        float          swing         = 0.0f;  // 0..1 — 0 = straight, 1 = full triplet feel on offbeats
+        float          fillsProb     = 0.0f;  // 0..1 — chance a Groove call is reshaped into a Fill
+        bool           halfTime      = false; // snare on 3 instead of 2+4
+        HiHatMode      hiHatMode     = HiHatMode::Dynamic;
+
+        // Drumkit voicing (v0.7.0): remaps GM notes + velocity/ghost curves.
+        DrumKit        kit           = DrumKit::LudwigSupraphonicClassicRock;
     };
 
     // Stub AI backend.

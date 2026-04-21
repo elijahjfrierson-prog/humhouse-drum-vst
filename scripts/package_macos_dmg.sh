@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Package the macOS build into a drag-to-install .dmg containing:
-#   * AI Drum VST.vst3   (Ableton, FL Studio, Reaper, Cubase, Studio One, …)
-#   * AI Drum VST.component (Logic Pro, GarageBand)
+#   * HumHouse Drums.vst3   (Ableton, FL Studio, Reaper, Cubase, Studio One, …)
+#   * HumHouse Drums.component (Logic Pro, GarageBand)
 #   * Symlinks to the system plug-in folders so the user can just drag & drop
 #
 # Must run on macOS (uses `hdiutil`, `codesign`).
@@ -9,11 +9,11 @@ set -euo pipefail
 
 BUILD_DIR="${BUILD_DIR:-build}"
 ARTEFACTS="$BUILD_DIR/AIDrumVST_artefacts/Release"
-VST3_SRC="$ARTEFACTS/VST3/AI Drum VST.vst3"
-AU_SRC="$ARTEFACTS/AU/AI Drum VST.component"
-APP_SRC="$ARTEFACTS/Standalone/AI Drum VST.app"
-STAGING="$(mktemp -d)/AI Drum VST"
-DMG_OUT="${DMG_OUT:-AI-Drum-VST-macOS.dmg}"
+VST3_SRC="$ARTEFACTS/VST3/HumHouse Drums.vst3"
+AU_SRC="$ARTEFACTS/AU/HumHouse Drums.component"
+APP_SRC="$ARTEFACTS/Standalone/HumHouse Drums.app"
+STAGING="$(mktemp -d)/HumHouse Drums"
+DMG_OUT="${DMG_OUT:-HumHouse-Drums-macOS.dmg}"
 
 if [[ ! -d "$VST3_SRC" ]]; then
   echo "error: VST3 bundle not found at $VST3_SRC" >&2
@@ -37,29 +37,29 @@ ln -s "/Library/Audio/Plug-Ins/Components" "$STAGING/Audio Unit Plug-Ins"
 
 # Readme inside the dmg.
 cat > "$STAGING/README.txt" <<'EOF'
-AI Drum VST
-===========
+HumHouse Drums
+==============
 
 Three ways to use it:
 
 A) Standalone app (no DAW scanning needed):
-   Double-click "AI Drum VST.app" — it runs by itself. Use the
+   Double-click "HumHouse Drums.app" — it runs by itself. Use the
    "Drag MIDI to DAW" handle or "Save MIDI..." button to pull
    patterns into FL Studio / Logic / Ableton / anything.
 
 B) VST3 plugin (Ableton Live, FL Studio, Reaper, Cubase, Studio One, …):
-   Drag "AI Drum VST.vst3" into "VST3 Plug-Ins" then rescan in your DAW.
+   Drag "HumHouse Drums.vst3" into "VST3 Plug-Ins" then rescan in your DAW.
 
 C) AU plugin (Logic Pro, GarageBand — Logic does not accept VST3):
-   Drag "AI Drum VST.component" into "Audio Unit Plug-Ins" then
+   Drag "HumHouse Drums.component" into "Audio Unit Plug-Ins" then
    relaunch Logic.
 
 First launch (unsigned build):
   macOS Gatekeeper may block the plugin the first time your DAW loads it.
   If that happens, run this once in Terminal:
 
-      xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/AI Drum VST.vst3"
-      xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/AI Drum VST.component"
+      xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/HumHouse Drums.vst3"
+      xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/HumHouse Drums.component"
 
   Then relaunch your DAW.
 EOF
@@ -69,19 +69,19 @@ EOF
 if [[ -n "${APPLE_DEVELOPER_ID:-}" ]]; then
   echo "Signing with Developer ID: $APPLE_DEVELOPER_ID"
   codesign --force --deep --options runtime --timestamp \
-           --sign "$APPLE_DEVELOPER_ID" "$STAGING/AI Drum VST.vst3"
+           --sign "$APPLE_DEVELOPER_ID" "$STAGING/HumHouse Drums.vst3"
   codesign --force --deep --options runtime --timestamp \
-           --sign "$APPLE_DEVELOPER_ID" "$STAGING/AI Drum VST.component"
+           --sign "$APPLE_DEVELOPER_ID" "$STAGING/HumHouse Drums.component"
 else
   echo "No APPLE_DEVELOPER_ID set; ad-hoc signing (users may see Gatekeeper prompts)."
-  codesign --force --deep --sign - "$STAGING/AI Drum VST.vst3"   || true
-  codesign --force --deep --sign - "$STAGING/AI Drum VST.component" || true
-  [[ -d "$STAGING/AI Drum VST.app" ]] && codesign --force --deep --sign - "$STAGING/AI Drum VST.app" || true
+  codesign --force --deep --sign - "$STAGING/HumHouse Drums.vst3"   || true
+  codesign --force --deep --sign - "$STAGING/HumHouse Drums.component" || true
+  [[ -d "$STAGING/HumHouse Drums.app" ]] && codesign --force --deep --sign - "$STAGING/HumHouse Drums.app" || true
 fi
 
 rm -f "$DMG_OUT"
 hdiutil create \
-  -volname "AI Drum VST" \
+  -volname "HumHouse Drums" \
   -srcfolder "$STAGING" \
   -fs HFS+ \
   -format UDZO \

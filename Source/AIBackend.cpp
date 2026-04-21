@@ -201,6 +201,97 @@ namespace aidrum
         return static_cast<Genre> (pick (rng));
     }
 
+    namespace
+    {
+        // Apply Logic-Drummer-style swing + hi-hat override as a post-process.
+        void applyDrummerPost (MidiPattern& p, const GenerationRequest& r)
+        {
+            // Hi-hat override: remap time-keeping cymbals to the chosen voice.
+            if (r.hiHatMode != HiHatMode::Dynamic)
+            {
+                int target = kClosedHat;
+                switch (r.hiHatMode)
+                {
+                    case HiHatMode::Closed:  target = kClosedHat; break;
+                    case HiHatMode::Open:    target = kOpenHat;   break;
+                    case HiHatMode::Ride:    target = kRide;      break;
+                    case HiHatMode::Dynamic: break;
+                }
+                for (auto& n : p.notes)
+                {
+                    if (n.noteNumber == kClosedHat
+                        || n.noteNumber == kOpenHat
+                        || n.noteNumber == kRide
+                        || n.noteNumber == kRideBell)
+                    {
+                        n.noteNumber = target;
+                    }
+                }
+            }
+
+            // Swing: shift off-beat 16ths (steps 1, 3, 5 …) forward by up to
+            // a third of a sixteenth — that's the classic triplet feel.
+            if (r.swing > 0.001f)
+            {
+                const double shift = (double) r.swing * (kSixteenth * (1.0 / 3.0));
+                for (auto& n : p.notes)
+                {
+                    const double step = n.startBeat / kSixteenth;
+                    const int    s    = static_cast<int> (std::round (step));
+                    if ((s % 2) == 1 && std::abs (step - s) < 0.25)
+                    {
+                        n.startBeat = std::min (n.startBeat + shift,
+                                                p.lengthInBeats - 0.001);
+                    }
+                }
+            }
+        }
+
+        // Remap GM notes to the selected DrumKit and apply its velocity /
+        // ghost / accent curves. Runs after the genre generator + drummer
+        // post so the kit always has the final say over timbre/tone.
+        void applyKit (MidiPattern& p, const GenerationRequest& r, GenerationMode effectiveMode)
+        {
+            const auto& kit = drumKitProfile (r.kit);
+
+            for (auto& n : p.notes)
+            {
+                // Snare family first — low-velocity ghost snares become the
+                // kit's ghost voice (typically sidestick / cross-stick / clap).
+                if (n.noteNumber == kSnare)
+                {
+                    if (n.velocity <= kit.ghostThreshold
+                        && kit.ghostSnare != kit.snare)
+                        n.noteNumber = kit.ghostSnare;
+                    else
+                        n.noteNumber = kit.snare;
+                }
+                else if (n.noteNumber == kSideStick) n.noteNumber = kit.sideStick;
+                else if (n.noteNumber == kClap)      n.noteNumber = kit.clap;
+                else if (n.noteNumber == kKick)      n.noteNumber = kit.kick;
+                else if (n.noteNumber == kClosedHat) n.noteNumber = kit.closedHat;
+                else if (n.noteNumber == kOpenHat)   n.noteNumber = kit.openHat;
+                else if (n.noteNumber == kRide)      n.noteNumber = kit.ride;
+                else if (n.noteNumber == kRideBell)  n.noteNumber = kit.rideBell;
+                else if (n.noteNumber == kChina)     n.noteNumber = kit.china;
+                else if (n.noteNumber == kCrash)
+                {
+                    // Metal kits swap crash → china on Fills for the
+                    // signature thrash "china accent" sound.
+                    n.noteNumber = (effectiveMode == GenerationMode::Fill
+                                     && kit.preferChinaForFill)
+                                       ? kit.china : kit.crash;
+                }
+                else if (n.noteNumber == kLowTom)  n.noteNumber = kit.lowTom;
+                else if (n.noteNumber == kMidTom)  n.noteNumber = kit.midTom;
+                else if (n.noteNumber == kHighTom) n.noteNumber = kit.highTom;
+
+                // Global velocity scale (metal = hot, jazz = soft).
+                n.velocity = std::clamp (n.velocity * kit.velocityScale, 0.01f, 1.0f);
+            }
+        }
+    } // namespace
+
     MidiPattern AIBackend::generate (const GenerationRequest& r)
     {
         const std::uint64_t seed    = resolveSeed (r.seed);
@@ -214,7 +305,9 @@ namespace aidrum
                                 ? makeFill   (seeded, resolved)
                                 : makeGroove (seeded, resolved);
 
-        finalize (pattern, seeded, seed ^ 0x9E3779B97F4A7C15ULL);
+        applyDrummerPost (pattern, seeded);
+        applyKit         (pattern, seeded, r.mode);
+        finalize         (pattern, seeded, seed ^ 0x9E3779B97F4A7C15ULL);
         return pattern;
     }
 
@@ -300,10 +393,17 @@ namespace aidrum
             const double b = static_cast<double> (beat);
             const int    beatOfBar = beat % 4;
 
-            const bool isKickDownbeat = g.fourOnFloor
-                                        ? true
-                                        : (beatOfBar == 0 || beatOfBar == 2);
-            const bool isSnareBackbeat = (beatOfBar == 1 || beatOfBar == 3);
+            bool isKickDownbeat  = g.fourOnFloor
+                                    ? true
+                                    : (beatOfBar == 0 || beatOfBar == 2);
+            bool isSnareBackbeat = (beatOfBar == 1 || beatOfBar == 3);
+
+            if (r.halfTime)
+            {
+                // Half-time feel: snare only on beat 3, kick only on beat 1.
+                isKickDownbeat  = (beatOfBar == 0);
+                isSnareBackbeat = (beatOfBar == 2);
+            }
 
             if (isKickDownbeat && unit (rng) < g.kickProbBase + 0.5f * (1.0f - r.complexity))
                 addNote (pattern, kKick, g.velAccent, b, 0.25);

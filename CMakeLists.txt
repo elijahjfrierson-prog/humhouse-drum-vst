@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(AIDrumVST VERSION 0.1.0 LANGUAGES C CXX)
+project(AIDrumVST VERSION 0.7.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -40,12 +40,12 @@ if(APPLE)
 endif()
 
 juce_add_plugin(AIDrumVST
-    COMPANY_NAME              "ElijahFrierson"
-    BUNDLE_ID                 "com.elijahfrierson.aidrumvst"
-    PLUGIN_MANUFACTURER_CODE  Elij
-    PLUGIN_CODE               Aidr
+    COMPANY_NAME              "HumHouse"
+    BUNDLE_ID                 "com.humhouse.humhousedrums"
+    PLUGIN_MANUFACTURER_CODE  Humh
+    PLUGIN_CODE               Hhdr
     FORMATS                   ${AIDRUM_FORMATS}
-    PRODUCT_NAME              "AI Drum VST"
+    PRODUCT_NAME              "HumHouse Drums"
     IS_SYNTH                  TRUE
     NEEDS_MIDI_INPUT          TRUE
     NEEDS_MIDI_OUTPUT         TRUE
@@ -64,9 +64,12 @@ target_sources(AIDrumVST PRIVATE
     Source/PluginEditor.h
     Source/AIBackend.cpp
     Source/AIBackend.h
+    Source/DrumKit.cpp
+    Source/DrumKit.h
     Source/MidiPattern.h
     Source/GothicLookAndFeel.h
     Source/PatternStrip.h
+    Source/ArrangementStrip.h
 )
 
 target_compile_definitions(AIDrumVST PUBLIC
