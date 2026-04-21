@@ -26,12 +26,21 @@ namespace
     // v0.7.0 DrumKit voicing
     constexpr const char* kParamDrumKit       = "drumKit";
 
+    // v1.3.0 Ambient room
+    constexpr const char* kParamRoom          = "room";
+    constexpr const char* kParamRoomAmount    = "roomAmount";
+
     const juce::StringArray kPatternLengthChoices {
         "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars"
     };
 
     const juce::StringArray kHiHatChoices {
         "Dynamic", "Closed", "Open", "Ride"
+    };
+
+    const juce::StringArray kRoomChoices {
+        "Dry / Studio", "Small Room", "Garage", "Live Bar",
+        "Hallway", "Big Hall", "Stadium"
     };
 
     juce::StringArray buildGenreChoices()
@@ -132,6 +141,14 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
             (int) aidrum::DrumKit::LudwigSupraphonicClassicRock));
     }
 
+    // v1.3.0 Ambient room preset + wet amount (0-100%).
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { kParamRoom, 1 }, "Room", kRoomChoices, 0));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { kParamRoomAmount, 1 }, "Room Amount",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f));
+
     return { params.begin(), params.end() };
 }
 
@@ -183,14 +200,31 @@ void AIDrumAudioProcessor::appendRegion (aidrum::GenerationMode requestedMode)
 {
     auto req = buildRequestForMode (requestedMode);
 
-    // Fills-probability: chance to reshape a Groove call into a Fill, so
-    // chained groove chains occasionally inject a fill like Logic's Drummer.
-    if (requestedMode == aidrum::GenerationMode::Groove && req.fillsProb > 0.0f)
+    // v1.3.0 phraseBar: region index in the arrangement so the backend
+    // can evolve the performance (fills vary every 8 bars, dynamics
+    // breathe across phrases, fills never repeat).
     {
-        std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
-        std::uniform_real_distribution<float> unit (0.0f, 1.0f);
-        if (unit (rng) < req.fillsProb)
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        req.phraseBar = static_cast<int> (arrangement.size());
+    }
+
+    // v1.3.0 Session-player fill cadence. Logic's Drummer caps every 8-bar
+    // phrase with a fill. We replicate that: whenever a region falls on bar
+    // 7 (mod 8) of the arrangement, promote it to a Fill regardless of
+    // the fillsProb knob. Between those, the knob still drives random
+    // sprinkled fills like before.
+    if (requestedMode == aidrum::GenerationMode::Groove)
+    {
+        const bool phraseCap = (req.phraseBar % 8) == 7;
+        if (phraseCap)
             req.mode = aidrum::GenerationMode::Fill;
+        else if (req.fillsProb > 0.0f)
+        {
+            std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
+            std::uniform_real_distribution<float> unit (0.0f, 1.0f);
+            if (unit (rng) < req.fillsProb)
+                req.mode = aidrum::GenerationMode::Fill;
+        }
     }
 
     auto pattern = backend.generate (req);
@@ -617,6 +651,19 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     hostTransportSeen.store (hostDrivesPlayhead, std::memory_order_relaxed);
     lastBpm.store (bpm, std::memory_order_relaxed);
+
+    // v1.3.0 Apply the ROOM preset + ROOM AMT knob to the master reverb
+    // so every block stays in sync with whatever the user has dialed in.
+    {
+        const int roomIdx = (int) apvts.getRawParameterValue (kParamRoom)->load();
+        const float amt   = apvts.getRawParameterValue (kParamRoomAmount)->load();
+        const auto preset = aidrum::roomPresetFor (roomIdx);
+        auto& m = busMixer.master_ref();
+        m.reverbSize.store (preset.size, std::memory_order_relaxed);
+        m.reverbDamp.store (preset.damp, std::memory_order_relaxed);
+        m.reverbMix .store (preset.mix * juce::jlimit (0.0f, 1.0f, amt),
+                            std::memory_order_relaxed);
+    }
 
     // Decide whether to advance / emit this block.
     const auto state = (TransportState) transportState.load (std::memory_order_acquire);

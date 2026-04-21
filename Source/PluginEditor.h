@@ -107,12 +107,17 @@ private:
     juce::Label               fillsLabel { {}, "FILLS" };
 
     // Combos.
-    juce::ComboBox            genreBox, patternLengthBox, modeBox, hiHatBox, drumKitBox;
+    juce::ComboBox            genreBox, patternLengthBox, modeBox, hiHatBox, drumKitBox, roomBox;
     juce::Label               genreLabel         { {}, "GENRE"    };
     juce::Label               patternLengthLabel { {}, "LENGTH"   };
     juce::Label               modeLabel          { {}, "MODE"     };
     juce::Label               hiHatLabel         { {}, "HI-HAT"   };
     juce::Label               drumKitLabel       { {}, "DRUM KIT" };
+    juce::Label               roomLabel          { {}, "ROOM"     };
+
+    // v1.3.0 Room amount knob (0-100% of room ambience effect).
+    juce::Slider              roomAmountSlider;
+    juce::Label               roomAmountLabel    { {}, "ROOM AMT" };
 
     // Toggle.
     juce::TextButton          halfTimeButton { "HALF-TIME" };
@@ -155,6 +160,8 @@ private:
     std::unique_ptr<ComboAttachment>  modeAttachment;
     std::unique_ptr<ComboAttachment>  hiHatAttachment;
     std::unique_ptr<ComboAttachment>  drumKitAttachment;
+    std::unique_ptr<ComboAttachment>  roomAttachment;
+    std::unique_ptr<SliderAttachment> roomAmountAttachment;
     std::unique_ptr<ButtonAttachment> halfTimeAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AIDrumAudioProcessorEditor)

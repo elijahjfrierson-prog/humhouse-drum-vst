@@ -185,6 +185,14 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
     g.setColour (juce::Colour (Palette::kPanelEdge));
     g.drawRoundedRectangle (r, 18.0f, 1.0f);
 
+    // v1.3.0 Per-kit tint — each of the 20 kits has a distinct accent
+    // colour (walnut amber, sunburst red, jet black, neon pink for 808,
+    // cyan for 909, etc.) so the visualizer looks genuinely different
+    // per kit instead of every shell being the same brand purple.
+    const auto kitAccent = juce::Colour (aidrum::drumKitAccent (
+        static_cast<aidrum::DrumKit> (juce::jlimit (0,
+            (int) aidrum::DrumKit::Count - 1, selectedKit))));
+
     auto stage = r.reduced (20.0f);
     const bool electronic = selectedKit >= (int) aidrum::DrumKit::Roland808HipHop;
     const bool metal = selectedKit >= (int) aidrum::DrumKit::SonorSQ2Thrash
@@ -202,7 +210,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
     g.setColour (juce::Colour (Palette::kBone));
     g.drawFittedText (kitName, r.toNearestInt().withTrimmedTop (22).reduced (14, 0), juce::Justification::topLeft, 2);
 
-    g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.08f));
+    g.setColour (kitAccent.withAlpha (0.10f));
     g.fillEllipse (stage.getCentreX() - 140.0f, stage.getCentreY() - 110.0f, 280.0f, 220.0f);
 
     auto drawShell = [&] (juce::Rectangle<float> shell, float rimAlpha, int busIdx, const char* label)
@@ -211,12 +219,16 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         if (f > 0.01f)
         {
             const auto glow = shell.expanded (10.0f + 14.0f * f);
-            g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.22f * f));
+            g.setColour (kitAccent.withAlpha (0.26f * f));
             g.fillEllipse (glow);
         }
-        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.10f + 0.55f * f));
+        // Shell body tinted with a dark wash of the kit accent on top of
+        // bone so each kit reads as its own colour even at rest.
+        g.setColour (kitAccent.darker (0.85f).withAlpha (0.55f));
         g.fillEllipse (shell);
-        g.setColour (juce::Colour (Palette::kAccentSoft).withAlpha (juce::jlimit (0.0f, 1.0f, rimAlpha + f * 0.4f)));
+        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.18f + 0.45f * f));
+        g.fillEllipse (shell.reduced (shell.getHeight() * 0.28f));
+        g.setColour (kitAccent.brighter (0.25f).withAlpha (juce::jlimit (0.0f, 1.0f, rimAlpha + f * 0.4f)));
         g.drawEllipse (shell, 2.0f + 1.2f * f);
 
         if (label != nullptr)
@@ -234,7 +246,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         auto body = stage.withSizeKeepingCentre (stage.getWidth() * 0.72f, stage.getHeight() * 0.48f);
         g.setColour (juce::Colour (Palette::kInk).brighter (0.08f));
         g.fillRoundedRectangle (body, 14.0f);
-        g.setColour (juce::Colour (Palette::kAccentSoft));
+        g.setColour (kitAccent);
         g.drawRoundedRectangle (body, 14.0f, 2.0f);
         const char* padLabel[8] = { "KICK","SNR","TOM","CHH","OHH","RIDE","CRH","CHN" };
         for (int row = 0; row < 2; ++row)
@@ -247,7 +259,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
                                                    34.0f, 26.0f);
                 g.setColour (juce::Colour (Palette::kBone).withAlpha (0.10f + 0.55f * f));
                 g.fillRoundedRectangle (pad, 6.0f);
-                g.setColour (juce::Colour (Palette::kAccent).withAlpha (juce::jlimit (0.0f, 1.0f, 0.75f + f * 0.25f)));
+                g.setColour (kitAccent.withAlpha (juce::jlimit (0.0f, 1.0f, 0.75f + f * 0.25f)));
                 g.drawRoundedRectangle (pad, 6.0f, 1.0f + 1.4f * f);
                 g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
                 auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
@@ -255,7 +267,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
                 g.setFont (lf);
                 g.drawText (padLabel[idx], pad.toNearestInt(), juce::Justification::centred, false);
             }
-        g.setColour (juce::Colour (Palette::kAccent));
+        g.setColour (kitAccent);
         g.fillEllipse (body.getRight() - 34.0f, body.getY() + 18.0f, 8.0f, 8.0f);
         g.fillEllipse (body.getRight() - 18.0f, body.getY() + 18.0f, 8.0f, 8.0f);
         return;
@@ -295,12 +307,12 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         const float f = (busIdx >= 0 && busIdx < kNumFlashes) ? flash[busIdx] : 0.0f;
         if (f > 0.01f)
         {
-            g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.28f * f));
+            g.setColour (kitAccent.withAlpha (0.30f * f));
             g.fillEllipse (c.expanded (8.0f + 10.0f * f));
         }
-        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.08f + 0.55f * f));
+        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.12f + 0.55f * f));
         g.fillEllipse (c);
-        g.setColour (juce::Colour (Palette::kAccent).withAlpha (juce::jlimit (0.0f, 1.0f, 0.72f + f * 0.28f)));
+        g.setColour (kitAccent.brighter (0.15f).withAlpha (juce::jlimit (0.0f, 1.0f, 0.72f + f * 0.28f)));
         g.drawEllipse (c, 1.5f + 1.0f * f);
         if (label != nullptr)
         {
@@ -320,12 +332,12 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
                                          jazz ? 76.0f : 92.0f, 16.0f);
         if (hatFlash > 0.01f)
         {
-            g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.28f * hatFlash));
+            g.setColour (kitAccent.withAlpha (0.30f * hatFlash));
             g.fillEllipse (c.expanded (8.0f + 10.0f * hatFlash));
         }
-        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.08f + 0.55f * hatFlash));
+        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.12f + 0.55f * hatFlash));
         g.fillEllipse (c);
-        g.setColour (juce::Colour (Palette::kAccent).withAlpha (juce::jlimit (0.0f, 1.0f, 0.72f + hatFlash * 0.28f)));
+        g.setColour (kitAccent.brighter (0.15f).withAlpha (juce::jlimit (0.0f, 1.0f, 0.72f + hatFlash * 0.28f)));
         g.drawEllipse (c, 1.5f + 1.0f * hatFlash);
         g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * hatFlash));
         auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
@@ -344,10 +356,10 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         const float f = flash[7];
         if (f > 0.01f)
         {
-            g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.28f * f));
+            g.setColour (kitAccent.withAlpha (0.30f * f));
             g.fillEllipse (chinaRect.expanded (8.0f + 10.0f * f));
         }
-        g.setColour (juce::Colour (Palette::kAccentSoft).withAlpha (juce::jlimit (0.0f, 1.0f, 0.85f + f * 0.15f)));
+        g.setColour (kitAccent.brighter (0.2f).withAlpha (juce::jlimit (0.0f, 1.0f, 0.85f + f * 0.15f)));
         g.drawEllipse (chinaRect, 1.6f + 1.0f * f);
         g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
         auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
@@ -414,7 +426,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p)
 {
     setLookAndFeel (&gothicLnf);
-    setSize (960, 820);
+    setSize (960, 920);
 
     // Title
     {
@@ -499,6 +511,11 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addRotary (humanizeSlider,   humanizeLabel);
     addRotary (swingSlider,      swingLabel);
     addRotary (fillsSlider,      fillsLabel);
+    addRotary (roomAmountSlider, roomAmountLabel);
+    roomAmountSlider.setRange (0.0, 1.0, 0.001);
+    roomAmountSlider.setValue (0.25);
+    roomAmountSlider.textFromValueFunction = [] (double v)
+        { return juce::String (juce::roundToInt (v * 100.0)) + " %"; };
 
     variationSlider .setTooltip ("VARIATION — re-rolls the next-generated groove with a different seed so each + press sounds fresh.");
     humanizeSlider  .setTooltip ("HUMANIZE — random micro-timing / velocity jitter. 0 = machine-tight, 1 = loose drummer feel.");
@@ -549,11 +566,23 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     styleCombo (drumKitBox, drumKitLabel);
     drumKitBox.onChange = [this] { kitVisualizer.setSelectedKit (drumKitBox.getSelectedItemIndex()); };
 
+    roomBox.addItem ("Dry / Studio",  1);
+    roomBox.addItem ("Small Room",    2);
+    roomBox.addItem ("Garage",        3);
+    roomBox.addItem ("Live Bar",      4);
+    roomBox.addItem ("Hallway",       5);
+    roomBox.addItem ("Big Hall",      6);
+    roomBox.addItem ("Stadium",       7);
+    roomBox.setSelectedId (1, juce::dontSendNotification);
+    styleCombo (roomBox, roomLabel);
+
     genreBox         .setTooltip ("GENRE — picks the groove vocabulary the AI draws from (rock, jazz, metal, trap, etc.).");
     patternLengthBox .setTooltip ("LENGTH — how long each appended region is in bars.");
     modeBox          .setTooltip ("MODE — GROOVE appends a bar of steady pattern, FILL appends a transition fill.");
     hiHatBox         .setTooltip ("HI-HAT — forces the hat articulation: Dynamic (mix), Closed, Open, or Ride.");
     drumKitBox       .setTooltip ("DRUM KIT — selects one of 20 physically-modelled acoustic/electronic kits. The visualizer flashes each drum as it hits.");
+    roomBox          .setTooltip ("ROOM — ambient space the kit is recorded in. Dry = close-miked, Stadium = huge wash.");
+    roomAmountSlider .setTooltip ("ROOM AMT — how much of the selected ROOM ambience you hear, 0-100%.");
 
     // Half-time toggle
     halfTimeButton.setClickingTogglesState (true);
@@ -748,6 +777,8 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     modeAttachment          = std::make_unique<ComboAttachment>  (apvts, "mode",          modeBox);
     hiHatAttachment         = std::make_unique<ComboAttachment>  (apvts, "hiHat",         hiHatBox);
     drumKitAttachment       = std::make_unique<ComboAttachment>  (apvts, "drumKit",       drumKitBox);
+    roomAttachment          = std::make_unique<ComboAttachment>  (apvts, "room",          roomBox);
+    roomAmountAttachment    = std::make_unique<SliderAttachment> (apvts, "roomAmount",    roomAmountSlider);
     halfTimeAttachment      = std::make_unique<ButtonAttachment> (apvts, "halfTime",      halfTimeButton);
 
     startTimerHz (30);
@@ -808,33 +839,51 @@ void AIDrumAudioProcessorEditor::resized()
     subtitleLabel.setBounds (area.removeFromTop (18));
     area.removeFromTop (18); // space for the ornament rule
 
-    auto top = area.removeFromTop (328);
-    auto leftPanel = top.removeFromLeft (260);
-    auto rightPanel = top.removeFromRight (228);
+    // ----- Top row: Kit Visualizer | XY Pad | Combo stack -----
+    // Combos now own the full right panel height so the DRUM KIT dropdown is
+    // always visible; the four rotary knobs (variation / humanize / swing /
+    // fills) moved to their own dedicated row below.
+    auto top = area.removeFromTop (340);
+    auto leftPanel   = top.removeFromLeft  (252);
+    auto rightPanel  = top.removeFromRight (236);
     auto centerPanel = top;
 
     kitVisualizer.setBounds (leftPanel.reduced (2, 4));
+    xyPad        .setBounds (centerPanel.reduced (6, 6));
 
-    xyPad.setBounds (centerPanel.reduced (4, 6));
-    variationSlider.setBounds (centerPanel.removeFromBottom (96).reduced (8, 12));
-    humanizeSlider.setBounds (rightPanel.removeFromBottom (96).reduced (8, 12));
-    swingSlider.setBounds (rightPanel.removeFromBottom (96).reduced (8, 12));
-    fillsSlider.setBounds (rightPanel.removeFromBottom (96).reduced (8, 12));
+    auto rightCombos = rightPanel.reduced (10, 6);
+    // Each combo slot = 22px label (attached above) + 28px combo body + 6px gap.
+    auto placeCombo = [&rightCombos] (juce::ComboBox& c)
+    {
+        auto slot = rightCombos.removeFromTop (56);
+        c.setBounds (slot.withTrimmedTop (22).withTrimmedBottom (6));
+    };
 
-    auto rightCombos = rightPanel.reduced (8, 4);
-    drumKitBox      .setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
-    rightCombos.removeFromTop (6);
-    genreBox        .setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
-    rightCombos.removeFromTop (6);
-    patternLengthBox.setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
-    rightCombos.removeFromTop (6);
-    modeBox         .setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
-    rightCombos.removeFromTop (6);
-    hiHatBox        .setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
-    rightCombos.removeFromTop (6);
-    halfTimeButton  .setBounds (rightCombos.removeFromTop (38).reduced (0, 6));
+    placeCombo (drumKitBox);
+    placeCombo (genreBox);
+    placeCombo (roomBox);
+    placeCombo (patternLengthBox);
+    placeCombo (modeBox);
+    placeCombo (hiHatBox);
+    halfTimeButton.setBounds (rightCombos.removeFromTop (28).reduced (0, 2));
 
-    area.removeFromTop (10);
+    area.removeFromTop (8);
+
+    // ----- Knobs row: Variation | Humanize | Swing | Fills | Room Amount -----
+    auto knobsRow = area.removeFromTop (108).reduced (4, 6);
+    const int knobW = knobsRow.getWidth() / 5;
+    auto placeKnob = [&knobsRow, knobW] (juce::Slider& s)
+    {
+        auto cell = knobsRow.removeFromLeft (knobW).reduced (6, 10);
+        s.setBounds (cell);
+    };
+    placeKnob (variationSlider);
+    placeKnob (humanizeSlider);
+    placeKnob (swingSlider);
+    placeKnob (fillsSlider);
+    placeKnob (roomAmountSlider);
+
+    area.removeFromTop (8);
 
     // Action row: transport, edit actions, export, with the legacy append
     // button kept small because the primary + now lives on the arrangement strip.

@@ -88,6 +88,33 @@ namespace aidrum
         std::atomic<float> reverbDamp  { 0.50f };
     };
 
+    // v1.3.0 Room preset bank — algorithmic reverb character per space.
+    // Indexes match the UI dropdown:
+    //   0 Dry / Studio, 1 Small Room, 2 Garage, 3 Live Bar,
+    //   4 Hallway,      5 Big Hall,   6 Stadium
+    struct RoomPreset
+    {
+        float size;   // juce::Reverb::Parameters.roomSize
+        float damp;   // juce::Reverb::Parameters.damping
+        float mix;    // max wet mix at amount=1.0
+    };
+
+    inline RoomPreset roomPresetFor (int index) noexcept
+    {
+        switch (index)
+        {
+            case 1: return { 0.35f, 0.55f, 0.22f }; // Small Room — close, tight
+            case 2: return { 0.48f, 0.48f, 0.30f }; // Garage — boxy mids
+            case 3: return { 0.55f, 0.42f, 0.34f }; // Live Bar — roomy, slappy
+            case 4: return { 0.72f, 0.34f, 0.42f }; // Hallway — long tail
+            case 5: return { 0.88f, 0.28f, 0.55f }; // Big Hall — lush, wide
+            case 6: return { 0.98f, 0.18f, 0.65f }; // Stadium — enormous wash
+            case 0:
+            default:
+                return { 0.20f, 0.85f, 0.05f };     // Dry / Studio — close-miked
+        }
+    }
+
     class DrumBusMixer
     {
     public:

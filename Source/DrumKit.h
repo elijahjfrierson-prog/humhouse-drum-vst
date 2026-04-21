@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -91,4 +92,9 @@ namespace aidrum
 
     const DrumKitProfile&           drumKitProfile     (DrumKit kit);
     const std::vector<std::string>& drumKitDisplayNames();
+
+    // v1.3.0 Per-kit accent colour (ARGB). Each kit gets a distinct shell
+    // tint on the KitVisualizer so the 20 kits look visually different even
+    // before you hear them — walnut amber, jet black, sunburst red, etc.
+    std::uint32_t drumKitAccent (DrumKit kit);
 }

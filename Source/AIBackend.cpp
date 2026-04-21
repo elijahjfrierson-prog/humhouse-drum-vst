@@ -452,6 +452,31 @@ namespace aidrum
         return pattern;
     }
 
+    // v1.3.0 Rich fill bank.
+    //
+    // Instead of two generic "roll vs jazz ghost" fills, the generator now
+    // picks from 10 distinct fill templates modelled on how real session
+    // drummers actually play. Template choice is driven by (phraseBar, seed,
+    // complexity) so the same groove never fills the same way twice, and
+    // bars 7/8/16/24 of a phrase will sound fresh every loop-around.
+    //
+    // Every fill ends with a crash/china + downbeat kick so the next region
+    // always lands cleanly, matching how Nirvana/Deftones/Superheaven drums
+    // resolve their fills into the next verse.
+    enum class FillTemplate
+    {
+        QuarterTriplets,       // 1 bar: 1/4 triplets across toms
+        SixteenthHerta,        // 1 bar: 16th snare herta (LRLL RLRR) across kit
+        FlamAccent,            // 1 bar: rudiment-style flams on 2+4
+        TomsAndGhosts,         // 1 bar: tom roll with snare ghost filler
+        SnareRollCrescendo,    // 1 bar: 32nd snare roll building in velocity
+        OffbeatChinaStabs,     // 1/2 bar: china hits on offbeats
+        HatToCrashBuild,       // 1/2 bar: open-hat then crash lead-in
+        LinearKickSnareTom,    // 1 bar: no two hits at same time — linear
+        JazzRideComping,       // 1 bar: ride comping + bass punctuation
+        TrapHatRoll            // 1/2 bar: 32nd-note hat roll + 808 kick
+    };
+
     MidiPattern AIBackend::makeFill (const GenerationRequest& r, Genre genre) const
     {
         const GenreProfile g = profileFor (genre);
@@ -459,72 +484,325 @@ namespace aidrum
         MidiPattern pattern;
         pattern.lengthInBeats = std::max (kSixteenth, r.lengthInBeats);
 
-        std::mt19937_64 rng (r.seed);
+        std::mt19937_64 rng (r.seed ^ (0xABCDEF123456789ULL
+                                       + static_cast<std::uint64_t> (r.phraseBar) * 0x9E3779B97F4A7C15ULL));
         std::uniform_real_distribution<float> unit (0.0f, 1.0f);
 
         const int numSixteenths = static_cast<int> (std::round (pattern.lengthInBeats / kSixteenth));
         const int toms[] = { kHighTom, kMidTom, kLowTom };
         const int numToms = 3;
 
-        if (! g.fillUsesRoll)
+        // Build a candidate pool biased by genre + complexity.
+        std::vector<FillTemplate> pool;
+        pool.push_back (FillTemplate::TomsAndGhosts);
+        pool.push_back (FillTemplate::SnareRollCrescendo);
+        pool.push_back (FillTemplate::LinearKickSnareTom);
+        if (r.complexity > 0.3f) pool.push_back (FillTemplate::SixteenthHerta);
+        if (r.complexity > 0.5f) pool.push_back (FillTemplate::FlamAccent);
+        if (r.complexity > 0.45f) pool.push_back (FillTemplate::QuarterTriplets);
+        pool.push_back (FillTemplate::HatToCrashBuild);
+        if (g.fillUsesChina) pool.push_back (FillTemplate::OffbeatChinaStabs);
+        if (g.triplets || genre == Genre::Jazz) pool.push_back (FillTemplate::JazzRideComping);
+        if (g.trapHats) pool.push_back (FillTemplate::TrapHatRoll);
+
+        // On bar-boundary fills we bias toward intricate templates; mid-phrase
+        // pickups stay simpler.
+        const bool isPhraseCap = (r.phraseBar % 8) == 7 || (r.phraseBar % 8) == 3;
+        if (isPhraseCap && r.complexity > 0.4f)
         {
-            // Jazz-style fill: snare ghost triplets + ride/kick punctuation.
-            for (int step = 0; step < numSixteenths; ++step)
-            {
-                const double beat = kSixteenth * step;
-                if (unit (rng) < 0.55f + 0.35f * r.complexity)
-                    addNote (pattern, g.snareMain, 0.45f + 0.35f * unit (rng), beat, 0.125);
-                if (step % 3 == 0)
-                    addNote (pattern, g.rideCymbal, g.velBase, beat, 0.25);
-                if (unit (rng) < 0.3f)
-                    addNote (pattern, kKick, g.velBase, beat, 0.25);
-            }
+            pool.push_back (FillTemplate::SnareRollCrescendo);
+            pool.push_back (FillTemplate::FlamAccent);
+            if (g.fillUsesChina) pool.push_back (FillTemplate::OffbeatChinaStabs);
         }
-        else
+
+        const auto templ = pool[std::uniform_int_distribution<size_t> (0, pool.size() - 1) (rng)];
+
+        auto randomTom = [&](float bias) -> int
         {
-            // Tom roll walks down the kit proportionally to pattern length.
-            for (int step = 0; step < numSixteenths; ++step)
+            // bias in [0,1]: 0 = high tom heavy, 1 = floor tom heavy
+            const float pick = std::clamp (bias + 0.4f * (unit (rng) - 0.5f), 0.0f, 0.999f);
+            return toms[static_cast<int> (pick * numToms)];
+        };
+
+        switch (templ)
+        {
+            case FillTemplate::QuarterTriplets:
             {
-                const double beat   = kSixteenth * step;
-                const int    tomIdx = std::min (numToms - 1,
-                                                (step * numToms) / std::max (1, numSixteenths));
-                const int    tom    = toms[tomIdx];
-                addNote (pattern, tom, 0.65f + 0.25f * unit (rng), beat, 0.125);
+                // 1/4-note triplets across the toms: 3 hits per beat.
+                const int beats = std::max (1, (int) std::round (pattern.lengthInBeats));
+                for (int beat = 0; beat < beats; ++beat)
+                    for (int t = 0; t < 3; ++t)
+                    {
+                        const float bias = (beat / (float) beats) * 0.7f + 0.15f;
+                        addNote (pattern, randomTom (bias),
+                                 0.7f + 0.2f * unit (rng),
+                                 beat + t / 3.0, 1.0 / 3.0);
+                    }
+                if (unit (rng) < 0.5f)
+                    for (int beat = 0; beat < beats; beat += 2)
+                        addNote (pattern, kKick, g.velBase, beat, 0.25);
+                break;
+            }
 
-                if (unit (rng) < 0.35f + 0.45f * r.complexity)
-                    addNote (pattern, g.snareMain, 0.55f + 0.30f * unit (rng), beat, 0.125);
+            case FillTemplate::SixteenthHerta:
+            {
+                // Herta rudiment: snare + kick doubles across the bar.
+                for (int step = 0; step < numSixteenths; ++step)
+                {
+                    const double beat = kSixteenth * step;
+                    const int s16 = step % 4;
+                    const float base = 0.55f + 0.3f * unit (rng);
+                    // LRLL RLRR — snare/tom alternation
+                    if (s16 == 0)      addNote (pattern, g.snareMain, base, beat, 0.125);
+                    else if (s16 == 1) addNote (pattern, g.snareMain, base * 0.85f, beat, 0.125);
+                    else if (s16 == 2) addNote (pattern, randomTom (step / (float) numSixteenths),
+                                                base, beat, 0.125);
+                    else               addNote (pattern, randomTom (step / (float) numSixteenths),
+                                                base * 0.9f, beat, 0.125);
 
-                if (step % 4 == 0)
+                    if (step % 4 == 0) addNote (pattern, kKick, g.velAccent, beat, 0.25);
+                }
+                break;
+            }
+
+            case FillTemplate::FlamAccent:
+            {
+                // Rudiment flam-accent: grace-note pairs leading to accented hits.
+                const int beats = std::max (1, (int) std::round (pattern.lengthInBeats));
+                for (int beat = 0; beat < beats; ++beat)
+                {
+                    const double b = beat;
+                    // Grace note 18ms before the accent (~1/48 beat)
+                    addNote (pattern, g.snareMain, 0.35f, b - 0.04, 0.0625);
+                    addNote (pattern, g.snareMain, 0.95f, b, 0.25);
+                    // Floor tom on the "and"
+                    if (beat % 2 == 0)
+                        addNote (pattern, kLowTom, 0.7f + 0.2f * unit (rng), b + 0.5, 0.25);
+                    if (unit (rng) < 0.6f)
+                        addNote (pattern, kKick, g.velBase, b, 0.25);
+                }
+                break;
+            }
+
+            case FillTemplate::TomsAndGhosts:
+            {
+                // Classic tom-around with snare ghosts woven in.
+                for (int step = 0; step < numSixteenths; ++step)
+                {
+                    const double beat = kSixteenth * step;
+                    const float prog = step / (float) std::max (1, numSixteenths);
+                    addNote (pattern, randomTom (prog),
+                             0.7f + 0.25f * unit (rng), beat, 0.125);
+                    if (unit (rng) < 0.45f + 0.4f * r.complexity)
+                        addNote (pattern, g.snareMain, 0.25f + 0.25f * unit (rng),
+                                 beat + 0.0625, 0.0625);
+                    if (step % 4 == 0) addNote (pattern, kKick, g.velAccent, beat, 0.25);
+                }
+                break;
+            }
+
+            case FillTemplate::SnareRollCrescendo:
+            {
+                // 32nd-note snare roll with velocity ramp from pp to ff.
+                const int steps32 = numSixteenths * 2;
+                for (int s = 0; s < steps32; ++s)
+                {
+                    const double beat = s * 0.125;
+                    const float  t    = s / (float) std::max (1, steps32 - 1);
+                    const float  vel  = 0.30f + 0.65f * t;   // crescendo
+                    addNote (pattern, g.snareMain, vel, beat, 0.0625);
+                }
+                addNote (pattern, kKick, g.velAccent, 0.0, 0.25);
+                break;
+            }
+
+            case FillTemplate::OffbeatChinaStabs:
+            {
+                // Metal/metalcore china stabs on "and of 1 / 2 / 3 / 4".
+                const int beats = std::max (1, (int) std::round (pattern.lengthInBeats));
+                for (int beat = 0; beat < beats; ++beat)
+                {
                     addNote (pattern, kKick, g.velAccent, beat, 0.25);
+                    addNote (pattern, kChina, 0.9f + 0.1f * unit (rng), beat + 0.5, 0.5);
+                    if (g.doubleKick) addNote (pattern, kKick, g.velBase, beat + 0.5, 0.25);
+                    addNote (pattern, g.snareMain, 0.5f + 0.3f * unit (rng), beat + 0.75, 0.125);
+                }
+                break;
+            }
 
-                // Metal/metalcore: double-kick gallops under the roll.
-                if (g.doubleKick)
-                    addNote (pattern, kKick, g.velBase, beat + 0.125, 0.125);
+            case FillTemplate::HatToCrashBuild:
+            {
+                // Open hats rise, crash lands at end — classic pickup.
+                const int beats = std::max (1, (int) std::round (pattern.lengthInBeats));
+                for (int step = 0; step < numSixteenths - 1; ++step)
+                {
+                    const double beat = kSixteenth * step;
+                    const float t = step / (float) std::max (1, numSixteenths - 1);
+                    addNote (pattern, g.altCymbal, 0.45f + 0.5f * t, beat, 0.125);
+                    if (step % 2 == 0) addNote (pattern, kKick, g.velBase, beat, 0.25);
+                    if (step % 4 == 3) addNote (pattern, g.snareMain, 0.8f, beat, 0.125);
+                }
+                (void) beats;
+                break;
+            }
+
+            case FillTemplate::LinearKickSnareTom:
+            {
+                // Linear fill: no two drums at the same time — kick, snare,
+                // tom alternating 16ths Gavin-Harrison-style.
+                int cycle[4] = { 0, 1, 2, 1 }; // K S T S
+                for (int step = 0; step < numSixteenths; ++step)
+                {
+                    const double beat = kSixteenth * step;
+                    const int k = cycle[step % 4];
+                    const float vel = 0.7f + 0.25f * unit (rng);
+                    if (k == 0) addNote (pattern, kKick, g.velAccent, beat, 0.125);
+                    else if (k == 1) addNote (pattern, g.snareMain, vel, beat, 0.125);
+                    else addNote (pattern, randomTom (step / (float) numSixteenths), vel, beat, 0.125);
+                }
+                break;
+            }
+
+            case FillTemplate::JazzRideComping:
+            {
+                // Jazz fill: ride spang-a-lang plus snare comp + bass punctuation.
+                const int beats = std::max (1, (int) std::round (pattern.lengthInBeats));
+                for (int beat = 0; beat < beats; ++beat)
+                {
+                    const double b = beat;
+                    addNote (pattern, g.rideCymbal, g.velBase, b, 0.5);
+                    addNote (pattern, g.rideCymbal, g.velBase * 0.7f, b + 2.0 / 3.0, 1.0 / 3.0);
+                    if (unit (rng) < 0.65f)
+                        addNote (pattern, g.snareMain, 0.4f + 0.3f * unit (rng),
+                                 b + 1.0 / 3.0, 1.0 / 3.0);
+                    if (unit (rng) < 0.4f)
+                        addNote (pattern, kKick, g.velBase * 0.8f, b + 0.5, 0.25);
+                }
+                break;
+            }
+
+            case FillTemplate::TrapHatRoll:
+            {
+                // Trap: rolling 32nd hats, 808 kick pattern, rim snare on 3.
+                const int steps32 = numSixteenths * 2;
+                for (int s = 0; s < steps32; ++s)
+                {
+                    const double beat = s * 0.125;
+                    const float t = (s % 8) / 8.0f;
+                    const float vel = 0.55f + 0.3f * t;
+                    addNote (pattern, g.mainCymbal, vel, beat, 0.0625);
+                }
+                addNote (pattern, kKick, g.velAccent, 0.0, 0.25);
+                addNote (pattern, kKick, g.velAccent * 0.9f, 0.75, 0.25);
+                addNote (pattern, g.snareMain, 0.85f, 1.0, 0.25);
+                break;
             }
         }
 
-        // Cap with a crash (or china for metal genres) + kick on beat 1.
-        const int capCymbal = g.fillUsesChina ? kChina : g.crashCymbal;
+        // Cap with a crash (or china for metal genres) on downbeat + kick.
+        const int capCymbal = g.fillUsesChina && (r.phraseBar % 4 == 3) ? kChina : g.crashCymbal;
         addNote (pattern, capCymbal, 1.0f, 0.0, 1.0);
-        addNote (pattern, kKick,     g.velAccent, 0.0, 0.25);
+        if (pattern.notes.empty() || templ != FillTemplate::SnareRollCrescendo)
+            addNote (pattern, kKick, g.velAccent, 0.0, 0.25);
 
         return pattern;
     }
 
     void AIBackend::finalize (MidiPattern& pattern, const GenerationRequest& r, std::uint64_t seed)
     {
+        // v1.3.0 Asymmetric per-drum human-feel engine.
+        //
+        // Real drummers don't apply uniform random jitter across all limbs.
+        // Hi-hats tend to push slightly ahead of the click; kicks sit right
+        // on or just behind; the snare backbeat gets pulled late for a
+        // "fatter" feel; toms vary most. Ghost notes drop out occasionally.
+        // Flams (grace notes ~20ms before accented snares) add wrist-style
+        // wobble. Velocity breathes across 8-bar phrases.
         std::mt19937_64 rng (seed);
-        std::uniform_real_distribution<float> jitter (-1.0f, 1.0f);
+        std::uniform_real_distribution<float> unit (0.0f, 1.0f);
 
-        const double timingJitterBeats = 0.04 * static_cast<double> (r.humanize);
-        const float  velJitter         = 0.20f * r.humanize;
-
-        for (auto& note : pattern.notes)
+        struct Offset { double push; double spread; };
+        auto drumOffset = [] (int note) -> Offset
         {
-            note.velocity  = std::clamp (note.velocity * r.velocity + velJitter * jitter (rng),
+            // push in beats (negative = pulls late, positive = pushes early)
+            switch (note)
+            {
+                case kKick:      return { -0.002, 0.010 }; // behind the beat, tight
+                case kSnare:     return { -0.012, 0.018 }; // pulls late, looser
+                case kSideStick: return { -0.006, 0.012 };
+                case kClap:      return { -0.004, 0.014 };
+                case kClosedHat: return {  0.004, 0.014 }; // pushes slightly ahead
+                case kOpenHat:   return {  0.006, 0.018 };
+                case kRide:      return {  0.002, 0.016 };
+                case kRideBell:  return {  0.000, 0.014 };
+                case kCrash:     return { -0.001, 0.010 };
+                case kChina:     return { -0.002, 0.012 };
+                case kHighTom:
+                case kMidTom:
+                case kLowTom:    return { -0.004, 0.022 }; // toms have the most wrist wobble
+                default:         return {  0.000, 0.016 };
+            }
+        };
+
+        const float hz  = std::clamp (r.humanize, 0.0f, 1.0f);
+        const float velScale   = 0.95f + 0.25f * hz;    // humanize opens up velocity range
+        const float timingGain = 0.4f + 1.6f * hz;      // humanize amplifies jitter
+        const float ghostDropoutProb = 0.05f + 0.08f * hz;
+
+        // Phrase-level velocity breathing: crescendo/decrescendo across 8-bar
+        // phrases. Drummers don't play every bar the same dynamic; they rise
+        // into fills and lay back mid-phrase.
+        const int phraseMod = r.phraseBar % 8;
+        float phraseVel = 1.0f;
+        if (phraseMod == 0) phraseVel = 0.92f;               // settle in
+        else if (phraseMod == 1) phraseVel = 0.95f;
+        else if (phraseMod == 2) phraseVel = 0.97f;
+        else if (phraseMod == 3) phraseVel = 1.00f;          // mid-phrase
+        else if (phraseMod == 4) phraseVel = 0.96f;          // breathe
+        else if (phraseMod == 5) phraseVel = 0.99f;
+        else if (phraseMod == 6) phraseVel = 1.02f;          // build
+        else                       phraseVel = 1.06f;        // crest before cap/fill
+
+        // Flam probability on accented snares: grace note ~20ms before hit.
+        const float flamProb = 0.08f + 0.10f * hz;
+
+        // Build a flam buffer separately so we don't iterate while pushing.
+        std::vector<MidiNote> flams;
+
+        for (auto it = pattern.notes.begin(); it != pattern.notes.end();)
+        {
+            auto& note = *it;
+            const Offset off = drumOffset (note.noteNumber);
+
+            // Asymmetric timing: base push + zero-centred spread scaled by humanize.
+            const double j = static_cast<double> (unit (rng)) - 0.5;
+            const double shift = (off.push + off.spread * 2.0 * j) * timingGain;
+
+            note.velocity  = std::clamp (note.velocity * r.velocity * phraseVel * velScale
+                                          + 0.10f * hz * (unit (rng) - 0.5f),
                                          0.01f, 1.0f);
-            note.startBeat = std::clamp (note.startBeat + timingJitterBeats * jitter (rng),
+            note.startBeat = std::clamp (note.startBeat + shift,
                                          0.0, std::max (0.0, pattern.lengthInBeats - 0.001));
+
+            // Flam: accented snares get a pre-hit ghost ~20ms earlier.
+            if (note.noteNumber == kSnare && note.velocity > 0.85f && unit (rng) < flamProb)
+            {
+                flams.push_back ({ kSnare,
+                                   std::clamp (note.velocity * 0.35f, 0.01f, 1.0f),
+                                   std::max (0.0, note.startBeat - 0.025),
+                                   0.0625 });
+            }
+
+            // Ghost-note dropout: occasionally a very quiet snare gets missed.
+            if (note.noteNumber == kSnare && note.velocity < 0.40f && unit (rng) < ghostDropoutProb)
+            {
+                it = pattern.notes.erase (it);
+                continue;
+            }
+
+            ++it;
         }
+
+        pattern.notes.insert (pattern.notes.end(), flams.begin(), flams.end());
     }
 }

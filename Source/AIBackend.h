@@ -66,6 +66,11 @@ namespace aidrum
 
         // Drumkit voicing (v0.7.0): remaps GM notes + velocity/ghost curves.
         DrumKit        kit           = DrumKit::LudwigSupraphonicClassicRock;
+
+        // v1.3.0 session-player state: counts the index of this region in the
+        // arrangement so phrase-level dynamics (crescendos, bar 7/8 builds,
+        // ghost drift, hat loosening) and unique fills can evolve over time.
+        int            phraseBar     = 0;   // 0..N, monotonic across regions
     };
 
     // Stub AI backend.

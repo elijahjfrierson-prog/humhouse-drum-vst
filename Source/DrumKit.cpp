@@ -373,4 +373,39 @@ namespace aidrum
         };
         return names;
     }
+
+    // v1.3.0 Per-kit accent colour — indexed by the DrumKit enum order.
+    // Chosen to evoke each kit's character (walnut amber, chrome black,
+    // sunburst red, neon purple/cyan for 808/909, etc.). ARGB.
+    std::uint32_t drumKitAccent (DrumKit kit)
+    {
+        static const std::uint32_t kColors[static_cast<int> (DrumKit::Count)] =
+        {
+            0xffcaa472, // Jazz Ludwig Bebop        — warm champagne
+            0xffb8926a, // Jazz Gretsch             — natural maple
+            0xfff2b441, // Classic Rock Supraphonic — chrome gold
+            0xfff55a5a, // Classic Rock Vistalite   — sunburst red
+            0xff8f1d1d, // Hard Rock Tama Rockstar  — oxblood
+            0xffd7d7d7, // Hard Rock Yamaha Studio  — gunmetal silver
+            0xff7a5bff, // Shoegaze DW Collector's  — deep indigo
+            0xff4b7f52, // Grunge Pearl Masters     — mossy green
+            0xffc9a26e, // Indie Yamaha Recording   — champagne wood
+            0xff1d1d1d, // Funk Ludwig Black Beauty — jet black
+            0xff2d7aff, // Funk Yamaha Live Custom  — electric blue
+            0xff9a3bff, // R&B DW Performance       — royal purple
+            0xff8a1c1c, // Thrash Sonor SQ2         — blood red
+            0xffbfbfbf, // Metal Tama Starclassic   — steel silver
+            0xfff0a000, // Metalcore Pearl Ref.     — amber orange
+            0xff2b8a8a, // Prog Metal Yamaha PHX    — teal
+            0xffa7714a, // Country Ludwig Maple     — tobacco walnut
+            0xffff4fb6, // Hip-Hop TR-808           — hot pink neon
+            0xff00e0c8, // Trap TR-909              — cyan neon
+            0xffffd36b  // Pop Akai Layered         — pastel yellow
+        };
+
+        const int i = static_cast<int> (kit);
+        if (i < 0 || i >= static_cast<int> (DrumKit::Count))
+            return 0xff7a3cff; // fallback = brand purple
+        return kColors[i];
+    }
 }
