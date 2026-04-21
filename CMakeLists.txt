@@ -65,6 +65,8 @@ target_sources(AIDrumVST PRIVATE
     Source/AIBackend.cpp
     Source/AIBackend.h
     Source/MidiPattern.h
+    Source/GothicLookAndFeel.h
+    Source/PatternStrip.h
 )
 
 target_compile_definitions(AIDrumVST PUBLIC

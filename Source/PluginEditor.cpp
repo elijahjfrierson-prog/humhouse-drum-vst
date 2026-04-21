@@ -1,21 +1,74 @@
 #include "PluginEditor.h"
 
+using Palette = aidrum::GothicPalette;
+
 // ============================================================================
-// MidiDragHandle — drag-to-DAW component.
-// Works in the VST3 plugin window, the AU window, and the Standalone app.
+// PlusButton — circular, glowing purple, central "+".
+// ============================================================================
+AIDrumAudioProcessorEditor::PlusButton::PlusButton() : juce::Button ("plus") {}
+
+void AIDrumAudioProcessorEditor::PlusButton::paintButton (juce::Graphics& g,
+                                                           bool isOver, bool isDown)
+{
+    auto area = getLocalBounds().toFloat().reduced (4.0f);
+    const float r = juce::jmin (area.getWidth(), area.getHeight()) * 0.5f;
+    const auto c = area.getCentre();
+
+    // Outer glow (amplified when glow>0 after a press, or on hover)
+    const float glowAmt = juce::jmax (glow, isOver ? 0.35f : 0.0f);
+    if (glowAmt > 0.02f)
+    {
+        for (int i = 3; i >= 1; --i)
+        {
+            const float k = (float) i;
+            g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.12f * glowAmt / k));
+            g.fillEllipse (c.x - r - k * 6.0f, c.y - r - k * 6.0f,
+                           (r + k * 6.0f) * 2.0f, (r + k * 6.0f) * 2.0f);
+        }
+    }
+
+    // Dark core
+    juce::ColourGradient grad (juce::Colour (Palette::kAccentDeep).brighter (0.1f),
+                               c.x, c.y - r,
+                               juce::Colour (Palette::kInk),
+                               c.x, c.y + r, false);
+    g.setGradientFill (grad);
+    g.fillEllipse (c.x - r, c.y - r, r * 2.0f, r * 2.0f);
+
+    // Thin purple ring
+    g.setColour (juce::Colour (Palette::kAccent).withAlpha (isDown ? 1.0f : 0.85f));
+    g.drawEllipse (c.x - r, c.y - r, r * 2.0f, r * 2.0f, 1.6f);
+
+    // "+" glyph
+    const float plusW = r * 0.55f;
+    const float th    = 2.4f;
+    g.setColour (juce::Colour (Palette::kBone));
+    g.fillRoundedRectangle (c.x - plusW, c.y - th * 0.5f, plusW * 2.0f, th, th * 0.5f);
+    g.fillRoundedRectangle (c.x - th * 0.5f, c.y - plusW, th, plusW * 2.0f, th * 0.5f);
+}
+
+// ============================================================================
+// MidiDragHandle — sleek chip that kicks off an external drag-drop of the
+// current pattern as a .mid file.
 // ============================================================================
 void AIDrumAudioProcessorEditor::MidiDragHandle::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat().reduced (2.0f);
-    g.setColour (juce::Colour::fromRGB (40, 60, 100));
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    g.setColour (juce::Colour (Palette::kPanel));
     g.fillRoundedRectangle (r, 8.0f);
-    g.setColour (juce::Colour::fromRGB (110, 170, 255));
-    g.drawRoundedRectangle (r, 8.0f, 2.0f);
+    g.setColour (juce::Colour (Palette::kAccentDeep));
+    g.drawRoundedRectangle (r, 8.0f, 1.25f);
 
-    g.setColour (juce::Colours::white);
-    g.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
-    g.drawText ("Drag MIDI to DAW", getLocalBounds(),
-                juce::Justification::centred, false);
+    // Accent left rail
+    g.setColour (juce::Colour (Palette::kAccent));
+    g.fillRoundedRectangle (r.withWidth (4.0f), 2.0f);
+
+    g.setColour (juce::Colour (Palette::kBone));
+    auto f = juce::Font (juce::FontOptions (12.0f, juce::Font::bold));
+    f.setExtraKerningFactor (0.18f);
+    g.setFont (f);
+    g.drawText ("DRAG  MIDI  \u2192  DAW", getLocalBounds().withTrimmedLeft (8),
+                juce::Justification::centredLeft, false);
 }
 
 void AIDrumAudioProcessorEditor::MidiDragHandle::mouseDown (const juce::MouseEvent&)
@@ -25,23 +78,17 @@ void AIDrumAudioProcessorEditor::MidiDragHandle::mouseDown (const juce::MouseEve
 
 void AIDrumAudioProcessorEditor::MidiDragHandle::mouseDrag (const juce::MouseEvent& e)
 {
-    if (dragStarted)
-        return;
-
-    if (e.getDistanceFromDragStart() < 6)
-        return;
+    if (dragStarted || e.getDistanceFromDragStart() < 6) return;
 
     tempMidiFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
                      .getChildFile ("AI-Drum-VST-pattern.mid");
-
     if (! processorRef.writeCurrentPatternAsMidiFile (tempMidiFile))
         return;
 
     dragStarted = true;
     juce::StringArray files { tempMidiFile.getFullPathName() };
     juce::DragAndDropContainer::performExternalDragDropOfFiles (
-        files, /* canMoveFiles = */ false, this,
-        [] () {});
+        files, /*canMoveFiles*/ false, this, [] {});
 }
 
 // ============================================================================
@@ -50,17 +97,42 @@ void AIDrumAudioProcessorEditor::MidiDragHandle::mouseDrag (const juce::MouseEve
 AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p)
 {
-    setSize (720, 480);
+    setLookAndFeel (&gothicLnf);
+    setSize (740, 540);
 
-    titleLabel.setFont (juce::Font (juce::FontOptions (22.0f, juce::Font::bold)));
-    titleLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (titleLabel);
+    // Title
+    {
+        auto f = juce::Font (juce::FontOptions (28.0f, juce::Font::plain));
+        f.setExtraKerningFactor (0.35f);
+        titleLabel.setFont (f);
+        titleLabel.setJustificationType (juce::Justification::centred);
+        titleLabel.setColour (juce::Label::textColourId, juce::Colour (Palette::kBone));
+        addAndMakeVisible (titleLabel);
 
+        auto s = juce::Font (juce::FontOptions (11.0f, juce::Font::italic));
+        s.setExtraKerningFactor (0.4f);
+        subtitleLabel.setFont (s);
+        subtitleLabel.setJustificationType (juce::Justification::centred);
+        subtitleLabel.setColour (juce::Label::textColourId, juce::Colour (Palette::kMuted));
+        addAndMakeVisible (subtitleLabel);
+    }
+
+    // Pattern strip
+    patternStrip.setPatternProvider ([this] { return processorRef.getCurrentPattern(); });
+    addAndMakeVisible (patternStrip);
+
+    // Rotary knobs
     auto addRotary = [this] (juce::Slider& s, juce::Label& l)
     {
         s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
         s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
+        s.setColour (juce::Slider::textBoxTextColourId, juce::Colour (Palette::kBone));
         addAndMakeVisible (s);
+
+        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+        f.setExtraKerningFactor (0.35f);
+        l.setFont (f);
+        l.setColour (juce::Label::textColourId, juce::Colour (Palette::kMuted));
         l.setJustificationType (juce::Justification::centred);
         l.attachToComponent (&s, false);
         addAndMakeVisible (l);
@@ -71,56 +143,59 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addRotary (velocitySlider,   velocityLabel);
     addRotary (humanizeSlider,   humanizeLabel);
 
-    // Pattern length combo
-    patternLengthBox.addItemList (
-        juce::StringArray { "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars" },
-        1);
-    patternLengthLabel.setJustificationType (juce::Justification::centred);
-    patternLengthLabel.attachToComponent (&patternLengthBox, false);
-    addAndMakeVisible (patternLengthBox);
-    addAndMakeVisible (patternLengthLabel);
-
-    // Genre combo
+    // Combos
+    auto styleCombo = [this] (juce::ComboBox& c, juce::Label& l)
     {
-        juce::StringArray genreNames;
-        for (const auto& n : aidrum::genreDisplayNames())
-            genreNames.add (juce::String (n));
-        genreBox.addItemList (genreNames, 1);
-    }
-    genreLabel.setJustificationType (juce::Justification::centred);
-    genreLabel.attachToComponent (&genreBox, false);
-    addAndMakeVisible (genreBox);
-    addAndMakeVisible (genreLabel);
+        addAndMakeVisible (c);
+        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+        f.setExtraKerningFactor (0.35f);
+        l.setFont (f);
+        l.setColour (juce::Label::textColourId, juce::Colour (Palette::kMuted));
+        l.setJustificationType (juce::Justification::centred);
+        l.attachToComponent (&c, false);
+        addAndMakeVisible (l);
+    };
 
-    // Mode combo
+    {
+        juce::StringArray names;
+        for (const auto& n : aidrum::genreDisplayNames())
+            names.add (juce::String (n));
+        genreBox.addItemList (names, 1);
+    }
+    styleCombo (genreBox, genreLabel);
+
+    patternLengthBox.addItemList (
+        juce::StringArray { "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars" }, 1);
+    styleCombo (patternLengthBox, patternLengthLabel);
+
     modeBox.addItem ("Groove", 1);
     modeBox.addItem ("Fill",   2);
-    modeLabel.setJustificationType (juce::Justification::centred);
-    modeLabel.attachToComponent (&modeBox, false);
-    addAndMakeVisible (modeBox);
-    addAndMakeVisible (modeLabel);
+    styleCombo (modeBox, modeLabel);
 
-    // Big "+" button → generate a fresh pattern every press.
-    plusButton.setButtonText ("+");
-    plusButton.setColour (juce::TextButton::buttonColourId,   juce::Colour::fromRGB (70, 140, 255));
-    plusButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour::fromRGB (40, 110, 220));
-    plusButton.setColour (juce::TextButton::textColourOffId,  juce::Colours::white);
-    plusButton.setConnectedEdges (0);
+    // Summon (+) button
     plusButton.onClick = [this]
     {
         const auto mode = (modeBox.getSelectedId() == 2)
                             ? aidrum::GenerationMode::Fill
                             : aidrum::GenerationMode::Groove;
         processorRef.requestGeneration (mode);
+        plusButton.bump();
     };
     addAndMakeVisible (plusButton);
 
-    plusHelper.setJustificationType (juce::Justification::centred);
-    plusHelper.setFont (juce::Font (juce::FontOptions (12.0f)));
-    plusHelper.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
-    addAndMakeVisible (plusHelper);
+    {
+        auto f = juce::Font (juce::FontOptions (11.0f, juce::Font::bold));
+        f.setExtraKerningFactor (0.45f);
+        plusHelper.setFont (f);
+        plusHelper.setColour (juce::Label::textColourId, juce::Colour (Palette::kAccentSoft));
+        plusHelper.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (plusHelper);
+    }
 
-    // Save MIDI button → file picker → .mid
+    // Save MIDI
+    saveMidiButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
+    saveMidiButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
+    saveMidiButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kBone));
     saveMidiButton.onClick = [this]
     {
         fileChooser = std::make_unique<juce::FileChooser> (
@@ -136,8 +211,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
             [this] (const juce::FileChooser& fc)
             {
                 auto file = fc.getResult();
-                if (file == juce::File{})
-                    return;
+                if (file == juce::File{}) return;
                 if (file.getFileExtension().isEmpty())
                     file = file.withFileExtension (".mid");
                 processorRef.writeCurrentPatternAsMidiFile (file);
@@ -147,58 +221,101 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
 
     addAndMakeVisible (dragHandle);
 
+    // APVTS attachments
     auto& apvts = processorRef.getAPVTS();
     variationAttachment     = std::make_unique<SliderAttachment> (apvts, "variation",     variationSlider);
     complexityAttachment    = std::make_unique<SliderAttachment> (apvts, "complexity",    complexitySlider);
     velocityAttachment      = std::make_unique<SliderAttachment> (apvts, "velocity",      velocitySlider);
     humanizeAttachment      = std::make_unique<SliderAttachment> (apvts, "humanize",      humanizeSlider);
-    patternLengthAttachment = std::make_unique<ComboAttachment>  (apvts, "patternLength", patternLengthBox);
     genreAttachment         = std::make_unique<ComboAttachment>  (apvts, "genre",         genreBox);
+    patternLengthAttachment = std::make_unique<ComboAttachment>  (apvts, "patternLength", patternLengthBox);
     modeAttachment          = std::make_unique<ComboAttachment>  (apvts, "mode",          modeBox);
+
+    startTimerHz (30);
 }
 
-AIDrumAudioProcessorEditor::~AIDrumAudioProcessorEditor() = default;
+AIDrumAudioProcessorEditor::~AIDrumAudioProcessorEditor()
+{
+    stopTimer();
+    setLookAndFeel (nullptr);
+}
 
+void AIDrumAudioProcessorEditor::timerCallback()
+{
+    plusButton.tickGlow();
+}
+
+// Paint: gothic radial gradient background + thin ornamental horizontal rule.
 void AIDrumAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour::fromRGB (28, 28, 32));
+    auto b = getLocalBounds().toFloat();
+
+    juce::ColourGradient bg (juce::Colour (Palette::kPanel),
+                             b.getCentreX(), b.getY() + 60.0f,
+                             juce::Colour (Palette::kInk),
+                             b.getX(), b.getBottom(), true);
+    g.setGradientFill (bg);
+    g.fillRect (b);
+
+    // Thin horizontal rule under the title (purple gradient)
+    const float ruleY = 92.0f;
+    juce::ColourGradient rule (juce::Colours::transparentBlack, b.getX(), ruleY,
+                               juce::Colours::transparentBlack, b.getRight(), ruleY, false);
+    rule.addColour (0.5, juce::Colour (Palette::kAccent).withAlpha (0.85f));
+    g.setGradientFill (rule);
+    g.fillRect (juce::Rectangle<float> (b.getX() + 40.0f, ruleY, b.getWidth() - 80.0f, 1.0f));
+
+    // Center dagger dot ornament
+    g.setColour (juce::Colour (Palette::kAccent));
+    g.fillEllipse (b.getCentreX() - 2.5f, ruleY - 2.5f, 5.0f, 5.0f);
 }
 
 void AIDrumAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced (12);
-    titleLabel.setBounds (area.removeFromTop (32));
+    auto area = getLocalBounds().reduced (18);
 
-    // Top row: 4 knobs
-    auto knobRow = area.removeFromTop (150);
+    // Header
+    titleLabel   .setBounds (area.removeFromTop (38));
+    subtitleLabel.setBounds (area.removeFromTop (18));
+    area.removeFromTop (18); // space for the ornament rule
+
+    // Pattern visualizer
+    patternStrip .setBounds (area.removeFromTop (80).reduced (4, 0));
+    area.removeFromTop (18);
+
+    // 4-knob row
+    auto knobRow = area.removeFromTop (140);
     const int knobW = knobRow.getWidth() / 4;
-    variationSlider .setBounds (knobRow.removeFromLeft (knobW).reduced (8, 22));
-    complexitySlider.setBounds (knobRow.removeFromLeft (knobW).reduced (8, 22));
-    velocitySlider  .setBounds (knobRow.removeFromLeft (knobW).reduced (8, 22));
-    humanizeSlider  .setBounds (knobRow.reduced (8, 22));
+    variationSlider .setBounds (knobRow.removeFromLeft (knobW).reduced (8, 18));
+    complexitySlider.setBounds (knobRow.removeFromLeft (knobW).reduced (8, 18));
+    velocitySlider  .setBounds (knobRow.removeFromLeft (knobW).reduced (8, 18));
+    humanizeSlider  .setBounds (knobRow.reduced (8, 18));
 
-    // Middle row: genre + pattern length + mode combos
-    auto comboRow = area.removeFromTop (80);
+    area.removeFromTop (8);
+
+    // 3-combo row
+    auto comboRow = area.removeFromTop (70);
     const int comboW = comboRow.getWidth() / 3;
-    genreBox        .setBounds (comboRow.removeFromLeft (comboW).reduced (12, 34));
-    patternLengthBox.setBounds (comboRow.removeFromLeft (comboW).reduced (12, 34));
-    modeBox         .setBounds (comboRow.reduced (12, 34));
+    genreBox        .setBounds (comboRow.removeFromLeft (comboW).reduced (12, 28));
+    patternLengthBox.setBounds (comboRow.removeFromLeft (comboW).reduced (12, 28));
+    modeBox         .setBounds (comboRow.reduced (12, 28));
 
-    // Bottom block: "+" button on left, MIDI export on right
-    auto bottom = area.reduced (10);
+    area.removeFromTop (6);
 
-    const int plusSize = juce::jmin (90, bottom.getHeight());
-    juce::Rectangle<int> plusRect (bottom.getX() + bottom.getWidth() / 4 - plusSize / 2,
-                                   bottom.getY() + (bottom.getHeight() - plusSize) / 2,
+    // Bottom row: + on left, drag + save stacked on right.
+    auto bottom = area;
+    const int plusSize = juce::jmin (100, bottom.getHeight());
+    auto plusArea = bottom.removeFromLeft (bottom.getWidth() / 2);
+    juce::Rectangle<int> plusRect (plusArea.getCentreX() - plusSize / 2,
+                                   plusArea.getY() + (plusArea.getHeight() - plusSize) / 2,
                                    plusSize, plusSize);
     plusButton.setBounds (plusRect);
-    plusHelper.setBounds (plusRect.getX() - 40, plusRect.getBottom() - 6,
+    plusHelper.setBounds (plusRect.getX() - 40, plusRect.getBottom() - 2,
                           plusRect.getWidth() + 80, 18);
 
-    // Right half: drag handle on top, Save button below.
-    auto right = bottom.withTrimmedLeft (bottom.getWidth() / 2).reduced (10, 0);
-    const int dragH = juce::jmin (60, right.getHeight() / 2 - 4);
-    dragHandle    .setBounds (right.removeFromTop (dragH));
-    right.removeFromTop (6);
-    saveMidiButton.setBounds (right.removeFromTop (dragH));
+    auto right = bottom.reduced (8, 6);
+    const int rowH = juce::jmin (38, right.getHeight() / 2 - 6);
+    dragHandle    .setBounds (right.removeFromTop (rowH));
+    right.removeFromTop (8);
+    saveMidiButton.setBounds (right.removeFromTop (rowH));
 }
