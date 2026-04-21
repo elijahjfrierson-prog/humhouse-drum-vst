@@ -1,0 +1,46 @@
+HumHouse Drums — End User License Agreement
+=============================================
+
+Copyright (c) 2026 HumHouse. All rights reserved.
+
+By installing or using HumHouse Drums (the "Software"), you agree to the
+following terms:
+
+1. LICENSE GRANT
+   HumHouse grants you a non-exclusive, non-transferable license to install
+   and use the Software on computers you own or control, for personal or
+   commercial music production, without additional royalty.
+
+2. OWNERSHIP
+   The Software is licensed, not sold. HumHouse retains all rights, title,
+   and interest in the Software, including all intellectual property rights.
+
+3. RESTRICTIONS
+   You may not:
+     - Reverse-engineer, decompile, or disassemble the Software except to
+       the extent that such activity is expressly permitted by law.
+     - Redistribute the Software as part of a commercial product without
+       written permission.
+     - Remove or alter any proprietary notices or labels on the Software.
+
+4. MIDI OUTPUT
+   The Software generates MIDI data. You own the MIDI patterns you produce
+   with it and may use them royalty-free in your own music productions.
+
+5. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+6. LIMITATION OF LIABILITY
+   IN NO EVENT SHALL HUMHOUSE BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+   FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE.
+
+7. TERMINATION
+   This license is effective until terminated. It will terminate automatically
+   without notice if you fail to comply with any of its terms. Upon termination
+   you must uninstall and destroy all copies of the Software.
+
+If you do not agree to these terms, do not install or use the Software.
