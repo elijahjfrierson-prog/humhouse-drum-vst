@@ -497,9 +497,9 @@ namespace aidrum
         pool.push_back (FillTemplate::TomsAndGhosts);
         pool.push_back (FillTemplate::SnareRollCrescendo);
         pool.push_back (FillTemplate::LinearKickSnareTom);
-        if (r.complexity > 0.3f) pool.push_back (FillTemplate::SixteenthHerta);
-        if (r.complexity > 0.5f) pool.push_back (FillTemplate::FlamAccent);
-        if (r.complexity > 0.45f) pool.push_back (FillTemplate::QuarterTriplets);
+        if (r.fillComplexity > 0.3f) pool.push_back (FillTemplate::SixteenthHerta);
+        if (r.fillComplexity > 0.5f) pool.push_back (FillTemplate::FlamAccent);
+        if (r.fillComplexity > 0.45f) pool.push_back (FillTemplate::QuarterTriplets);
         pool.push_back (FillTemplate::HatToCrashBuild);
         if (g.fillUsesChina) pool.push_back (FillTemplate::OffbeatChinaStabs);
         if (g.triplets || genre == Genre::Jazz) pool.push_back (FillTemplate::JazzRideComping);
@@ -508,7 +508,7 @@ namespace aidrum
         // On bar-boundary fills we bias toward intricate templates; mid-phrase
         // pickups stay simpler.
         const bool isPhraseCap = (r.phraseBar % 8) == 7 || (r.phraseBar % 8) == 3;
-        if (isPhraseCap && r.complexity > 0.4f)
+        if (isPhraseCap && r.fillComplexity > 0.4f)
         {
             pool.push_back (FillTemplate::SnareRollCrescendo);
             pool.push_back (FillTemplate::FlamAccent);
@@ -593,7 +593,7 @@ namespace aidrum
                     const float prog = step / (float) std::max (1, numSixteenths);
                     addNote (pattern, randomTom (prog),
                              0.7f + 0.25f * unit (rng), beat, 0.125);
-                    if (unit (rng) < 0.45f + 0.4f * r.complexity)
+                    if (unit (rng) < 0.45f + 0.4f * r.fillComplexity)
                         addNote (pattern, g.snareMain, 0.25f + 0.25f * unit (rng),
                                  beat + 0.0625, 0.0625);
                     if (step % 4 == 0) addNote (pattern, kKick, g.velAccent, beat, 0.25);

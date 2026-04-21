@@ -12,11 +12,15 @@
 #include <mutex>
 #include <vector>
 
-class AIDrumAudioProcessor : public juce::AudioProcessor
+class AIDrumAudioProcessor : public juce::AudioProcessor,
+                             public juce::AudioProcessorValueTreeState::Listener
 {
 public:
     AIDrumAudioProcessor();
     ~AIDrumAudioProcessor() override;
+
+    // v1.5.0 — live-knob regeneration callback.
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
 
     // AudioProcessor
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -49,10 +53,23 @@ public:
     // Generates a new region with current params and appends it to the arrangement.
     void appendRegion (aidrum::GenerationMode mode);
 
-    // Removes the most-recently-appended region (keeps at least one region).
+    // Removes the most-recently-appended region. v1.5.0: arrangement is
+    // allowed to go empty; the user opts back in with the `+` button.
     void undoLastRegion();
 
-    // Wipes the arrangement back to a single freshly-generated region.
+    // v1.5.0 — Delete an arbitrary region by index. Allows the user to
+    // remove the very first region (unlike Logic, which only lets you
+    // delete trailing regions). No-op if index is out of range.
+    void deleteRegion (int index);
+
+    // v1.5.0 — Regenerate the most-recently-appended region using the
+    // current APVTS settings. Called by the APVTS listener on any knob
+    // move so the pattern changes live. Safe to call when arrangement is
+    // empty (no-op).
+    void regenerateCurrentRegion();
+
+    // Wipes the arrangement. v1.5.0: leaves it truly empty so the + sign
+    // (Logic-style) re-appears and the user picks their starting pattern.
     void clearArrangement();
 
     // Returns a copy of the full arrangement for UI rendering (thread-safe).
@@ -82,6 +99,13 @@ public:
     // Clickable grid toggles — velocity is 0..1 (default 0.85, ghost ~0.35).
     void setManualCell   (int midiNote, int stepIndex, float velocity);
     void clearManualCell (int midiNote, int stepIndex);
+
+    // v1.5.0 — variable-resolution manual grid (1/16, 1/32, 1/64). The UI
+    // passes its current step-beat size so the underlying pattern is
+    // quantized to the chosen subdivision.
+    void setManualCellStep   (int midiNote, int stepIndex, double stepBeats, float velocity);
+    void clearManualCellStep (int midiNote, int stepIndex, double stepBeats);
+
     void clearManualPattern();
 
     // Copy of the manual pattern for UI rendering (thread-safe).
@@ -123,6 +147,10 @@ public:
     void unloadSampleKit();
     juce::String getSampleKitPath() const;
     bool isSampleKitActive() const;
+
+    // v1.5.0 — Switch to one of the CC0 kits compiled into the plugin binary.
+    // Names: "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash".
+    int loadBundledKit (const juce::String& kitName);
 
     // --- v1.4.0 UI scale --------------------------------------------------
     // Persisted UI scale factor for the editor (0.75× … 1.5×). Lives on

@@ -55,8 +55,16 @@ namespace aidrum
         void setNumBars (int bars) { numBars = juce::jlimit (1, 64, bars); repaint(); }
         int  getNumBars() const    { return numBars; }
 
-        static constexpr int kStepsPerBar = 16;
-        int totalSteps() const { return numBars * kStepsPerBar; }
+        // v1.5.0 — step subdivision. 16 = 1/16 notes (Logic default), 32 = 1/32,
+        // 64 = 1/64. Changes the draw resolution of the manual grid.
+        void setStepsPerBar (int s)
+        {
+            stepsPerBar = (s == 64 ? 64 : s == 32 ? 32 : 16);
+            repaint();
+        }
+        int  getStepsPerBar() const { return stepsPerBar; }
+        double stepBeats() const { return 4.0 / (double) stepsPerBar; }
+        int totalSteps() const { return numBars * stepsPerBar; }
 
         void paint (juce::Graphics& g) override
         {
@@ -94,8 +102,8 @@ namespace aidrum
             for (int s = 0; s <= totalSteps(); ++s)
             {
                 const float x = grid.getX() + (float) s * stepW;
-                const bool  isBar  = (s % kStepsPerBar) == 0;
-                const bool  isBeat = (s % 4) == 0;
+                const bool  isBar  = (s % stepsPerBar) == 0;
+                const bool  isBeat = (s % (stepsPerBar / 4)) == 0;
                 g.setColour (juce::Colour (GothicPalette::kAccent)
                                .withAlpha (isBar ? 0.45f : isBeat ? 0.18f : 0.08f));
                 g.fillRect (x - (isBar ? 0.75f : 0.4f), grid.getY(),
@@ -109,13 +117,14 @@ namespace aidrum
             {
                 const auto pattern = provider();
                 const double patternBeats = juce::jmax (1.0, pattern.lengthInBeats);
-                const int    stepsInPattern = (int) std::round (patternBeats / 0.25); // 16th = 0.25 beats
+                const double sb = stepBeats();
+                const int    stepsInPattern = (int) std::round (patternBeats / sb);
 
                 for (const auto& n : pattern.notes)
                 {
                     const int rowIdx = indexOfNote (n.noteNumber);
                     if (rowIdx < 0) continue;
-                    const int s = (int) std::round (n.startBeat / 0.25);
+                    const int s = (int) std::round (n.startBeat / sb);
                     if (s < 0 || s >= stepsInPattern) continue;
 
                     const float x = grid.getX() + (float) s * stepW;
@@ -137,7 +146,7 @@ namespace aidrum
             g.setColour (juce::Colour (GothicPalette::kMuted));
             for (int b = 0; b < numBars; ++b)
             {
-                const float x = grid.getX() + (float) (b * kStepsPerBar) * stepW;
+                const float x = grid.getX() + (float) (b * stepsPerBar) * stepW;
                 g.drawText (juce::String (b + 1),
                             juce::Rectangle<float> (x + 2.0f, r.getY() + 2.0f, 24.0f, 12.0f),
                             juce::Justification::left, false);
@@ -214,9 +223,10 @@ namespace aidrum
         {
             if (! provider) return false;
             const auto pattern = provider();
+            const double sb = stepBeats();
             for (const auto& n : pattern.notes)
             {
-                const int s = (int) std::round (n.startBeat / 0.25);
+                const int s = (int) std::round (n.startBeat / sb);
                 if (s == step && n.noteNumber == midiNote) return true;
             }
             return false;
@@ -224,6 +234,7 @@ namespace aidrum
 
         std::vector<Row> rows;
         int numBars = 16;
+        int stepsPerBar = 16;
         int lastNote = -1, lastStep = -1;
         bool drawingActive = true;
     };

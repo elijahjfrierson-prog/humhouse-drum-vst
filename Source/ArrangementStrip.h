@@ -38,6 +38,11 @@ namespace aidrum
         void setProvider (std::function<Snapshot()> p) { provider = std::move (p); }
         std::function<void()> onAppend;
 
+        // v1.5.0 — right-click (or alt-click) on a region tile calls this with
+        // the region's index so the editor can remove it. Empty arrangement is
+        // allowed; the `+` button becomes the only interactive element.
+        std::function<void (int regionIndex)> onDeleteRegion;
+
         void paint (juce::Graphics& g) override
         {
             auto bounds = getLocalBounds().toFloat().reduced (0.5f);
@@ -183,8 +188,31 @@ namespace aidrum
 
         void mouseUp (const juce::MouseEvent& e) override
         {
-            if (onAppend != nullptr && getAppendButtonBounds (getLocalBounds().toFloat().reduced (10.5f, 8.5f)).contains (e.position))
+            const auto inner = getLocalBounds().toFloat().reduced (10.5f, 8.5f);
+            if (onAppend != nullptr && getAppendButtonBounds (inner).contains (e.position))
+            {
                 onAppend();
+                return;
+            }
+
+            // v1.5.0 — right-click or alt-click deletes the region under the cursor.
+            if (onDeleteRegion != nullptr
+                && (e.mods.isRightButtonDown() || e.mods.isAltDown())
+                && last.totalBeats > 0.0 && ! last.regions.empty())
+            {
+                const auto gridRect = inner.withTrimmedRight (getAppendButtonBounds (inner).getWidth() + 10.0f);
+                if (! gridRect.contains (e.position)) return;
+                const double total = std::max (1.0, last.totalBeats);
+                const double rel = (e.position.x - gridRect.getX()) / gridRect.getWidth();
+                const double beat = juce::jlimit (0.0, total - 1e-6, rel * total);
+                double acc = 0.0;
+                for (size_t i = 0; i < last.regions.size(); ++i)
+                {
+                    const double len = std::max (0.001, last.regions[i].lengthInBeats);
+                    if (beat < acc + len) { onDeleteRegion ((int) i); return; }
+                    acc += len;
+                }
+            }
         }
 
     private:

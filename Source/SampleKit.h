@@ -74,10 +74,12 @@ namespace aidrum
         // contains nothing the kit recognises).
         int load (const juce::File& folder);
 
-        // Load the CC0 kit compiled into the plugin binary (v1.4.0 default).
-        // `currentKitPath()` after a successful load returns "Built-in PopRock".
+        // Load one of the CC0 kits compiled into the plugin binary.
+        // v1.5.0 ships 5 kits: "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash".
+        // Pass the empty string to default to PopRock.
+        // `currentKitPath()` after a successful load returns "Built-in <KitName>".
         // Returns the number of samples loaded (0 if the binary blob is empty).
-        int loadBundled();
+        int loadBundled (const juce::String& kitName = {});
 
         // Drop the current kit so the physical-model synth takes over again.
         void unload()

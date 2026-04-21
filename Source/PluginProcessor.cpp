@@ -30,6 +30,20 @@ namespace
     constexpr const char* kParamRoom          = "room";
     constexpr const char* kParamRoomAmount    = "roomAmount";
 
+    // v1.5.0 — 5 CC0 bundled kits + separate fill complexity + manual grid
+    // step division (1/16, 1/32, 1/64).
+    constexpr const char* kParamBundledKit      = "bundledKit";
+    constexpr const char* kParamFillComplexity  = "fillComplexity";
+    constexpr const char* kParamStepDiv         = "stepDiv";
+
+    const juce::StringArray kBundledKitChoices {
+        "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash"
+    };
+
+    const juce::StringArray kStepDivChoices {
+        "1/16", "1/32", "1/64"
+    };
+
     const juce::StringArray kPatternLengthChoices {
         "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars"
     };
@@ -71,25 +85,81 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "state", createLayout())
 {
-    // Seed arrangement with a single initial groove so the visualizer has
-    // something to draw on first launch.
-    arrangement.push_back (backend.generate (buildRequestForMode (aidrum::GenerationMode::Groove)));
+    // v1.5.0 — arrangement starts EMPTY. User clicks the `+` in the
+    // arrangement strip to create their first region. Every region can
+    // be deleted. Matches Logic Pro X's Drummer track behavior.
 
     // Manual pattern starts empty; 16 bars of 4/4 = 64 beats.
     manualPattern.lengthInBeats = static_cast<double> (manualNumBars * 4);
 
     // v1.4.0 — auto-load the bundled PopRock kit so the plugin makes
-    // real-sample sound out of the box. User can override with LOAD KIT.
+    // real-sample sound out of the box. User can override with LOAD KIT
+    // or the KIT combo (v1.5.0: 5 bundled kits).
     sampleKit.prepare (48000.0, 0);
-    const int bundled = sampleKit.loadBundled();
+    const int bundled = sampleKit.loadBundled ("PopRock");
     if (bundled > 0)
     {
         std::lock_guard<std::mutex> lock (loadedKitPathMutex);
         loadedKitPath = "Built-in PopRock";
     }
+
+    // v1.5.0 — Live-knob regeneration. Every APVTS parameter (variation,
+    // velocity, complexity, fill complexity, humanize, swing, etc.) hot-
+    // mutates the last arrangement region the moment the knob moves,
+    // instead of waiting for the user to click Generate. Kit changes hot-
+    // swap the bundled sample set.
+    for (auto* p : getParameters())
+    {
+        if (auto* rap = dynamic_cast<juce::RangedAudioParameter*> (p))
+            apvts.addParameterListener (rap->paramID, this);
+    }
 }
 
-AIDrumAudioProcessor::~AIDrumAudioProcessor() = default;
+AIDrumAudioProcessor::~AIDrumAudioProcessor()
+{
+    for (auto* p : getParameters())
+        if (auto* rap = dynamic_cast<juce::RangedAudioParameter*> (p))
+            apvts.removeParameterListener (rap->paramID, this);
+}
+
+void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*newValue*/)
+{
+    // Hot-swap the bundled sample kit when the user picks a new one.
+    if (id == kParamBundledKit)
+    {
+        const int idx = (int) apvts.getRawParameterValue (kParamBundledKit)->load();
+        if (idx >= 0 && idx < kBundledKitChoices.size())
+            loadBundledKit (kBundledKitChoices[idx]);
+        return;
+    }
+
+    // Every other generator-facing parameter triggers a live regen of
+    // the last region so the user hears their tweak immediately. Pattern
+    // length / genre / drumKit / room changes also re-emit — all cheap
+    // compared to the audio thread. Skip regen for purely cosmetic or
+    // transport params.
+    if (id == kParamRoom || id == kParamRoomAmount || id == kParamStepDiv)
+        return;
+
+    regenerateCurrentRegion();
+}
+
+void AIDrumAudioProcessor::regenerateCurrentRegion()
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (arrangement.empty())
+        return;
+
+    auto req = buildRequestForMode (aidrum::GenerationMode::Groove);
+    req.phraseBar = static_cast<int> (arrangement.size()) - 1;
+
+    // Keep the existing fill/groove slot — a user who generated a fill
+    // shouldn't have a knob drag turn it back into a groove.
+    const auto existingLen = arrangement.back().lengthInBeats;
+    if (existingLen > 0.0) req.lengthInBeats = existingLen;
+
+    arrangement.back() = backend.generate (req);
+}
 
 APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
 {
@@ -159,6 +229,23 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
         juce::ParameterID { kParamRoomAmount, 1 }, "Room Amount",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f));
 
+    // v1.5.0 — Bundled kit dropdown (5 CC0 kits, each with a distinct
+    // snare/kick character arc). Replaces the old 20-kit voicing combo
+    // for the user-facing "which drums do I want" choice.
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { kParamBundledKit, 1 }, "Bundled Kit",
+        kBundledKitChoices, 0)); // default: PopRock
+
+    // v1.5.0 — Fill complexity knob, independent of overall complexity.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { kParamFillComplexity, 1 }, "Fill Complexity",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+
+    // v1.5.0 — Manual grid step division (Logic-style 1/16, 1/32, 1/64).
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { kParamStepDiv, 1 }, "Step Div",
+        kStepDivChoices, 0));
+
     return { params.begin(), params.end() };
 }
 
@@ -194,6 +281,17 @@ void AIDrumAudioProcessor::unloadSampleKit()
     sampleKit.unload();
     std::lock_guard<std::mutex> lock (loadedKitPathMutex);
     loadedKitPath.clear();
+}
+
+int AIDrumAudioProcessor::loadBundledKit (const juce::String& kitName)
+{
+    const int n = sampleKit.loadBundled (kitName);
+    if (n > 0)
+    {
+        std::lock_guard<std::mutex> lock (loadedKitPathMutex);
+        loadedKitPath = "Built-in " + kitName;
+    }
+    return n;
 }
 
 juce::String AIDrumAudioProcessor::getSampleKitPath() const
@@ -247,6 +345,10 @@ AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
                             (int) apvts.getRawParameterValue (kParamHiHat)->load());
     req.kit           = static_cast<aidrum::DrumKit> (
                             (int) apvts.getRawParameterValue (kParamDrumKit)->load());
+
+    // v1.5.0 — fillComplexity knob is independent of the overall complexity
+    // knob; this lets users dial "simple groove + intricate fills" or vice-versa.
+    req.fillComplexity = apvts.getRawParameterValue (kParamFillComplexity)->load();
     return req;
 }
 
@@ -292,20 +394,28 @@ void AIDrumAudioProcessor::appendRegion (aidrum::GenerationMode requestedMode)
 void AIDrumAudioProcessor::undoLastRegion()
 {
     std::lock_guard<std::mutex> lock (arrangementMutex);
-    if (arrangement.size() > 1)
+    // v1.5.0: allow arrangement to go empty. The UI shows the `+` button
+    // centered so the user can seed a new first region.
+    if (! arrangement.empty())
         arrangement.pop_back();
+    if (arrangement.empty())
+        playheadBeats.store (0.0, std::memory_order_release);
+}
+
+void AIDrumAudioProcessor::deleteRegion (int index)
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (index < 0 || index >= static_cast<int> (arrangement.size()))
+        return;
+    arrangement.erase (arrangement.begin() + index);
+    if (arrangement.empty())
+        playheadBeats.store (0.0, std::memory_order_release);
 }
 
 void AIDrumAudioProcessor::clearArrangement()
 {
-    auto fresh = backend.generate (buildRequestForMode (aidrum::GenerationMode::Groove));
-
-    {
-        std::lock_guard<std::mutex> lock (arrangementMutex);
-        arrangement.clear();
-        arrangement.push_back (std::move (fresh));
-    }
-
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    arrangement.clear();
     playheadBeats.store (0.0, std::memory_order_release);
 }
 
@@ -360,18 +470,27 @@ namespace
 
 void AIDrumAudioProcessor::setManualCell (int midiNote, int stepIndex, float velocity)
 {
-    if (stepIndex < 0) return;
+    setManualCellStep (midiNote, stepIndex, kStepBeats, velocity);
+}
+
+void AIDrumAudioProcessor::clearManualCell (int midiNote, int stepIndex)
+{
+    clearManualCellStep (midiNote, stepIndex, kStepBeats);
+}
+
+void AIDrumAudioProcessor::setManualCellStep (int midiNote, int stepIndex,
+                                              double stepBeats, float velocity)
+{
+    if (stepIndex < 0 || stepBeats <= 0.0) return;
     std::lock_guard<std::mutex> lock (manualMutex);
 
-    const double startBeat = stepIndex * kStepBeats;
+    const double startBeat = stepIndex * stepBeats;
     if (startBeat >= manualPattern.lengthInBeats) return;
 
-    // Replace any existing note on this cell so repeat-clicks update velocity
-    // rather than stacking duplicates.
     for (auto& n : manualPattern.notes)
     {
         if (n.noteNumber == midiNote
-            && std::abs (n.startBeat - startBeat) < 1.0e-4)
+            && std::abs (n.startBeat - startBeat) < stepBeats * 0.45)
         {
             n.velocity = juce::jlimit (0.05f, 1.0f, velocity);
             return;
@@ -381,22 +500,22 @@ void AIDrumAudioProcessor::setManualCell (int midiNote, int stepIndex, float vel
     aidrum::MidiNote note;
     note.noteNumber = midiNote;
     note.startBeat  = startBeat;
-    note.lengthBeat = kStepBeats * 0.9; // slightly shorter so cells read distinct
+    note.lengthBeat = stepBeats * 0.9;
     note.velocity   = juce::jlimit (0.05f, 1.0f, velocity);
     manualPattern.notes.push_back (note);
 }
 
-void AIDrumAudioProcessor::clearManualCell (int midiNote, int stepIndex)
+void AIDrumAudioProcessor::clearManualCellStep (int midiNote, int stepIndex, double stepBeats)
 {
-    if (stepIndex < 0) return;
+    if (stepIndex < 0 || stepBeats <= 0.0) return;
     std::lock_guard<std::mutex> lock (manualMutex);
-    const double startBeat = stepIndex * kStepBeats;
+    const double startBeat = stepIndex * stepBeats;
     manualPattern.notes.erase (
         std::remove_if (manualPattern.notes.begin(), manualPattern.notes.end(),
                         [&] (const aidrum::MidiNote& n)
                         {
                             return n.noteNumber == midiNote
-                                && std::abs (n.startBeat - startBeat) < 1.0e-4;
+                                && std::abs (n.startBeat - startBeat) < stepBeats * 0.45;
                         }),
         manualPattern.notes.end());
 }

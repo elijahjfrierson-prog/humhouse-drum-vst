@@ -106,6 +106,14 @@ private:
     juce::Label               swingLabel { {}, "SWING" };
     juce::Label               fillsLabel { {}, "FILLS" };
 
+    // v1.5.0 — fill complexity (independent of overall COMPLEXITY).
+    juce::Slider              fillComplexitySlider;
+    juce::Label               fillComplexityLabel { {}, "FILL CX" };
+
+    // v1.5.0 — manual grid step division (1/16, 1/32, 1/64).
+    juce::ComboBox            stepDivBox;
+    juce::Label               stepDivLabel { {}, "STEP DIV" };
+
     // Combos.
     juce::ComboBox            genreBox, patternLengthBox, modeBox, hiHatBox, drumKitBox, roomBox;
     juce::Label               genreLabel         { {}, "GENRE"    };
@@ -163,6 +171,8 @@ private:
     std::unique_ptr<SliderAttachment> humanizeAttachment;
     std::unique_ptr<SliderAttachment> swingAttachment;
     std::unique_ptr<SliderAttachment> fillsAttachment;
+    std::unique_ptr<SliderAttachment> fillComplexityAttachment;
+    std::unique_ptr<ComboAttachment>  stepDivAttachment;
     std::unique_ptr<ComboAttachment>  genreAttachment;
     std::unique_ptr<ComboAttachment>  patternLengthAttachment;
     std::unique_ptr<ComboAttachment>  modeAttachment;

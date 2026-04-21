@@ -64,6 +64,11 @@ namespace aidrum
         bool           halfTime      = false; // snare on 3 instead of 2+4
         HiHatMode      hiHatMode     = HiHatMode::Dynamic;
 
+        // v1.5.0 — fill intricacy, independent of overall complexity. Drives the
+        // density of a Fill pattern (number of stick hits, ghost notes, tom rolls,
+        // grace-note rudiments). Groove patterns ignore this value.
+        float          fillComplexity = 0.5f; // 0..1
+
         // Drumkit voicing (v0.7.0): remaps GM notes + velocity/ghost curves.
         DrumKit        kit           = DrumKit::LudwigSupraphonicClassicRock;
 

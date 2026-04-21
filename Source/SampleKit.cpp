@@ -147,11 +147,14 @@ namespace aidrum
         return loaded;
     }
 
-    int SampleKit::loadBundled()
+    int SampleKit::loadBundled (const juce::String& kitNameIn)
     {
        #if AIDRUM_HAS_BUNDLED_KIT
+        const juce::String kitName = kitNameIn.isEmpty() ? juce::String ("PopRock") : kitNameIn;
+        const juce::String prefix  = kitName + "__";
+
         auto data = std::make_shared<KitData>();
-        data->folderPath = "Built-in PopRock";
+        data->folderPath = "Built-in " + kitName;
 
         juce::AudioFormatManager fmt;
         fmt.registerBasicFormats();
@@ -166,7 +169,13 @@ namespace aidrum
 
             juce::String origName = BundledKitData::getNamedResourceOriginalFilename (resName);
             if (origName.isEmpty()) origName = resName;
-            auto stem = juce::File (origName).getFileNameWithoutExtension();
+
+            // v1.5.0: five kits share one binary blob; filenames are prefixed
+            // with "<KitName>__" (e.g. "PopRock__kick.wav"). Only load entries
+            // belonging to the requested kit.
+            if (! origName.startsWith (prefix)) continue;
+            auto remainder = origName.substring (prefix.length());
+            auto stem = juce::File (remainder).getFileNameWithoutExtension();
             (void) stripVelocitySuffix (stem);
             Kind k;
             if (! kindFromStem (stem, k)) continue;

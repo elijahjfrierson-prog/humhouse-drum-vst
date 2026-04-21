@@ -472,14 +472,27 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         plusButton.bump();
         arrangementStrip.repaint();
     };
+    // v1.5.0 — right-click / alt-click a region to delete it. Arrangement is
+    // allowed to go empty; + on the far right creates the first new region.
+    arrangementStrip.onDeleteRegion = [this] (int idx)
+    {
+        processorRef.deleteRegion (idx);
+        arrangementStrip.repaint();
+    };
     addAndMakeVisible (arrangementStrip);
 
     // Manual grid (v0.8.0) — interactive 16-bar step sequencer.
     manualGrid.provider    = [this] { return processorRef.getManualPattern(); };
     manualGrid.onSetCell   = [this] (int note, int step, float vel)
-        { processorRef.setManualCell (note, step, vel); manualGrid.repaint(); };
+    {
+        processorRef.setManualCellStep (note, step, manualGrid.stepBeats(), vel);
+        manualGrid.repaint();
+    };
     manualGrid.onClearCell = [this] (int note, int step)
-        { processorRef.clearManualCell (note, step); manualGrid.repaint(); };
+    {
+        processorRef.clearManualCellStep (note, step, manualGrid.stepBeats());
+        manualGrid.repaint();
+    };
     manualGrid.setNumBars (processorRef.getManualNumBars());
     manualGrid.setTooltip ("MANUAL GRID \u2014 click cells to place kick / snare / tom / hat hits. "
                            "Alt-click or right-click to erase. Drag to paint multiple cells. "
@@ -518,9 +531,10 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addRotary (complexitySlider, complexityLabel);
     addRotary (velocitySlider,   velocityLabel);
     addRotary (humanizeSlider,   humanizeLabel);
-    addRotary (swingSlider,      swingLabel);
-    addRotary (fillsSlider,      fillsLabel);
-    addRotary (roomAmountSlider, roomAmountLabel);
+    addRotary (swingSlider,          swingLabel);
+    addRotary (fillsSlider,          fillsLabel);
+    addRotary (fillComplexitySlider, fillComplexityLabel);
+    addRotary (roomAmountSlider,     roomAmountLabel);
     roomAmountSlider.setRange (0.0, 1.0, 0.001);
     roomAmountSlider.setValue (0.25);
     roomAmountSlider.textFromValueFunction = [] (double v)
@@ -530,6 +544,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     humanizeSlider  .setTooltip ("HUMANIZE — random micro-timing / velocity jitter. 0 = machine-tight, 1 = loose drummer feel.");
     swingSlider     .setTooltip ("SWING — shuffles the off-beat 16ths late. 0 = straight, 1 = fully triplet swing.");
     fillsSlider     .setTooltip ("FILLS — probability the last region of a phrase ends in a snare/tom fill instead of a groove loop.");
+    fillComplexitySlider.setTooltip ("FILL CX — intricacy of the fill rudiments (flam accents, hertas, tom rolls, 32nd builds). Independent of overall COMPLEXITY.");
 
     // Combos
     auto styleCombo = [this] (juce::ComboBox& c, juce::Label& l)
@@ -566,14 +581,25 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     hiHatBox.addItem ("Ride",    4);
     styleCombo (hiHatBox, hiHatLabel);
 
-    {
-        juce::StringArray kitNames;
-        for (const auto& n : aidrum::drumKitDisplayNames())
-            kitNames.add (juce::String (n));
-        drumKitBox.addItemList (kitNames, 1);
-    }
+    // v1.5.0 — DRUM KIT combo now shows the 5 CC0 bundled kits, one per
+    // character archetype (PopRock, NuRock, AltRock, IndieLofi, Thrash).
+    // Replaces the 20-kit voicing combo so users get meaningful variation
+    // instead of 20 minor timbre tweaks.
+    drumKitBox.addItemList (
+        juce::StringArray { "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
     drumKitBox.onChange = [this] { kitVisualizer.setSelectedKit (drumKitBox.getSelectedItemIndex()); };
+
+    // v1.5.0 — step-division combo (for the manual grid).
+    stepDivBox.addItemList (juce::StringArray { "1/16", "1/32", "1/64" }, 1);
+    styleCombo (stepDivBox, stepDivLabel);
+    stepDivBox.onChange = [this]
+    {
+        const int idx = stepDivBox.getSelectedItemIndex();
+        const int spb = (idx == 2 ? 64 : idx == 1 ? 32 : 16);
+        manualGrid.setStepsPerBar (spb);
+    };
+    stepDivBox.setTooltip ("STEP DIV — manual grid draw resolution. 1/16 = Logic default, 1/64 = 4x denser for tight ghost-note work.");
 
     roomBox.addItem ("Dry / Studio",  1);
     roomBox.addItem ("Small Room",    2);
@@ -863,11 +889,14 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     humanizeAttachment      = std::make_unique<SliderAttachment> (apvts, "humanize",      humanizeSlider);
     swingAttachment         = std::make_unique<SliderAttachment> (apvts, "swing",         swingSlider);
     fillsAttachment         = std::make_unique<SliderAttachment> (apvts, "fillsProb",     fillsSlider);
+    fillComplexityAttachment = std::make_unique<SliderAttachment>(apvts, "fillComplexity", fillComplexitySlider);
+    stepDivAttachment       = std::make_unique<ComboAttachment>  (apvts, "stepDiv",       stepDivBox);
     genreAttachment         = std::make_unique<ComboAttachment>  (apvts, "genre",         genreBox);
     patternLengthAttachment = std::make_unique<ComboAttachment>  (apvts, "patternLength", patternLengthBox);
     modeAttachment          = std::make_unique<ComboAttachment>  (apvts, "mode",          modeBox);
     hiHatAttachment         = std::make_unique<ComboAttachment>  (apvts, "hiHat",         hiHatBox);
-    drumKitAttachment       = std::make_unique<ComboAttachment>  (apvts, "drumKit",       drumKitBox);
+    // v1.5.0 — drumKitBox is the bundled-kit selector (5 CC0 kits).
+    drumKitAttachment       = std::make_unique<ComboAttachment>  (apvts, "bundledKit",    drumKitBox);
     roomAttachment          = std::make_unique<ComboAttachment>  (apvts, "room",          roomBox);
     roomAmountAttachment    = std::make_unique<SliderAttachment> (apvts, "roomAmount",    roomAmountSlider);
     halfTimeAttachment      = std::make_unique<ButtonAttachment> (apvts, "halfTime",      halfTimeButton);
@@ -956,13 +985,14 @@ void AIDrumAudioProcessorEditor::resized()
     placeCombo (patternLengthBox);
     placeCombo (modeBox);
     placeCombo (hiHatBox);
+    placeCombo (stepDivBox);
     halfTimeButton.setBounds (rightCombos.removeFromTop (28).reduced (0, 2));
 
     area.removeFromTop (8);
 
-    // ----- Knobs row: Variation | Humanize | Swing | Fills | Room Amount -----
+    // ----- Knobs row: Variation | Humanize | Swing | Fills | Fill CX | Room Amount -----
     auto knobsRow = area.removeFromTop (108).reduced (4, 6);
-    const int knobW = knobsRow.getWidth() / 5;
+    const int knobW = knobsRow.getWidth() / 6;
     auto placeKnob = [&knobsRow, knobW] (juce::Slider& s)
     {
         auto cell = knobsRow.removeFromLeft (knobW).reduced (6, 10);
@@ -972,6 +1002,7 @@ void AIDrumAudioProcessorEditor::resized()
     placeKnob (humanizeSlider);
     placeKnob (swingSlider);
     placeKnob (fillsSlider);
+    placeKnob (fillComplexitySlider);
     placeKnob (roomAmountSlider);
 
     area.removeFromTop (8);
