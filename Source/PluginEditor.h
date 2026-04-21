@@ -67,11 +67,17 @@ private:
     class KitVisualizer : public juce::Component
     {
     public:
+        // One flash slot per DrumBusMixer bus (8 total — match DrumSynth::kNumBuses).
+        static constexpr int kNumFlashes = 8;
+
         KitVisualizer();
         void setSelectedKit (int index);
+        void pulseBus (int bus, float velocity);
+        void decayFlashes (float k);
         void paint (juce::Graphics&) override;
     private:
-        int selectedKit = 0;
+        int   selectedKit = 0;
+        float flash[kNumFlashes] {};
     };
 
     void timerCallback() override;

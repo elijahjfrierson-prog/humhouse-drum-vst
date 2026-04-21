@@ -171,6 +171,8 @@ private:
 public:
     // v1.1.0 mixer access for the UI.
     aidrum::DrumBusMixer& getBusMixer() { return busMixer; }
+    // v1.2.0 — hit indicator access for the UI.
+    aidrum::DrumSynth&    getDrumSynth() { return drumSynth; }
 
 private:
 

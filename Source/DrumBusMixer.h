@@ -68,11 +68,16 @@ namespace aidrum
         // Clipper ceiling (0..1)  — 1 = off, 0.1 = very hard ceiling
         std::atomic<float> clipCeiling { 1.0f };
 
-        // Dampen (hi-shelf low-pass cutoff Hz) — 20000 = off, 2000 = dark
-        std::atomic<float> dampenHz    { 20000.0f };
+        // Dampen (0..1, 0 = bright/open, 1 = fully dampened). Internally maps
+        // to a one-pole LP cutoff between 20 kHz and 500 Hz on a log curve.
+        std::atomic<float> dampen      { 0.0f };
 
         // Reverb send (0..1)
         std::atomic<float> reverbSend  { 0.0f };
+
+        // Depth (-1..+1). Negative = in-your-face (drier, brighter, louder).
+        // Positive = further back (more reverb send, LP air-filter, quieter).
+        std::atomic<float> depth       { 0.0f };
     };
 
     struct MasterParams
@@ -184,10 +189,12 @@ namespace aidrum
                     }
                 }
 
-                // --- Dampen (one-pole LP) ---------------------------------
-                const float cutoff = p.dampenHz.load (std::memory_order_relaxed);
-                if (cutoff < 18000.0f)
+                // --- Dampen (0..1, one-pole LP with log-swept cutoff) ------
+                const float damp01 = juce::jlimit (0.0f, 1.0f,
+                                        p.dampen.load (std::memory_order_relaxed));
+                if (damp01 > 0.005f)
                 {
+                    const float cutoff = 20000.0f * std::pow (500.0f / 20000.0f, damp01);
                     const float a = std::exp (-juce::MathConstants<float>::twoPi
                                             * cutoff / (float) sr);
                     for (int c = 0; c < buf.getNumChannels(); ++c)
@@ -198,6 +205,44 @@ namespace aidrum
                         {
                             z = (1.0f - a) * d[s] + a * z;
                             d[s] = z;
+                        }
+                    }
+                }
+
+                // --- Depth (front/back 3-D positioning) --------------------
+                // depthPos > 0 = pushed back: air-LP + gain cut.
+                // depthPos < 0 = in-your-face: gentle HP to clear mud.
+                const float depthPos = juce::jlimit (-1.0f, 1.0f,
+                                           p.depth.load (std::memory_order_relaxed));
+                if (depthPos > 0.01f)
+                {
+                    const float airCutoff = juce::jmap (depthPos, 0.0f, 1.0f, 18000.0f, 2800.0f);
+                    const float a = std::exp (-juce::MathConstants<float>::twoPi
+                                            * airCutoff / (float) sr);
+                    for (int c = 0; c < buf.getNumChannels(); ++c)
+                    {
+                        auto* d = buf.getWritePointer (c);
+                        float& z = st.depthLpZ[(size_t) c];
+                        for (int s = 0; s < n; ++s)
+                        {
+                            z = (1.0f - a) * d[s] + a * z;
+                            d[s] = z;
+                        }
+                    }
+                }
+                else if (depthPos < -0.01f)
+                {
+                    const float hpCutoff = juce::jmap (-depthPos, 0.0f, 1.0f, 30.0f, 260.0f);
+                    const float a = std::exp (-juce::MathConstants<float>::twoPi
+                                            * hpCutoff / (float) sr);
+                    for (int c = 0; c < buf.getNumChannels(); ++c)
+                    {
+                        auto* d = buf.getWritePointer (c);
+                        float& z = st.depthHpZ[(size_t) c];
+                        for (int s = 0; s < n; ++s)
+                        {
+                            z = (1.0f - a) * d[s] + a * z;
+                            d[s] = d[s] - z;
                         }
                     }
                 }
@@ -214,9 +259,12 @@ namespace aidrum
                     }
                 }
 
-                // --- Gain + pan -------------------------------------------
+                // --- Gain + pan (depth adds gain trim: back = -4 dB, fwd = +2 dB) -
+                const float depthTrimDb = (depthPos > 0.0f ? -depthPos * 4.0f
+                                                           :  -depthPos * 2.0f);
                 const float lin = juce::Decibels::decibelsToGain (
-                                      p.gainDb.load (std::memory_order_relaxed), -60.0f);
+                                      p.gainDb.load (std::memory_order_relaxed) + depthTrimDb,
+                                      -60.0f);
                 const float pan = juce::jlimit (-1.0f, 1.0f,
                                       p.pan.load (std::memory_order_relaxed));
 
@@ -248,8 +296,10 @@ namespace aidrum
                         oM[s] += sM[s] * g;
                 }
 
-                // --- Reverb send -------------------------------------------
-                const float send = p.reverbSend.load (std::memory_order_relaxed);
+                // --- Reverb send (depth augments: back = more, fwd = less) -
+                float send = p.reverbSend.load (std::memory_order_relaxed);
+                if (depthPos > 0.0f)      send = juce::jlimit (0.0f, 1.0f, send + depthPos * 0.35f);
+                else if (depthPos < 0.0f) send = juce::jlimit (0.0f, 1.0f, send * (1.0f + depthPos * 0.7f));
                 if (send > 0.001f)
                 {
                     const int rCh = reverbBuffer.getNumChannels();
@@ -318,6 +368,8 @@ namespace aidrum
             std::array<float, 2> eqMidZ2  {};
             std::array<float, 2> eqHighZ  {};
             std::array<float, 2> dampenZ  {};
+            std::array<float, 2> depthLpZ {};
+            std::array<float, 2> depthHpZ {};
             std::array<float, 2> compEnv  { { 0.0f, 0.0f } };
 
             void reset()
@@ -327,6 +379,8 @@ namespace aidrum
                 eqMidZ2.fill (0.0f);
                 eqHighZ.fill (0.0f);
                 dampenZ.fill (0.0f);
+                depthLpZ.fill (0.0f);
+                depthHpZ.fill (0.0f);
                 compEnv.fill (0.0f);
             }
         };

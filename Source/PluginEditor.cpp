@@ -158,6 +158,25 @@ void AIDrumAudioProcessorEditor::KitVisualizer::setSelectedKit (int index)
     repaint();
 }
 
+void AIDrumAudioProcessorEditor::KitVisualizer::pulseBus (int bus, float velocity)
+{
+    if (bus < 0 || bus >= kNumFlashes) return;
+    const float v = juce::jlimit (0.0f, 1.0f, 0.35f + velocity * 0.65f);
+    if (v > flash[bus]) flash[bus] = v;
+}
+
+void AIDrumAudioProcessorEditor::KitVisualizer::decayFlashes (float k)
+{
+    bool any = false;
+    for (int i = 0; i < kNumFlashes; ++i)
+    {
+        flash[i] *= k;
+        if (flash[i] < 0.01f) flash[i] = 0.0f;
+        else any = true;
+    }
+    if (any) repaint();
+}
+
 void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (6.0f);
@@ -186,12 +205,28 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
     g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.08f));
     g.fillEllipse (stage.getCentreX() - 140.0f, stage.getCentreY() - 110.0f, 280.0f, 220.0f);
 
-    auto drawShell = [&] (juce::Rectangle<float> shell, float rimAlpha)
+    auto drawShell = [&] (juce::Rectangle<float> shell, float rimAlpha, int busIdx, const char* label)
     {
-        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.10f));
+        const float f = (busIdx >= 0 && busIdx < kNumFlashes) ? flash[busIdx] : 0.0f;
+        if (f > 0.01f)
+        {
+            const auto glow = shell.expanded (10.0f + 14.0f * f);
+            g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.22f * f));
+            g.fillEllipse (glow);
+        }
+        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.10f + 0.55f * f));
         g.fillEllipse (shell);
-        g.setColour (juce::Colour (Palette::kAccentSoft).withAlpha (rimAlpha));
-        g.drawEllipse (shell, 2.0f);
+        g.setColour (juce::Colour (Palette::kAccentSoft).withAlpha (juce::jlimit (0.0f, 1.0f, rimAlpha + f * 0.4f)));
+        g.drawEllipse (shell, 2.0f + 1.2f * f);
+
+        if (label != nullptr)
+        {
+            g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
+            auto lf = juce::Font (juce::FontOptions (8.5f, juce::Font::bold));
+            lf.setExtraKerningFactor (0.25f);
+            g.setFont (lf);
+            g.drawText (label, shell.toNearestInt(), juce::Justification::centred, false);
+        }
     };
 
     if (electronic)
@@ -201,16 +236,24 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         g.fillRoundedRectangle (body, 14.0f);
         g.setColour (juce::Colour (Palette::kAccentSoft));
         g.drawRoundedRectangle (body, 14.0f, 2.0f);
+        const char* padLabel[8] = { "KICK","SNR","TOM","CHH","OHH","RIDE","CRH","CHN" };
         for (int row = 0; row < 2; ++row)
             for (int col = 0; col < 4; ++col)
             {
+                const int idx = row * 4 + col;
+                const float f = flash[idx];
                 auto pad = juce::Rectangle<float> (body.getX() + 22.0f + col * 52.0f,
                                                    body.getY() + 24.0f + row * 48.0f,
                                                    34.0f, 26.0f);
-                g.setColour (juce::Colour (Palette::kBone).withAlpha (0.10f));
+                g.setColour (juce::Colour (Palette::kBone).withAlpha (0.10f + 0.55f * f));
                 g.fillRoundedRectangle (pad, 6.0f);
-                g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.75f));
-                g.drawRoundedRectangle (pad, 6.0f, 1.0f);
+                g.setColour (juce::Colour (Palette::kAccent).withAlpha (juce::jlimit (0.0f, 1.0f, 0.75f + f * 0.25f)));
+                g.drawRoundedRectangle (pad, 6.0f, 1.0f + 1.4f * f);
+                g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
+                auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
+                lf.setExtraKerningFactor (0.25f);
+                g.setFont (lf);
+                g.drawText (padLabel[idx], pad.toNearestInt(), juce::Justification::centred, false);
             }
         g.setColour (juce::Colour (Palette::kAccent));
         g.fillEllipse (body.getRight() - 34.0f, body.getY() + 18.0f, 8.0f, 8.0f);
@@ -223,19 +266,19 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
     auto kick = juce::Rectangle<float> (stage.getCentreX() - kickW * 0.5f,
                                         stage.getBottom() - kickH - 34.0f,
                                         kickW, kickH);
-    drawShell (kick, 0.95f);
+    drawShell (kick, 0.95f, 0, "KICK");
 
     auto snare = juce::Rectangle<float> (kick.getX() - (jazz ? 56.0f : 76.0f),
                                          kick.getY() + 22.0f,
                                          jazz ? 56.0f : 64.0f,
                                          jazz ? 28.0f : 32.0f);
-    drawShell (snare, 0.85f);
+    drawShell (snare, 0.85f, 1, "SNARE");
 
     auto floor = juce::Rectangle<float> (kick.getRight() + 12.0f,
                                          kick.getY() + 20.0f,
                                          metal ? 72.0f : 62.0f,
                                          metal ? 52.0f : 44.0f);
-    drawShell (floor, 0.78f);
+    drawShell (floor, 0.78f, 2, "TOM");
 
     auto rack1 = juce::Rectangle<float> (kick.getCentreX() - 62.0f,
                                          kick.getY() - 44.0f,
@@ -243,31 +286,81 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
     auto rack2 = juce::Rectangle<float> (kick.getCentreX() + 10.0f,
                                          kick.getY() - 42.0f,
                                          54.0f, 34.0f);
-    drawShell (rack1, 0.82f);
-    if (! jazz) drawShell (rack2, 0.82f);
+    drawShell (rack1, 0.82f, 2, nullptr);
+    if (! jazz) drawShell (rack2, 0.82f, 2, nullptr);
 
-    auto cymbal = [&] (float x, float y, float w)
+    auto cymbal = [&] (float x, float y, float w, int busIdx, const char* label)
     {
         auto c = juce::Rectangle<float> (x - w * 0.5f, y - 8.0f, w, 16.0f);
-        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.08f));
+        const float f = (busIdx >= 0 && busIdx < kNumFlashes) ? flash[busIdx] : 0.0f;
+        if (f > 0.01f)
+        {
+            g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.28f * f));
+            g.fillEllipse (c.expanded (8.0f + 10.0f * f));
+        }
+        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.08f + 0.55f * f));
         g.fillEllipse (c);
-        g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.72f));
-        g.drawEllipse (c, 1.5f);
+        g.setColour (juce::Colour (Palette::kAccent).withAlpha (juce::jlimit (0.0f, 1.0f, 0.72f + f * 0.28f)));
+        g.drawEllipse (c, 1.5f + 1.0f * f);
+        if (label != nullptr)
+        {
+            g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
+            auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
+            lf.setExtraKerningFactor (0.25f);
+            g.setFont (lf);
+            g.drawText (label, c.toNearestInt(), juce::Justification::centred, false);
+        }
     };
 
-    cymbal (kick.getX() - 10.0f, kick.getY() - 54.0f, jazz ? 76.0f : 92.0f);
-    cymbal (kick.getRight() + 38.0f, kick.getY() - 60.0f, metal ? 96.0f : 84.0f);
+    // Left = hi-hat (closed or open — we flash both on any hat hit).
+    const float hatFlash = juce::jmax (flash[3], flash[4]);
+    {
+        auto c = juce::Rectangle<float> (kick.getX() - 10.0f - (jazz ? 38.0f : 46.0f),
+                                         kick.getY() - 54.0f - 8.0f,
+                                         jazz ? 76.0f : 92.0f, 16.0f);
+        if (hatFlash > 0.01f)
+        {
+            g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.28f * hatFlash));
+            g.fillEllipse (c.expanded (8.0f + 10.0f * hatFlash));
+        }
+        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.08f + 0.55f * hatFlash));
+        g.fillEllipse (c);
+        g.setColour (juce::Colour (Palette::kAccent).withAlpha (juce::jlimit (0.0f, 1.0f, 0.72f + hatFlash * 0.28f)));
+        g.drawEllipse (c, 1.5f + 1.0f * hatFlash);
+        g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * hatFlash));
+        auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
+        lf.setExtraKerningFactor (0.25f);
+        g.setFont (lf);
+        g.drawText ("HAT", c.toNearestInt(), juce::Justification::centred, false);
+    }
+    cymbal (kick.getRight() + 38.0f, kick.getY() - 60.0f, metal ? 96.0f : 84.0f, 6, "CRASH");
     if (! jazz)
-        cymbal (kick.getCentreX() + 94.0f, kick.getY() - 96.0f, metal ? 84.0f : 72.0f);
+        cymbal (kick.getCentreX() + 94.0f, kick.getY() - 96.0f, metal ? 84.0f : 72.0f, 5, "RIDE");
+
+    if (metal)
+    {
+        auto chinaRect = juce::Rectangle<float> (kick.getRight() + 56.0f,
+                                                 kick.getY() - 120.0f - 8.0f, 88.0f, 20.0f);
+        const float f = flash[7];
+        if (f > 0.01f)
+        {
+            g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.28f * f));
+            g.fillEllipse (chinaRect.expanded (8.0f + 10.0f * f));
+        }
+        g.setColour (juce::Colour (Palette::kAccentSoft).withAlpha (juce::jlimit (0.0f, 1.0f, 0.85f + f * 0.15f)));
+        g.drawEllipse (chinaRect, 1.6f + 1.0f * f);
+        g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
+        auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
+        lf.setExtraKerningFactor (0.25f);
+        g.setFont (lf);
+        g.drawText ("CHINA", chinaRect.toNearestInt(), juce::Justification::centred, false);
+    }
 
     if (metal)
     {
         auto kick2 = kick.translated (-138.0f, 0.0f);
         kick2.setPosition (kick.getX() - kick.getWidth() - 22.0f, kick.getY());
-        drawShell (kick2, 0.92f);
-        auto china = juce::Rectangle<float> (kick.getRight() + 56.0f, kick.getY() - 120.0f, 88.0f, 14.0f);
-        g.setColour (juce::Colour (Palette::kAccentSoft).withAlpha (0.85f));
-        g.drawEllipse (china, 1.6f);
+        drawShell (kick2, 0.92f, 0, nullptr);
     }
 }
 
@@ -407,6 +500,11 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addRotary (swingSlider,      swingLabel);
     addRotary (fillsSlider,      fillsLabel);
 
+    variationSlider .setTooltip ("VARIATION — re-rolls the next-generated groove with a different seed so each + press sounds fresh.");
+    humanizeSlider  .setTooltip ("HUMANIZE — random micro-timing / velocity jitter. 0 = machine-tight, 1 = loose drummer feel.");
+    swingSlider     .setTooltip ("SWING — shuffles the off-beat 16ths late. 0 = straight, 1 = fully triplet swing.");
+    fillsSlider     .setTooltip ("FILLS — probability the last region of a phrase ends in a snare/tom fill instead of a groove loop.");
+
     // Combos
     auto styleCombo = [this] (juce::ComboBox& c, juce::Label& l)
     {
@@ -451,12 +549,19 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     styleCombo (drumKitBox, drumKitLabel);
     drumKitBox.onChange = [this] { kitVisualizer.setSelectedKit (drumKitBox.getSelectedItemIndex()); };
 
+    genreBox         .setTooltip ("GENRE — picks the groove vocabulary the AI draws from (rock, jazz, metal, trap, etc.).");
+    patternLengthBox .setTooltip ("LENGTH — how long each appended region is in bars.");
+    modeBox          .setTooltip ("MODE — GROOVE appends a bar of steady pattern, FILL appends a transition fill.");
+    hiHatBox         .setTooltip ("HI-HAT — forces the hat articulation: Dynamic (mix), Closed, Open, or Ride.");
+    drumKitBox       .setTooltip ("DRUM KIT — selects one of 20 physically-modelled acoustic/electronic kits. The visualizer flashes each drum as it hits.");
+
     // Half-time toggle
     halfTimeButton.setClickingTogglesState (true);
     halfTimeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
     halfTimeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
     halfTimeButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kMuted));
     halfTimeButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
+    halfTimeButton.setTooltip ("HALF-TIME — backbeat moves to 3 instead of 2 & 4, giving every groove a slower, heavier feel.");
     addAndMakeVisible (halfTimeButton);
 
     loopButton.setClickingTogglesState (true);
@@ -465,6 +570,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     loopButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
     loopButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kMuted));
     loopButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
+    loopButton.setTooltip ("LOOP — when the playhead hits the end of the arrangement, wrap back to bar 1 instead of stopping.");
     loopButton.onClick = [this] { processorRef.setLooping (loopButton.getToggleState()); };
     addAndMakeVisible (loopButton);
 
@@ -478,6 +584,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         plusButton.bump();
         arrangementStrip.repaint();
     };
+    plusButton.setTooltip ("APPEND GROOVE (+) — adds a new region to the right of the arrangement so you can keep stacking verses, fills and choruses.");
     addAndMakeVisible (plusButton);
 
     {
@@ -503,6 +610,13 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     styleSmallBtn (pauseButton);
     styleSmallBtn (stopButton);
 
+    undoButton     .setTooltip ("UNDO — remove the last appended region from the arrangement.");
+    clearButton    .setTooltip ("CLEAR — wipe every region from the arrangement and rewind to bar 1.");
+    saveMidiButton .setTooltip ("SAVE MIDI — export the entire arrangement as a .mid file you can drop into any DAW.");
+    playButton     .setTooltip ("PLAY — start the internal transport. In a DAW host, this is ignored and the host transport drives playback.");
+    pauseButton    .setTooltip ("PAUSE — freeze the playhead in place. Press PLAY to resume from the same position.");
+    stopButton     .setTooltip ("STOP — halt playback and rewind the playhead to bar 1.");
+
     undoButton.onClick  = [this] { processorRef.undoLastRegion(); arrangementStrip.repaint(); };
     clearButton.onClick = [this] { processorRef.clearArrangement(); arrangementStrip.repaint(); };
     playButton.onClick  = [this] { processorRef.play(); arrangementStrip.repaint(); };
@@ -519,6 +633,9 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     styleSmallBtn (manualButton);
     styleSmallBtn (clearManualButton);
     styleSmallBtn (commitManualButton);
+    manualButton       .setTooltip ("MANUAL — swap the arrangement for a 16-bar interactive step grid. Click cells to place kick/snare/tom/hat hits, drag to paint, alt-click to erase.");
+    clearManualButton  .setTooltip ("CLEAR GRID — erase every cell in the manual step grid.");
+    commitManualButton .setTooltip ("APPEND TO ARR. — commit the manual pattern into the arrangement as a new region so you can mix it with AI-generated regions.");
     manualButton.setClickingTogglesState (true);
     manualButton.onClick = [this]
     {
@@ -647,6 +764,16 @@ void AIDrumAudioProcessorEditor::timerCallback()
     plusButton.tickGlow();
     if (manualGrid.isVisible())
         manualGrid.repaint();
+
+    // Drain hit-event counters and pulse the matching drum in the visualizer.
+    auto& synth = processorRef.getDrumSynth();
+    for (int b = 0; b < KitVisualizer::kNumFlashes; ++b)
+    {
+        const int hits = synth.readAndResetHitCount (b);
+        if (hits > 0)
+            kitVisualizer.pulseBus (b, synth.lastHitVelocity (b));
+    }
+    kitVisualizer.decayFlashes (0.78f);
 }
 
 void AIDrumAudioProcessorEditor::paint (juce::Graphics& g)
