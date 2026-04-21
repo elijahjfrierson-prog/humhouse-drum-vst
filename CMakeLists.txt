@@ -1,10 +1,18 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(AIDrumVST VERSION 0.8.0 LANGUAGES C CXX)
+project(AIDrumVST VERSION 0.8.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Statically link the MSVC runtime on Windows so the Standalone .exe and
+# the VST3 run on fresh machines without needing Microsoft's VC++ 2015-2022
+# redistributable installed.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        CACHE STRING "" FORCE)
+endif()
 
 # Warnings
 if(MSVC)
