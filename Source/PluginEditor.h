@@ -14,9 +14,25 @@ public:
     void resized() override;
 
 private:
+    // Custom draggable "chip": initiates an external drag-and-drop of a
+    // temporary .mid file when the user drags it out of the window.
+    class MidiDragHandle : public juce::Component
+    {
+    public:
+        explicit MidiDragHandle (AIDrumAudioProcessor& p) : processorRef (p) {}
+
+        void paint (juce::Graphics& g) override;
+        void mouseDown (const juce::MouseEvent& e) override;
+        void mouseDrag (const juce::MouseEvent& e) override;
+
+    private:
+        AIDrumAudioProcessor& processorRef;
+        bool   dragStarted = false;
+        juce::File tempMidiFile;
+    };
+
     AIDrumAudioProcessor& processorRef;
 
-    // Big round "+" button that auto-generates a new pattern on each press.
     juce::TextButton  plusButton      { "+" };
     juce::Label       plusHelper      { {}, "Generate" };
     juce::Label       titleLabel      { {}, "AI Drum VST" };
@@ -39,6 +55,11 @@ private:
 
     juce::ComboBox    modeBox;
     juce::Label       modeLabel       { {}, "Mode" };
+
+    juce::TextButton  saveMidiButton  { "Save MIDI..." };
+    MidiDragHandle    dragHandle      { processorRef };
+
+    std::unique_ptr<juce::FileChooser> fileChooser;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ComboAttachment  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;

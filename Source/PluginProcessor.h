@@ -47,6 +47,11 @@ public:
     // Returns a copy of the most-recently-generated pattern (thread-safe).
     aidrum::MidiPattern getCurrentPattern() const;
 
+    // Writes the current pattern to `dest` as a standard Type-0 MIDI file.
+    // Returns true on success. Used by "Save MIDI" and "Drag to DAW" in the
+    // editor — works identically in standalone and plugin mode.
+    bool writeCurrentPatternAsMidiFile (const juce::File& dest) const;
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 

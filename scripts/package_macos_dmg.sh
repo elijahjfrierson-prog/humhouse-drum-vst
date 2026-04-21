@@ -11,6 +11,7 @@ BUILD_DIR="${BUILD_DIR:-build}"
 ARTEFACTS="$BUILD_DIR/AIDrumVST_artefacts/Release"
 VST3_SRC="$ARTEFACTS/VST3/AI Drum VST.vst3"
 AU_SRC="$ARTEFACTS/AU/AI Drum VST.component"
+APP_SRC="$ARTEFACTS/Standalone/AI Drum VST.app"
 STAGING="$(mktemp -d)/AI Drum VST"
 DMG_OUT="${DMG_OUT:-AI-Drum-VST-macOS.dmg}"
 
@@ -26,6 +27,9 @@ fi
 mkdir -p "$STAGING"
 cp -R "$VST3_SRC" "$STAGING/"
 cp -R "$AU_SRC"   "$STAGING/"
+if [[ -d "$APP_SRC" ]]; then
+  cp -R "$APP_SRC" "$STAGING/"
+fi
 
 # Drag-to-install targets.
 ln -s "/Library/Audio/Plug-Ins/VST3"      "$STAGING/VST3 Plug-Ins"
@@ -36,12 +40,19 @@ cat > "$STAGING/README.txt" <<'EOF'
 AI Drum VST
 ===========
 
-To install:
-  1. Drag "AI Drum VST.vst3"       into "VST3 Plug-Ins"
-     (loads in Ableton Live, FL Studio, Reaper, Cubase, Studio One, …)
-  2. Drag "AI Drum VST.component"  into "Audio Unit Plug-Ins"
-     (loads in Logic Pro and GarageBand — Logic does not accept VST3.)
-  3. Relaunch your DAW and rescan plugins.
+Three ways to use it:
+
+A) Standalone app (no DAW scanning needed):
+   Double-click "AI Drum VST.app" — it runs by itself. Use the
+   "Drag MIDI to DAW" handle or "Save MIDI..." button to pull
+   patterns into FL Studio / Logic / Ableton / anything.
+
+B) VST3 plugin (Ableton Live, FL Studio, Reaper, Cubase, Studio One, …):
+   Drag "AI Drum VST.vst3" into "VST3 Plug-Ins" then rescan in your DAW.
+
+C) AU plugin (Logic Pro, GarageBand — Logic does not accept VST3):
+   Drag "AI Drum VST.component" into "Audio Unit Plug-Ins" then
+   relaunch Logic.
 
 First launch (unsigned build):
   macOS Gatekeeper may block the plugin the first time your DAW loads it.
@@ -65,6 +76,7 @@ else
   echo "No APPLE_DEVELOPER_ID set; ad-hoc signing (users may see Gatekeeper prompts)."
   codesign --force --deep --sign - "$STAGING/AI Drum VST.vst3"   || true
   codesign --force --deep --sign - "$STAGING/AI Drum VST.component" || true
+  [[ -d "$STAGING/AI Drum VST.app" ]] && codesign --force --deep --sign - "$STAGING/AI Drum VST.app" || true
 fi
 
 rm -f "$DMG_OUT"

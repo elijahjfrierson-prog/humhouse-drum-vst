@@ -135,6 +135,62 @@ aidrum::MidiPattern AIDrumAudioProcessor::getCurrentPattern() const
     return currentPattern;
 }
 
+bool AIDrumAudioProcessor::writeCurrentPatternAsMidiFile (const juce::File& dest) const
+{
+    aidrum::MidiPattern pattern;
+    {
+        std::lock_guard<std::mutex> lock (patternMutex);
+        pattern = currentPattern;
+    }
+
+    if (pattern.notes.empty() || pattern.lengthInBeats <= 0.0)
+        return false;
+
+    // Standard Type-1, 960 PPQ.
+    constexpr short kPPQ = 960;
+
+    juce::MidiMessageSequence seq;
+    seq.addEvent (juce::MidiMessage::timeSignatureMetaEvent (4, 4));
+    seq.addEvent (juce::MidiMessage::tempoMetaEvent (static_cast<int> (500000))); // 120 BPM
+
+    for (const auto& note : pattern.notes)
+    {
+        const double onTicks  = note.startBeat * kPPQ;
+        const double offTicks = (note.startBeat + std::max (0.01, note.lengthBeat)) * kPPQ;
+        const auto   vel      = static_cast<juce::uint8> (juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f));
+
+        // GM drums live on MIDI channel 10.
+        auto on  = juce::MidiMessage::noteOn  (10, note.noteNumber, vel);
+        auto off = juce::MidiMessage::noteOff (10, note.noteNumber);
+        on.setTimeStamp (onTicks);
+        off.setTimeStamp (offTicks);
+
+        seq.addEvent (on);
+        seq.addEvent (off);
+    }
+
+    // End-of-track at pattern length.
+    auto eot = juce::MidiMessage::endOfTrack();
+    eot.setTimeStamp (pattern.lengthInBeats * kPPQ);
+    seq.addEvent (eot);
+
+    seq.updateMatchedPairs();
+    seq.sort();
+
+    juce::MidiFile file;
+    file.setTicksPerQuarterNote (kPPQ);
+    file.addTrack (seq);
+
+    dest.deleteFile();
+    if (auto stream = dest.createOutputStream())
+    {
+        file.writeTo (*stream);
+        stream->flush();
+        return true;
+    }
+    return false;
+}
+
 void AIDrumAudioProcessor::renderPatternToMidiBuffer (juce::MidiBuffer& midiOut,
                                                       int               numSamples,
                                                       double            sampleRate,

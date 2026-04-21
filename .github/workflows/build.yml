@@ -71,20 +71,45 @@ jobs:
           mkdir -p artifacts
           mv "$DMG_OUT" artifacts/
 
-      # ---------- Windows: copy VST3 bundle ----------
+      # ---------- Windows: copy VST3 bundle + Standalone .exe ----------
       - name: Stage artifacts (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           Copy-Item -Recurse "build/AIDrumVST_artefacts/Release/VST3/AI Drum VST.vst3" artifacts/
+          Copy-Item "build/AIDrumVST_artefacts/Release/Standalone/AI Drum VST.exe" artifacts/
+          @'
+          AI Drum VST — Windows
+          =====================
 
-      # ---------- Linux: copy VST3 bundle ----------
+          Two ways to use it:
+
+          A) Standalone app (NO plugin scanning needed):
+             Double-click "AI Drum VST.exe". Use the "Drag MIDI to DAW"
+             handle to pull patterns straight into FL Studio, or
+             "Save MIDI..." to export a .mid file you can drop anywhere.
+
+          B) VST3 plugin:
+             Copy the entire "AI Drum VST.vst3" folder into
+                 C:\Program Files\Common Files\VST3\
+             Open FL Studio -> Options -> Manage Plugins -> Find installed
+             plugins. Look for "AI Drum VST" under Generators.
+          '@ | Out-File -FilePath artifacts/README.txt -Encoding ASCII
+
+      # ---------- Linux: copy VST3 bundle + Standalone binary ----------
       - name: Stage artifacts (Linux)
         if: runner.os == 'Linux'
         run: |
           mkdir -p artifacts
           cp -R "build/AIDrumVST_artefacts/Release/VST3/AI Drum VST.vst3" artifacts/
+          cp    "build/AIDrumVST_artefacts/Release/Standalone/AI Drum VST" artifacts/ || true
+          cat > artifacts/README.txt <<'EOF'
+          AI Drum VST — Linux
+
+          Standalone: chmod +x "AI Drum VST" && ./"AI Drum VST"
+          VST3:       copy "AI Drum VST.vst3" folder into ~/.vst3/
+          EOF
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
