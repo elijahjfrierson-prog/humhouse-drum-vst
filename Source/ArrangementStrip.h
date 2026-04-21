@@ -57,8 +57,68 @@ namespace aidrum
             const auto appendButton = getAppendButtonBounds (inner);
             inner = inner.withTrimmedRight (appendButton.getWidth() + 10.0f);
 
+            // v1.6.1 — reserve a narrow column on the left for per-lane labels
+            // (CRASH / HI-HAT / TOM / SNARE / KICK). Matches the manual grid
+            // layout so you always know which row fires which instrument.
+            constexpr float kLabelColumn = 54.0f;
+            constexpr float kHeaderRow   = 14.0f;
+            auto labelArea = inner.removeFromLeft (kLabelColumn);
+            inner.removeFromLeft (6.0f);                 // gap after labels
+            auto headerArea = inner.removeFromTop (kHeaderRow);
+            labelArea.removeFromTop (kHeaderRow);
+
             const double totalBeats = std::max (1.0, last.totalBeats);
             const float  pxPerBeat  = inner.getWidth() / (float) totalBeats;
+
+            // --- v1.6.1 lane definitions — 5 fixed rows, each a distinct
+            // colour. Top → bottom: CRASH, HI-HAT, TOM, SNARE, KICK. Order
+            // mirrors the manual grid so the editor is consistent.
+            struct Lane { const char* label; juce::uint32 col; };
+            static const Lane kLanes[5] = {
+                { "CRASH",  0xffff6f9c },  // pink rose
+                { "HI-HAT", 0xffffc857 },  // amber
+                { "TOM",    0xff9d7dff },  // lilac
+                { "SNARE",  0xffede7f6 },  // bone white
+                { "KICK",   0xff3ee0c1 },  // teal
+            };
+            const int   kNumLanes = 5;
+            const float laneH     = inner.getHeight() / (float) kNumLanes;
+
+            auto laneFor = [] (int n) -> int
+            {
+                // 0=CRASH (cymbals incl. ride/china), 1=HI-HAT, 2=TOM,
+                // 3=SNARE (+ clap / rimshot), 4=KICK
+                if (n == 35 || n == 36)                                      return 4;
+                if (n == 37 || n == 38 || n == 39 || n == 40)                return 3;
+                if (n == 41 || n == 43 || n == 45 || n == 47
+                    || n == 48 || n == 50)                                   return 2;
+                if (n == 42 || n == 44 || n == 46)                           return 1;
+                return 0;  // 49/51/52/53/55/57/59 etc — all cymbals
+            };
+
+            // --- Lane labels + alternating lane bands ---------------------
+            auto laneFont = juce::Font (juce::FontOptions (9.5f, juce::Font::bold));
+            laneFont.setExtraKerningFactor (0.26f);
+            g.setFont (laneFont);
+            for (int i = 0; i < kNumLanes; ++i)
+            {
+                const float yTop = inner.getY() + (float) i * laneH;
+                if ((i & 1) == 0)
+                {
+                    g.setColour (juce::Colour (GothicPalette::kInk).withAlpha (0.55f));
+                    g.fillRect (juce::Rectangle<float> (inner.getX(), yTop,
+                                                        inner.getWidth(), laneH));
+                }
+                // left-side label (outside the note area)
+                g.setColour (juce::Colour (kLanes[i].col).withAlpha (0.95f));
+                g.drawText (kLanes[i].label,
+                            juce::Rectangle<float> (labelArea.getX() + 2.0f, yTop,
+                                                    labelArea.getWidth() - 6.0f, laneH),
+                            juce::Justification::centredRight, false);
+                // lane divider tick inside the note area
+                g.setColour (juce::Colour (kLanes[i].col).withAlpha (0.10f));
+                g.drawLine (inner.getX(), yTop, inner.getRight(), yTop, 0.6f);
+            }
 
             // --- Background beat grid (faint 16ths, brighter on each beat) --
             g.setColour (juce::Colour (GothicPalette::kPanelEdge).withAlpha (0.25f));
@@ -75,16 +135,6 @@ namespace aidrum
                 g.drawLine (x, inner.getY(), x, inner.getBottom(),
                             (b % 4 == 0) ? 1.2f : 0.6f);
             }
-
-            // --- Lane assignment ------------------------------------------
-            auto laneFor = [] (int n) -> int
-            {
-                if (n == 35 || n == 36 || n == 41 || n == 43
-                    || n == 45 || n == 47 || n == 48 || n == 50) return 2;  // kick + toms
-                if (n == 38 || n == 39 || n == 40 || n == 37)    return 1;  // snare / clap
-                return 0;                                                    // cymbals
-            };
-            const float laneH = inner.getHeight() / 3.0f;
 
             // --- Render each region end-to-end + vertical dividers --------
             double regionOffset = 0.0;
@@ -108,7 +158,8 @@ namespace aidrum
                                 juce::Justification::topLeft, false);
                 }
 
-                // Draw notes
+                // Draw notes — each lane uses its own colour so KICK / SNARE /
+                // TOM / HI-HAT / CRASH are distinguishable at a glance.
                 for (const auto& note : region.notes)
                 {
                     const float x = regionX0
@@ -117,19 +168,22 @@ namespace aidrum
                     const float w = std::max (3.0f,
                                               (float) (std::max (note.lengthBeat, 0.1) * pxPerBeat));
                     const int   lane = laneFor (note.noteNumber);
-                    const float y    = inner.getY() + (float) lane * laneH + laneH * 0.2f;
-                    const float h    = laneH * 0.6f;
+                    const float y    = inner.getY() + (float) lane * laneH + laneH * 0.22f;
+                    const float h    = laneH * 0.56f;
 
-                    const float v = juce::jlimit (0.15f, 1.0f, note.velocity);
-                    auto accent = juce::Colour (GothicPalette::kAccentSoft)
-                                    .withAlpha (0.18f + 0.55f * v);
+                    const float v    = juce::jlimit (0.15f, 1.0f, note.velocity);
+                    const auto  base = juce::Colour (kLanes[lane].col);
 
-                    g.setColour (accent.withAlpha (accent.getFloatAlpha() * 0.35f));
+                    // soft outer glow
+                    g.setColour (base.withAlpha (0.12f + 0.30f * v));
                     g.fillRoundedRectangle (
                         juce::Rectangle<float> (x - 1.5f, y - 1.5f, w + 3.0f, h + 3.0f), 4.0f);
-                    g.setColour (juce::Colour (GothicPalette::kAccent)
-                                    .withAlpha (0.85f * v + 0.15f));
+                    // solid block, brightness scales with velocity
+                    g.setColour (base.withAlpha (0.55f + 0.45f * v));
                     g.fillRoundedRectangle (juce::Rectangle<float> (x, y, w, h), 3.0f);
+                    // thin highlight top edge for a 3-D-ish feel
+                    g.setColour (base.withAlpha (0.25f + 0.30f * v).brighter (0.4f));
+                    g.drawLine (x + 1.0f, y + 0.5f, x + w - 1.0f, y + 0.5f, 1.0f);
                 }
 
                 regionOffset += regionLen;
@@ -200,7 +254,11 @@ namespace aidrum
                 && (e.mods.isRightButtonDown() || e.mods.isAltDown())
                 && last.totalBeats > 0.0 && ! last.regions.empty())
             {
-                const auto gridRect = inner.withTrimmedRight (getAppendButtonBounds (inner).getWidth() + 10.0f);
+                // v1.6.1 — skip the label column + header row the paint routine
+                // carves out so clicks map to the correct beat.
+                auto gridRect = inner.withTrimmedRight (getAppendButtonBounds (inner).getWidth() + 10.0f)
+                                     .withTrimmedLeft  (54.0f + 6.0f)
+                                     .withTrimmedTop   (14.0f);
                 if (! gridRect.contains (e.position)) return;
                 const double total = std::max (1.0, last.totalBeats);
                 const double rel = (e.position.x - gridRect.getX()) / gridRect.getWidth();

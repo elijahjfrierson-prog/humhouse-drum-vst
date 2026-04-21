@@ -31,12 +31,13 @@ K_CRASH = 49
 K_RIDE = 51
 
 BAND_EDGES = {
-    "sub":  (20.0, 80.0),     # kick fundamental
-    "kick": (60.0, 180.0),    # kick body
-    "low":  (180.0, 400.0),   # tom / snare body
-    "mid":  (400.0, 2000.0),  # snare crack
-    "hi":   (4000.0, 9000.0), # hat / ride stick
-    "air":  (9000.0, 16000.0) # crash / open hat
+    "sub":  (20.0, 80.0),      # kick fundamental
+    "kick": (60.0, 180.0),     # kick body
+    "low":  (180.0, 350.0),    # low tom / snare body
+    "body": (300.0, 800.0),    # mid tom body / snare shell
+    "crack":(1200.0, 4500.0),  # snare snappy crack
+    "hi":   (4500.0, 9000.0),  # hat / ride stick tick
+    "air":  (9000.0, 16000.0), # crash / open-hat shimmer
 }
 
 CANDIDATE_BPMS = [70, 75, 80, 84, 88, 92, 96, 100, 104, 108, 112, 116, 120, 124, 128, 132, 138, 144, 150, 160, 170, 180]
@@ -52,11 +53,16 @@ def band_energy(stft_mag, sr, edges):
 
 
 def classify_onset(stft_mag, sr, frame_idx, hop):
-    """Pick the most likely GM drum for a single onset frame."""
-    # Take a short window around the onset for spectral analysis.
-    half = 3
-    f0 = max(0, frame_idx - 1)
-    f1 = min(stft_mag.shape[1], frame_idx + half + 1)
+    """Pick the most likely GM drum for a single onset frame.
+
+    v1.6.1 — tighter attack window, explicit decay measurement, and a
+    hierarchical decision tree so ghost notes classify as SNARE rather
+    than falling through to the closed-hat fallback.
+    """
+    # Attack: just the onset frame + 1-2 frames after. Short window so
+    # ghost-note energy isn't averaged out by the surrounding hats.
+    f0 = max(0, frame_idx)
+    f1 = min(stft_mag.shape[1], frame_idx + 3)
     spec = stft_mag[:, f0:f1].mean(axis=1)
     freqs = np.linspace(0.0, sr / 2.0, spec.shape[0])
 
@@ -64,62 +70,69 @@ def classify_onset(stft_mag, sr, frame_idx, hop):
         m = (freqs >= lo) & (freqs < hi)
         return float(spec[m].mean()) if m.any() else 0.0
 
-    sub_e = band(*BAND_EDGES["sub"])
-    kick_e = band(*BAND_EDGES["kick"])
-    low_e = band(*BAND_EDGES["low"])
-    mid_e = band(*BAND_EDGES["mid"])
-    hi_e = band(*BAND_EDGES["hi"])
-    air_e = band(*BAND_EDGES["air"])
+    sub_e   = band(*BAND_EDGES["sub"])
+    kick_e  = band(*BAND_EDGES["kick"])
+    low_e   = band(*BAND_EDGES["low"])
+    body_e  = band(*BAND_EDGES["body"])
+    crack_e = band(*BAND_EDGES["crack"])
+    hi_e    = band(*BAND_EDGES["hi"])
+    air_e   = band(*BAND_EDGES["air"])
 
-    low_total = sub_e + kick_e
-    body_total = low_e
+    low_total  = sub_e + kick_e
+    mid_total  = low_e + body_e
     high_total = hi_e + air_e
+    total      = low_total + mid_total + high_total + 1e-9
 
-    # Heuristic classifier. Tuned by inspection; not perfect but classifies
-    # enough of each groove correctly for the generator's purposes.
-    # 1. If there's strong sub/kick energy and not much high sizzle → kick.
-    # 2. Strong mid-crack (1-4 kHz) + moderate body → snare.
-    # 3. Low-mid only, no crack → tom (pitch-pick by low-vs-mid ratio).
-    # 4. Mostly high sizzle → hat/ride. Distinguish open vs closed by
-    #    post-peak sustain.
-    ratio_low_high = low_total / max(high_total, 1e-6)
-    ratio_mid_body = mid_e / max(low_e, 1e-6)
+    # Spectral centroid (Hz) — cheap, effective snare vs hat disambiguator.
+    centroid = float(np.sum(spec * freqs) / (np.sum(spec) + 1e-9))
 
-    # Decay: how long the onset rings (seconds from the onset frame to when
-    # the high-band energy drops below 40% of the peak).
-    decay_frames = 0
-    if high_total > 1e-6 and frame_idx < stft_mag.shape[1] - 4:
-        peak = stft_mag[:, frame_idx:frame_idx + 1].mean()
-        thresh = 0.4 * peak
-        for k in range(frame_idx, min(stft_mag.shape[1], frame_idx + 30)):
+    # Sustain in high band: open hat / ride / crash ring far longer than
+    # closed hat. Measure how many frames (~5.3 ms each @ hop=256/48k)
+    # stay above 45% of the onset-frame high-band energy.
+    sustain_frames = 0
+    if high_total > 1e-6 and frame_idx < stft_mag.shape[1] - 6:
+        peak_hi = band_energy(stft_mag[:, frame_idx:frame_idx + 1], sr, BAND_EDGES["air"]).mean()
+        thresh = 0.45 * peak_hi
+        for k in range(frame_idx + 1, min(stft_mag.shape[1], frame_idx + 40)):
             if stft_mag[:, k].mean() < thresh:
                 break
-            decay_frames += 1
+            sustain_frames += 1
 
-    if ratio_low_high > 2.5 and low_total > 0.02:
+    # --- Decision tree --------------------------------------------------
+    # 1. Strong sub/kick energy dominating the low end → KICK.
+    if low_total > high_total * 1.6 and sub_e + kick_e > 0.03:
         return K_KICK
 
-    # Snare: mid-crack dominates; body present.
-    if mid_e > 0.05 and ratio_mid_body > 0.6 and high_total > 0.01:
+    # 2. Snare: crack band leads OR mid-body dominates with some high
+    #    sparkle. Covers loud backbeats AND quiet ghost notes.
+    if crack_e > body_e * 0.6 and crack_e > hi_e * 0.7:
+        return K_SNARE
+    if body_e > low_e * 1.1 and crack_e > hi_e * 0.35 and high_total > 0.004:
         return K_SNARE
 
-    # Pure high: hat / ride / crash.
-    if high_total > max(low_total, body_total) * 1.4:
-        if decay_frames > 12:
-            # Long sustain → open hat (air-heavy) or ride (mid-high heavy).
-            return K_OPEN_HAT if air_e > hi_e * 1.3 else K_RIDE
+    # 3. Cymbals — top-heavy spectrum, long ring.
+    if high_total > mid_total * 1.3 and high_total > low_total * 1.5:
+        # Very long, air-heavy ring → crash. Medium ring → ride.
+        if sustain_frames > 18 and air_e > hi_e * 0.9:
+            return K_CRASH
+        if sustain_frames > 10:
+            return K_OPEN_HAT if air_e > hi_e * 1.25 else K_RIDE
         return K_CLOSED_HAT
 
-    # Tom: low-mid body only, not enough high sizzle to be a hat.
-    if body_total > 0.03 and high_total < body_total * 0.8:
-        # Pitch-pick by sub-vs-low ratio.
-        if sub_e > low_e:
+    # 4. Tom: mid-body with modest high content; pitch-pick by low/mid ratio.
+    if mid_total > high_total * 1.1 and mid_total > 0.015:
+        if sub_e > body_e * 0.8 and low_e > body_e * 0.4:
             return K_LOW_TOM
-        if low_e > mid_e * 1.2:
+        if body_e > low_e * 1.1:
             return K_MID_TOM
         return K_HIGH_TOM
 
-    # Fallback: treat as a closed hat accent rather than drop the onset.
+    # 5. Fall-through: use centroid to avoid defaulting everything to hi-hat.
+    #    Low centroid + any low energy → treat as low tom rather than hat.
+    if centroid < 900.0 and low_total > 0.005:
+        return K_LOW_TOM
+    if centroid < 2500.0 and body_e > 0.01:
+        return K_SNARE
     return K_CLOSED_HAT
 
 
@@ -161,14 +174,28 @@ def analyze_wav(path: pathlib.Path):
     hop = 256
     stft = np.abs(librosa.stft(y, n_fft=1024, hop_length=hop))
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
-    onset_frames = librosa.onset.onset_detect(
-        onset_envelope=onset_env,
-        sr=sr,
-        hop_length=hop,
-        backtrack=True,
-        delta=0.15,
-        wait=2,
+    # v1.6.1 — lower delta + shorter wait so ghost notes and quiet hats get
+    # captured instead of being suppressed by the louder backbeat. Two
+    # passes: a tight one for accent hits, and a sensitive one whose extra
+    # onsets we add only if they land between detected accents.
+    strong_frames = librosa.onset.onset_detect(
+        onset_envelope=onset_env, sr=sr, hop_length=hop,
+        backtrack=True, delta=0.12, wait=2,
     )
+    ghost_frames = librosa.onset.onset_detect(
+        onset_envelope=onset_env, sr=sr, hop_length=hop,
+        backtrack=True, delta=0.05, wait=1,
+    )
+    merged = sorted(set(int(f) for f in np.concatenate([strong_frames, ghost_frames])))
+    # Drop ghost frames that are within 25 ms of an already-detected strong
+    # onset — those are just the detector re-triggering on the same hit.
+    min_sep = int(0.025 * sr / hop)
+    onset_frames = []
+    for f in merged:
+        if onset_frames and f - onset_frames[-1] < min_sep:
+            continue
+        onset_frames.append(f)
+    onset_frames = np.array(onset_frames, dtype=int)
     if onset_frames.size == 0:
         return None
 
@@ -176,17 +203,23 @@ def analyze_wav(path: pathlib.Path):
     bpm = estimate_bpm(y, sr, onset_env)
     quantised = quantise_to_grid(onset_times, bpm, "1/16")
 
+    # v1.6.1 — measure the global peak-strength once so velocities normalise
+    # across the clip. The result is a true dynamic range (quiet ghost
+    # ~0.35, accent backbeat ~1.0) rather than the old 0.55–1.0 squash.
+    peak_env = float(np.max(onset_env)) if onset_env.size else 1.0
+    peak_env = max(peak_env, 1e-6)
+
     beats = []
     for t_raw, t_q, f in zip(onset_times, quantised, onset_frames):
         note = classify_onset(stft, sr, int(f), hop)
         beat_pos = t_q * (bpm / 60.0)
-        # Velocity from local RMS around the onset (0.5 .. 1.0).
+        # Velocity = blend of local peak amplitude and onset-envelope
+        # strength, both normalised. Gives us real bedroom→stadium range.
         win = y[int(t_raw * sr):int(t_raw * sr) + int(0.04 * sr)]
-        if win.size == 0:
-            vel = 0.85
-        else:
-            rms = float(np.sqrt(np.mean(win * win)))
-            vel = float(np.clip(0.55 + rms * 6.0, 0.55, 1.0))
+        peak_amp = float(np.max(np.abs(win))) if win.size else 0.5
+        env_strength = float(onset_env[int(f)] / peak_env) if 0 <= int(f) < onset_env.size else 0.5
+        vel = 0.35 + 0.45 * peak_amp + 0.30 * env_strength
+        vel = float(np.clip(vel, 0.30, 1.0))
         beats.append({"note": int(note), "beat": float(beat_pos), "vel": round(vel, 3), "len": 0.12})
 
     # Trim the starter down to the first musically-sensible window: 4 or 8
