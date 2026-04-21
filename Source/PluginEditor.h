@@ -4,6 +4,7 @@
 #include "DrumKit.h"
 #include "GothicLookAndFeel.h"
 #include "ManualGrid.h"
+#include "MixerPanel.h"
 #include "PluginProcessor.h"
 
 #include <JuceHeader.h>
@@ -126,6 +127,10 @@ private:
     juce::TextButton          manualButton   { "MANUAL" };
     juce::TextButton          clearManualButton { "CLEAR GRID" };
     juce::TextButton          commitManualButton { "APPEND TO ARR." };
+
+    // v1.1.0 Mixer
+    juce::TextButton          mixerButton    { "MIXER" };
+    aidrum::MixerPanel        mixerPanel     { processorRef.getBusMixer() };
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 

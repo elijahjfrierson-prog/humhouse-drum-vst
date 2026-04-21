@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AIBackend.h"
+#include "DrumBusMixer.h"
 #include "DrumSynth.h"
 #include "MidiPattern.h"
 
@@ -163,6 +164,15 @@ private:
     // v1.0.0 — synthesized drum voice renderer so the Standalone app
     // makes sound out of the box. Plugin hosts still receive MIDI too.
     aidrum::DrumSynth        drumSynth;
+
+    // v1.1.0 — per-drum mixer with EQ / Comp / Drive / Clip / Dampen / Reverb.
+    aidrum::DrumBusMixer     busMixer;
+
+public:
+    // v1.1.0 mixer access for the UI.
+    aidrum::DrumBusMixer& getBusMixer() { return busMixer; }
+
+private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AIDrumAudioProcessor)
 };

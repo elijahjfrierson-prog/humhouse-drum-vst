@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DrumBusMixer.h"
+
 #include <JuceHeader.h>
 
 #include <array>
@@ -74,9 +76,32 @@ namespace aidrum
             }
         }
 
+        // v1.1.0 — render each active voice into its routed bus so the
+        // DrumBusMixer can apply per-drum EQ/compression/FX.
+        void renderIntoBuses (DrumBusMixer& mixer, int numSamples)
+        {
+            if (numSamples <= 0) return;
+            for (auto& v : voices)
+            {
+                if (! v.active) continue;
+                auto* buf = mixer.busBuffer (busIndexForKind (v.kind));
+                if (buf == nullptr) continue;
+                const int chans = buf->getNumChannels();
+                const int start = juce::jlimit (0, numSamples, v.startSample);
+                for (int s = start; s < numSamples; ++s)
+                {
+                    if (! v.active) break;
+                    const float samp = v.tick ((float) sr) * masterGain;
+                    for (int ch = 0; ch < chans; ++ch)
+                        buf->addSample (ch, s, samp);
+                }
+                v.startSample = 0;
+            }
+        }
+
         void setMasterGain (float g) { masterGain = juce::jlimit (0.0f, 1.0f, g); }
 
-    private:
+    public:
         enum class Kind
         {
             Kick, SideStick, Snare, Clap,
@@ -84,6 +109,36 @@ namespace aidrum
             LowTom, MidTom, HighTom,
             Crash, Ride, RideBell, China
         };
+
+        // Maps a voice Kind to a DrumBusMixer bus index (0..7).
+        static int busIndexForKind (Kind k) noexcept
+        {
+            switch (k)
+            {
+                case Kind::Kick:                             return (int) Bus::Kick;
+                case Kind::SideStick:
+                case Kind::Snare:
+                case Kind::Clap:                             return (int) Bus::Snare;
+                case Kind::LowTom:
+                case Kind::MidTom:
+                case Kind::HighTom:                          return (int) Bus::Toms;
+                case Kind::ClosedHat:
+                case Kind::PedalHat:                         return (int) Bus::ClosedHat;
+                case Kind::OpenHat:                          return (int) Bus::OpenHat;
+                case Kind::Ride:
+                case Kind::RideBell:                         return (int) Bus::Ride;
+                case Kind::Crash:                            return (int) Bus::Crash;
+                case Kind::China:                            return (int) Bus::China;
+            }
+            return (int) Bus::Snare;
+        }
+
+        static int busIndexForNote (int midiNote) noexcept
+        {
+            return busIndexForKind (Voice::kindFromNote (midiNote));
+        }
+
+    private:
 
         struct Voice
         {

@@ -548,6 +548,19 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addChildComponent (clearManualButton);   // hidden until MANUAL is on
     addChildComponent (commitManualButton);
 
+    // v1.1.0 — MIXER toggle: slides the per-drum mixer over the arrangement.
+    styleSmallBtn (mixerButton);
+    mixerButton.setClickingTogglesState (true);
+    mixerButton.setTooltip ("MIXER — per-drum channel strips: EQ / Compressor / Drive / Clip / Dampen / Reverb send, plus pan / fader / mute / solo.");
+    mixerButton.onClick = [this]
+    {
+        const bool on = mixerButton.getToggleState();
+        mixerPanel.setVisible (on);
+        if (on) mixerPanel.toFront (false);
+    };
+    addAndMakeVisible (mixerButton);
+    addChildComponent (mixerPanel);
+
     // SAVE MIDI — saves the whole arrangement.
     saveMidiButton.onClick = [this]
     {
@@ -735,9 +748,11 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (6);
 
-    // MANUAL mode toggle bar — always visible above the strip/grid.
+    // MANUAL / MIXER toggle bar — always visible above the strip/grid.
     auto manualBar = area.removeFromTop (30);
     manualButton.setBounds (manualBar.removeFromLeft (140).reduced (2));
+    manualBar.removeFromLeft (6);
+    mixerButton.setBounds (manualBar.removeFromLeft (120).reduced (2));
     loopButton.toFront (false);
 
     area.removeFromTop (4);
@@ -745,4 +760,5 @@ void AIDrumAudioProcessorEditor::resized()
     // Arrangement strip / manual grid share the remaining area.
     arrangementStrip.setBounds (area);
     manualGrid      .setBounds (area);
+    mixerPanel      .setBounds (area);
 }

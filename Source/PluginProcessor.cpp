@@ -141,6 +141,8 @@ void AIDrumAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerBlo
     lastBpm.store (120.0, std::memory_order_relaxed);
     drumSynth.prepare (sampleRate);
     drumSynth.reset();
+    busMixer.prepare (sampleRate, 0, 2);
+    busMixer.reset();
     hostTransportSeen.store (false, std::memory_order_relaxed);
 }
 
@@ -623,9 +625,11 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     if (! shouldPlay)
     {
-        // Silent block. Still render existing synth tails so held voices decay
-        // instead of cutting off when the user hits pause.
-        drumSynth.renderInto (buffer);
+        // Silent block. Still render existing synth tails through the mixer
+        // so held voices decay naturally when the user hits pause.
+        busMixer.beginBlock (buffer.getNumSamples());
+        drumSynth.renderIntoBuses (busMixer, buffer.getNumSamples());
+        busMixer.process (buffer);
         return;
     }
 
@@ -645,7 +649,11 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                               msg.getFloatVelocity(),
                               meta.samplePosition);
     }
-    drumSynth.renderInto (buffer);
+
+    // v1.1.0 — render each voice into its own bus, then mixer sums to output.
+    busMixer.beginBlock (buffer.getNumSamples());
+    drumSynth.renderIntoBuses (busMixer, buffer.getNumSamples());
+    busMixer.process (buffer);
 }
 
 // ============================================================================
