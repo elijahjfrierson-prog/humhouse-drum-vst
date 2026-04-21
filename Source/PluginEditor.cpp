@@ -2,6 +2,16 @@
 
 using Palette = aidrum::GothicPalette;
 
+namespace
+{
+    juce::Path makeDrumEllipse (float cx, float cy, float w, float h)
+    {
+        juce::Path p;
+        p.addEllipse (cx - w * 0.5f, cy - h * 0.5f, w, h);
+        return p;
+    }
+}
+
 // ============================================================================
 // PlusButton — circular, glowing purple, central "+".
 // ============================================================================
@@ -41,6 +51,224 @@ void AIDrumAudioProcessorEditor::PlusButton::paintButton (juce::Graphics& g,
     g.setColour (juce::Colour (Palette::kBone));
     g.fillRoundedRectangle (c.x - plusW, c.y - th * 0.5f, plusW * 2.0f, th, th * 0.5f);
     g.fillRoundedRectangle (c.x - th * 0.5f, c.y - plusW, th, plusW * 2.0f, th * 0.5f);
+}
+
+// ============================================================================
+// XYPad — Logic-style intelligence pad. X = complexity, Y = loudness.
+// ============================================================================
+AIDrumAudioProcessorEditor::XYPad::XYPad()
+{
+    setTooltip ("INTELLIGENCE PAD — drag the puck. Right = more complexity, up = louder hits.");
+    startTimerHz (20);
+}
+
+void AIDrumAudioProcessorEditor::XYPad::bind (juce::Slider* complexity, juce::Slider* velocity)
+{
+    complexitySlider = complexity;
+    velocitySlider   = velocity;
+}
+
+void AIDrumAudioProcessorEditor::XYPad::timerCallback()
+{
+    repaint();
+}
+
+void AIDrumAudioProcessorEditor::XYPad::updateFromPoint (juce::Point<float> p)
+{
+    if (complexitySlider == nullptr || velocitySlider == nullptr)
+        return;
+
+    auto r = getLocalBounds().toFloat().reduced (18.0f);
+    const float x = juce::jlimit (0.0f, 1.0f, (p.x - r.getX()) / r.getWidth());
+    const float y = juce::jlimit (0.0f, 1.0f, 1.0f - ((p.y - r.getY()) / r.getHeight()));
+
+    complexitySlider->setValue (x, juce::sendNotificationSync);
+    velocitySlider  ->setValue (y, juce::sendNotificationSync);
+    repaint();
+}
+
+void AIDrumAudioProcessorEditor::XYPad::mouseDown (const juce::MouseEvent& e)
+{
+    updateFromPoint (e.position);
+}
+
+void AIDrumAudioProcessorEditor::XYPad::mouseDrag (const juce::MouseEvent& e)
+{
+    updateFromPoint (e.position);
+}
+
+void AIDrumAudioProcessorEditor::XYPad::paint (juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    auto r = b.reduced (8.0f);
+
+    g.setColour (juce::Colour (Palette::kPanel));
+    g.fillRoundedRectangle (r, 16.0f);
+    g.setColour (juce::Colour (Palette::kPanelEdge));
+    g.drawRoundedRectangle (r, 16.0f, 1.0f);
+
+    auto pad = r.reduced (18.0f);
+    juce::ColourGradient grad (juce::Colour (Palette::kAccentDeep).brighter (0.2f),
+                               pad.getX(), pad.getBottom(),
+                               juce::Colour (Palette::kInk),
+                               pad.getRight(), pad.getY(), false);
+    grad.addColour (0.5, juce::Colour (Palette::kAccent).withAlpha (0.25f));
+    g.setGradientFill (grad);
+    g.fillRoundedRectangle (pad, 12.0f);
+
+    g.setColour (juce::Colour (Palette::kBone).withAlpha (0.08f));
+    for (int i = 1; i < 4; ++i)
+    {
+        const float x = pad.getX() + pad.getWidth() * (float) i / 4.0f;
+        const float y = pad.getY() + pad.getHeight() * (float) i / 4.0f;
+        g.drawVerticalLine ((int) x, pad.getY(), pad.getBottom());
+        g.drawHorizontalLine ((int) y, pad.getX(), pad.getRight());
+    }
+
+    auto labelFont = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+    labelFont.setExtraKerningFactor (0.30f);
+    g.setFont (labelFont);
+    g.setColour (juce::Colour (Palette::kMuted));
+    g.drawText ("INTELLIGENCE PAD", r.toNearestInt().reduced (14, 10), juce::Justification::topLeft, false);
+    g.drawText ("LOUDER", juce::Rectangle<int> ((int) pad.getX(), (int) pad.getY() - 2, (int) pad.getWidth(), 16), juce::Justification::centredTop, false);
+    g.drawText ("SIMPLER", juce::Rectangle<int> ((int) pad.getX() - 6, (int) pad.getBottom() - 10, 70, 16), juce::Justification::bottomLeft, false);
+    g.drawText ("BUSIER", juce::Rectangle<int> ((int) pad.getRight() - 64, (int) pad.getBottom() - 10, 70, 16), juce::Justification::bottomRight, false);
+
+    const float cx = complexitySlider != nullptr ? (float) complexitySlider->getValue() : 0.5f;
+    const float cy = velocitySlider   != nullptr ? (float) velocitySlider->getValue()   : 0.7f;
+    const float px = pad.getX() + pad.getWidth()  * cx;
+    const float py = pad.getBottom() - pad.getHeight() * cy;
+
+    g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.15f));
+    g.fillEllipse (px - 18.0f, py - 18.0f, 36.0f, 36.0f);
+    g.setColour (juce::Colour (Palette::kAccentSoft));
+    g.fillEllipse (px - 9.0f, py - 9.0f, 18.0f, 18.0f);
+    g.setColour (juce::Colour (Palette::kBone));
+    g.drawEllipse (px - 9.0f, py - 9.0f, 18.0f, 18.0f, 1.2f);
+}
+
+// ============================================================================
+// KitVisualizer — vector-ish drumkit silhouette that changes with kit choice.
+// ============================================================================
+AIDrumAudioProcessorEditor::KitVisualizer::KitVisualizer() = default;
+
+void AIDrumAudioProcessorEditor::KitVisualizer::setSelectedKit (int index)
+{
+    selectedKit = index;
+    repaint();
+}
+
+void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (6.0f);
+    g.setColour (juce::Colour (Palette::kPanel));
+    g.fillRoundedRectangle (r, 18.0f);
+    g.setColour (juce::Colour (Palette::kPanelEdge));
+    g.drawRoundedRectangle (r, 18.0f, 1.0f);
+
+    auto stage = r.reduced (20.0f);
+    const bool electronic = selectedKit >= (int) aidrum::DrumKit::Roland808HipHop;
+    const bool metal = selectedKit >= (int) aidrum::DrumKit::SonorSQ2Thrash
+                    && selectedKit <= (int) aidrum::DrumKit::YamahaPHXProgMetal;
+    const bool jazz = selectedKit <= (int) aidrum::DrumKit::GretschCoolJazz;
+
+    auto titleFont = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+    titleFont.setExtraKerningFactor (0.30f);
+    g.setFont (titleFont);
+    g.setColour (juce::Colour (Palette::kMuted));
+    g.drawText ("ACTIVE KIT", r.toNearestInt().reduced (14, 10), juce::Justification::topLeft, false);
+
+    const auto& names = aidrum::drumKitDisplayNames();
+    const juce::String kitName = juce::String (names[(size_t) juce::jlimit (0, (int) names.size() - 1, selectedKit)]);
+    g.setColour (juce::Colour (Palette::kBone));
+    g.drawFittedText (kitName, r.toNearestInt().withTrimmedTop (22).reduced (14, 0), juce::Justification::topLeft, 2);
+
+    g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.08f));
+    g.fillEllipse (stage.getCentreX() - 140.0f, stage.getCentreY() - 110.0f, 280.0f, 220.0f);
+
+    auto drawShell = [&] (juce::Rectangle<float> shell, float rimAlpha)
+    {
+        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.10f));
+        g.fillEllipse (shell);
+        g.setColour (juce::Colour (Palette::kAccentSoft).withAlpha (rimAlpha));
+        g.drawEllipse (shell, 2.0f);
+    };
+
+    if (electronic)
+    {
+        auto body = stage.withSizeKeepingCentre (stage.getWidth() * 0.72f, stage.getHeight() * 0.48f);
+        g.setColour (juce::Colour (Palette::kInk).brighter (0.08f));
+        g.fillRoundedRectangle (body, 14.0f);
+        g.setColour (juce::Colour (Palette::kAccentSoft));
+        g.drawRoundedRectangle (body, 14.0f, 2.0f);
+        for (int row = 0; row < 2; ++row)
+            for (int col = 0; col < 4; ++col)
+            {
+                auto pad = juce::Rectangle<float> (body.getX() + 22.0f + col * 52.0f,
+                                                   body.getY() + 24.0f + row * 48.0f,
+                                                   34.0f, 26.0f);
+                g.setColour (juce::Colour (Palette::kBone).withAlpha (0.10f));
+                g.fillRoundedRectangle (pad, 6.0f);
+                g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.75f));
+                g.drawRoundedRectangle (pad, 6.0f, 1.0f);
+            }
+        g.setColour (juce::Colour (Palette::kAccent));
+        g.fillEllipse (body.getRight() - 34.0f, body.getY() + 18.0f, 8.0f, 8.0f);
+        g.fillEllipse (body.getRight() - 18.0f, body.getY() + 18.0f, 8.0f, 8.0f);
+        return;
+    }
+
+    const float kickW = metal ? 126.0f : (jazz ? 86.0f : 106.0f);
+    const float kickH = kickW * 0.82f;
+    auto kick = juce::Rectangle<float> (stage.getCentreX() - kickW * 0.5f,
+                                        stage.getBottom() - kickH - 34.0f,
+                                        kickW, kickH);
+    drawShell (kick, 0.95f);
+
+    auto snare = juce::Rectangle<float> (kick.getX() - (jazz ? 56.0f : 76.0f),
+                                         kick.getY() + 22.0f,
+                                         jazz ? 56.0f : 64.0f,
+                                         jazz ? 28.0f : 32.0f);
+    drawShell (snare, 0.85f);
+
+    auto floor = juce::Rectangle<float> (kick.getRight() + 12.0f,
+                                         kick.getY() + 20.0f,
+                                         metal ? 72.0f : 62.0f,
+                                         metal ? 52.0f : 44.0f);
+    drawShell (floor, 0.78f);
+
+    auto rack1 = juce::Rectangle<float> (kick.getCentreX() - 62.0f,
+                                         kick.getY() - 44.0f,
+                                         54.0f, 34.0f);
+    auto rack2 = juce::Rectangle<float> (kick.getCentreX() + 10.0f,
+                                         kick.getY() - 42.0f,
+                                         54.0f, 34.0f);
+    drawShell (rack1, 0.82f);
+    if (! jazz) drawShell (rack2, 0.82f);
+
+    auto cymbal = [&] (float x, float y, float w)
+    {
+        auto c = juce::Rectangle<float> (x - w * 0.5f, y - 8.0f, w, 16.0f);
+        g.setColour (juce::Colour (Palette::kBone).withAlpha (0.08f));
+        g.fillEllipse (c);
+        g.setColour (juce::Colour (Palette::kAccent).withAlpha (0.72f));
+        g.drawEllipse (c, 1.5f);
+    };
+
+    cymbal (kick.getX() - 10.0f, kick.getY() - 54.0f, jazz ? 76.0f : 92.0f);
+    cymbal (kick.getRight() + 38.0f, kick.getY() - 60.0f, metal ? 96.0f : 84.0f);
+    if (! jazz)
+        cymbal (kick.getCentreX() + 94.0f, kick.getY() - 96.0f, metal ? 84.0f : 72.0f);
+
+    if (metal)
+    {
+        auto kick2 = kick.translated (-138.0f, 0.0f);
+        kick2.setPosition (kick.getX() - kick.getWidth() - 22.0f, kick.getY());
+        drawShell (kick2, 0.92f);
+        auto china = juce::Rectangle<float> (kick.getRight() + 56.0f, kick.getY() - 120.0f, 88.0f, 14.0f);
+        g.setColour (juce::Colour (Palette::kAccentSoft).withAlpha (0.85f));
+        g.drawEllipse (china, 1.6f);
+    }
 }
 
 // ============================================================================
@@ -121,6 +349,15 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         s.playheadBeats = processorRef.getPlayheadBeats();
         return s;
     });
+    arrangementStrip.onAppend = [this]
+    {
+        const auto mode = (modeBox.getSelectedId() == 2)
+                            ? aidrum::GenerationMode::Fill
+                            : aidrum::GenerationMode::Groove;
+        processorRef.appendRegion (mode);
+        plusButton.bump();
+        arrangementStrip.repaint();
+    };
     addAndMakeVisible (arrangementStrip);
 
     // Manual grid (v0.8.0) — interactive 16-bar step sequencer.
@@ -135,6 +372,16 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
                            "Works across all 16 bars; DRUM KIT remaps the timbre in your sampler.");
     manualGrid.setVisible (false);
     addChildComponent (manualGrid);
+
+    xyPad.bind (&complexitySlider, &velocitySlider);
+    addAndMakeVisible (xyPad);
+    addAndMakeVisible (kitVisualizer);
+    kitVisualizer.setSelectedKit (0);
+
+    complexitySlider.setVisible (false);
+    velocitySlider  .setVisible (false);
+    complexityLabel .setVisible (false);
+    velocityLabel   .setVisible (false);
 
     // Rotary knobs
     auto addRotary = [this] (juce::Slider& s, juce::Label& l)
@@ -202,6 +449,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         drumKitBox.addItemList (kitNames, 1);
     }
     styleCombo (drumKitBox, drumKitLabel);
+    drumKitBox.onChange = [this] { kitVisualizer.setSelectedKit (drumKitBox.getSelectedItemIndex()); };
 
     // Half-time toggle
     halfTimeButton.setClickingTogglesState (true);
@@ -211,6 +459,15 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     halfTimeButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
     addAndMakeVisible (halfTimeButton);
 
+    loopButton.setClickingTogglesState (true);
+    loopButton.setToggleState (processorRef.isLooping(), juce::dontSendNotification);
+    loopButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
+    loopButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
+    loopButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kMuted));
+    loopButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
+    loopButton.onClick = [this] { processorRef.setLooping (loopButton.getToggleState()); };
+    addAndMakeVisible (loopButton);
+
     // APPEND (+) button — now *appends* instead of replacing.
     plusButton.onClick = [this]
     {
@@ -219,6 +476,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
                             : aidrum::GenerationMode::Groove;
         processorRef.appendRegion (mode);
         plusButton.bump();
+        arrangementStrip.repaint();
     };
     addAndMakeVisible (plusButton);
 
@@ -241,12 +499,21 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     styleSmallBtn (undoButton);
     styleSmallBtn (clearButton);
     styleSmallBtn (saveMidiButton);
+    styleSmallBtn (playButton);
+    styleSmallBtn (pauseButton);
+    styleSmallBtn (stopButton);
 
-    undoButton.onClick  = [this] { processorRef.undoLastRegion();  };
-    clearButton.onClick = [this] { processorRef.clearArrangement(); };
+    undoButton.onClick  = [this] { processorRef.undoLastRegion(); arrangementStrip.repaint(); };
+    clearButton.onClick = [this] { processorRef.clearArrangement(); arrangementStrip.repaint(); };
+    playButton.onClick  = [this] { processorRef.play(); arrangementStrip.repaint(); };
+    pauseButton.onClick = [this] { processorRef.pause(); };
+    stopButton.onClick  = [this] { processorRef.stop(); arrangementStrip.repaint(); };
 
     addAndMakeVisible (undoButton);
     addAndMakeVisible (clearButton);
+    addAndMakeVisible (playButton);
+    addAndMakeVisible (pauseButton);
+    addAndMakeVisible (stopButton);
 
     // MANUAL mode toggle — swaps the arrangement strip for the interactive grid.
     styleSmallBtn (manualButton);
@@ -323,12 +590,16 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     hiHatBox        .setTooltip ("HI-HAT — Dynamic (genre default), or force Closed / Open / Ride cymbal.");
     drumKitBox      .setTooltip ("DRUM KIT — 20 models from jazz Ludwig to thrash Sonor. Each remaps GM notes + velocity / ghost / accent curves for a distinct timbre in your sampler.");
     halfTimeButton  .setTooltip ("HALF-TIME — snare on beat 3 only (kick on 1). Classic hip-hop / shoegaze feel.");
+    loopButton      .setTooltip ("LOOP — when enabled, the arrangement wraps to the start automatically at the end.");
 
     plusButton      .setTooltip ("APPEND — generate a new region with current settings and add it after the last one.");
     undoButton      .setTooltip ("UNDO — remove the last appended region from the arrangement.");
     clearButton     .setTooltip ("CLEAR — wipe the arrangement and start a fresh single region.");
     dragHandle      .setTooltip ("DRAG MIDI — hold and drag onto a DAW track to drop the full arrangement as a .mid file.");
     saveMidiButton  .setTooltip ("SAVE MIDI — export the full arrangement to a .mid file on disk.");
+    playButton      .setTooltip ("PLAY — starts the built-in audio engine in Standalone. In a DAW, playback follows host transport.");
+    pauseButton     .setTooltip ("PAUSE — freezes playback at the current position.");
+    stopButton      .setTooltip ("STOP — stops playback and rewinds to beat 1.");
 
     manualButton       .setTooltip ("MANUAL — 16-bar click-to-edit grid. Place kicks / snares / toms / hats yourself instead of letting the AI generate.");
     clearManualButton  .setTooltip ("CLEAR GRID — wipe every cell in the manual pattern.");
@@ -397,52 +668,55 @@ void AIDrumAudioProcessorEditor::resized()
     subtitleLabel.setBounds (area.removeFromTop (18));
     area.removeFromTop (18); // space for the ornament rule
 
-    // Knob row: 6 knobs (Variation, Complexity, Velocity, Humanize, Swing, Fills)
-    auto knobRow = area.removeFromTop (130);
-    const int knobW = knobRow.getWidth() / 6;
-    variationSlider .setBounds (knobRow.removeFromLeft (knobW).reduced (6, 18));
-    complexitySlider.setBounds (knobRow.removeFromLeft (knobW).reduced (6, 18));
-    velocitySlider  .setBounds (knobRow.removeFromLeft (knobW).reduced (6, 18));
-    humanizeSlider  .setBounds (knobRow.removeFromLeft (knobW).reduced (6, 18));
-    swingSlider     .setBounds (knobRow.removeFromLeft (knobW).reduced (6, 18));
-    fillsSlider     .setBounds (knobRow.reduced (6, 18));
+    auto top = area.removeFromTop (328);
+    auto leftPanel = top.removeFromLeft (260);
+    auto rightPanel = top.removeFromRight (228);
+    auto centerPanel = top;
 
-    area.removeFromTop (6);
+    kitVisualizer.setBounds (leftPanel.reduced (2, 4));
 
-    // DRUM KIT row — full width, labels 20 kits by genre / brand / style.
-    auto kitRow = area.removeFromTop (68);
-    drumKitBox.setBounds (kitRow.reduced (8, 26));
+    xyPad.setBounds (centerPanel.reduced (4, 6));
+    variationSlider.setBounds (centerPanel.removeFromBottom (96).reduced (8, 12));
+    humanizeSlider.setBounds (rightPanel.removeFromBottom (96).reduced (8, 12));
+    swingSlider.setBounds (rightPanel.removeFromBottom (96).reduced (8, 12));
+    fillsSlider.setBounds (rightPanel.removeFromBottom (96).reduced (8, 12));
 
-    area.removeFromTop (6);
+    auto rightCombos = rightPanel.reduced (8, 4);
+    drumKitBox      .setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
+    rightCombos.removeFromTop (6);
+    genreBox        .setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
+    rightCombos.removeFromTop (6);
+    patternLengthBox.setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
+    rightCombos.removeFromTop (6);
+    modeBox         .setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
+    rightCombos.removeFromTop (6);
+    hiHatBox        .setBounds (rightCombos.removeFromTop (50).reduced (0, 18));
+    rightCombos.removeFromTop (6);
+    halfTimeButton  .setBounds (rightCombos.removeFromTop (38).reduced (0, 6));
 
-    // Combo row: Genre / Length / Mode / Hi-Hat + Half-Time toggle at far right
-    auto comboRow = area.removeFromTop (68);
-    const int halfTimeW = 120;
-    auto comboArea      = comboRow.withTrimmedRight (halfTimeW + 10);
-    const int comboW    = comboArea.getWidth() / 4;
-    genreBox        .setBounds (comboArea.removeFromLeft (comboW).reduced (8, 26));
-    patternLengthBox.setBounds (comboArea.removeFromLeft (comboW).reduced (8, 26));
-    modeBox         .setBounds (comboArea.removeFromLeft (comboW).reduced (8, 26));
-    hiHatBox        .setBounds (comboArea.reduced (8, 26));
-    halfTimeButton  .setBounds (comboRow.removeFromRight (halfTimeW).reduced (4, 30));
+    area.removeFromTop (10);
 
-    area.removeFromTop (6);
+    // Action row: transport, edit actions, export, with the legacy append
+    // button kept small because the primary + now lives on the arrangement strip.
+    auto action = area.removeFromTop (92);
 
-    // Action row: + APPEND (center), UNDO/CLEAR (left of +), DRAG/SAVE (right of +)
-    auto action = area.removeFromTop (88);
+    auto transportCluster = action.removeFromLeft (260).reduced (4, 16);
+    const int transportW = (transportCluster.getWidth() - 18) / 4;
+    playButton .setBounds (transportCluster.removeFromLeft (transportW));
+    transportCluster.removeFromLeft (6);
+    pauseButton.setBounds (transportCluster.removeFromLeft (transportW));
+    transportCluster.removeFromLeft (6);
+    stopButton .setBounds (transportCluster.removeFromLeft (transportW));
+    transportCluster.removeFromLeft (6);
+    loopButton .setBounds (transportCluster.removeFromLeft (transportW));
 
-    const int plusSize = 80;
-    juce::Rectangle<int> plusRect (action.getCentreX() - plusSize / 2,
-                                   action.getY() + (action.getHeight() - plusSize) / 2,
-                                   plusSize, plusSize);
-    plusButton.setBounds (plusRect);
-    plusHelper.setBounds (plusRect.getX() - 40, plusRect.getBottom() - 4,
-                          plusRect.getWidth() + 80, 18);
+    auto exportCluster = action.removeFromRight (260).reduced (4, 16);
+    dragHandle.setBounds (exportCluster.removeFromTop (26).reduced (2));
+    exportCluster.removeFromTop (8);
+    saveMidiButton.setBounds (exportCluster.removeFromTop (26).reduced (2));
 
-    // Left of +: either UNDO/CLEAR (AI mode) or CLEAR GRID/APPEND TO ARR. (manual mode)
-    auto leftCluster = juce::Rectangle<int> (action.getX() + 12, action.getY() + 14,
-                                             plusRect.getX() - action.getX() - 24,
-                                             action.getHeight() - 28);
+    auto center = action.reduced (10, 6);
+    auto leftCluster = center.removeFromLeft (170).reduced (2, 10);
     const int lBtnH = (leftCluster.getHeight() - 8) / 2;
     undoButton        .setBounds (leftCluster.getX(), leftCluster.getY(),
                                   leftCluster.getWidth(), lBtnH);
@@ -451,21 +725,20 @@ void AIDrumAudioProcessorEditor::resized()
                                   leftCluster.getWidth(), lBtnH);
     commitManualButton.setBounds (clearButton.getBounds());
 
-    // Right of +: DRAG-MIDI + SAVE-MIDI stacked
-    auto rightCluster = juce::Rectangle<int> (plusRect.getRight() + 12,
-                                              action.getY() + 14,
-                                              action.getRight() - plusRect.getRight() - 24,
-                                              action.getHeight() - 28);
-    const int rBtnH = (rightCluster.getHeight() - 8) / 2;
-    dragHandle    .setBounds (rightCluster.removeFromTop (rBtnH).reduced (2));
-    rightCluster.removeFromTop (8);
-    saveMidiButton.setBounds (rightCluster.removeFromTop (rBtnH).reduced (2));
+    const int plusSize = 46;
+    juce::Rectangle<int> plusRect (center.getCentreX() - plusSize / 2,
+                                   center.getCentreY() - plusSize / 2 - 4,
+                                   plusSize, plusSize);
+    plusButton.setBounds (plusRect);
+    plusHelper.setBounds (plusRect.getX() - 28, plusRect.getBottom() - 1,
+                          plusRect.getWidth() + 56, 16);
 
     area.removeFromTop (6);
 
     // MANUAL mode toggle bar — always visible above the strip/grid.
     auto manualBar = area.removeFromTop (30);
     manualButton.setBounds (manualBar.removeFromLeft (140).reduced (2));
+    loopButton.toFront (false);
 
     area.removeFromTop (4);
 

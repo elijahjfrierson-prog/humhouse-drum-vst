@@ -16,6 +16,7 @@ namespace aidrum
     //
     // Each new region appended via the + button grows the grid to the right.
     class ArrangementStrip : public juce::Component,
+                             public juce::SettableTooltipClient,
                              private juce::Timer
     {
     public:
@@ -28,12 +29,14 @@ namespace aidrum
 
         ArrangementStrip()
         {
+            setTooltip ("ARRANGEMENT — chained grooves/fills left-to-right. Click the + on the far right to append another region like Logic Drummer.");
             startTimerHz (30);
         }
 
         ~ArrangementStrip() override { stopTimer(); }
 
         void setProvider (std::function<Snapshot()> p) { provider = std::move (p); }
+        std::function<void()> onAppend;
 
         void paint (juce::Graphics& g) override
         {
@@ -45,7 +48,9 @@ namespace aidrum
             g.setColour (juce::Colour (GothicPalette::kPanelEdge));
             g.drawRoundedRectangle (bounds, 10.0f, 1.0f);
 
-            const auto inner = bounds.reduced (10.0f, 8.0f);
+            auto inner = bounds.reduced (10.0f, 8.0f);
+            const auto appendButton = getAppendButtonBounds (inner);
+            inner = inner.withTrimmedRight (appendButton.getWidth() + 10.0f);
 
             const double totalBeats = std::max (1.0, last.totalBeats);
             const float  pxPerBeat  = inner.getWidth() / (float) totalBeats;
@@ -159,9 +164,38 @@ namespace aidrum
                    + ((last.regions.size() == 1) ? " REGION" : " REGIONS"));
             g.drawText (header, bounds.reduced (12.0f, 4.0f),
                         juce::Justification::topLeft, false);
+
+            // Logic-style append button pinned to the far right of the strip.
+            const auto btnCentre = appendButton.getCentre();
+            const float btnR = appendButton.getWidth() * 0.5f;
+            g.setColour (juce::Colour (GothicPalette::kAccent).withAlpha (0.12f));
+            g.fillEllipse (appendButton.expanded (6.0f));
+            g.setColour (juce::Colour (GothicPalette::kAccentDeep).brighter (0.15f));
+            g.fillEllipse (appendButton);
+            g.setColour (juce::Colour (GothicPalette::kAccentSoft));
+            g.drawEllipse (appendButton, 1.2f);
+            g.setColour (juce::Colour (GothicPalette::kBone));
+            g.fillRoundedRectangle (btnCentre.x - btnR * 0.45f, btnCentre.y - 1.25f,
+                                    btnR * 0.9f, 2.5f, 1.0f);
+            g.fillRoundedRectangle (btnCentre.x - 1.25f, btnCentre.y - btnR * 0.45f,
+                                    2.5f, btnR * 0.9f, 1.0f);
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (onAppend != nullptr && getAppendButtonBounds (getLocalBounds().toFloat().reduced (10.5f, 8.5f)).contains (e.position))
+                onAppend();
         }
 
     private:
+        static juce::Rectangle<float> getAppendButtonBounds (juce::Rectangle<float> inner)
+        {
+            const float size = juce::jmin (28.0f, inner.getHeight() * 0.34f);
+            return juce::Rectangle<float> (inner.getRight() - size,
+                                           inner.getCentreY() - size * 0.5f,
+                                           size, size);
+        }
+
         void timerCallback() override
         {
             if (! provider) return;

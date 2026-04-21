@@ -139,7 +139,9 @@ void AIDrumAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerBlo
 {
     playheadBeats.store (0.0, std::memory_order_relaxed);
     lastBpm.store (120.0, std::memory_order_relaxed);
-    juce::ignoreUnused (sampleRate);
+    drumSynth.prepare (sampleRate);
+    drumSynth.reset();
+    hostTransportSeen.store (false, std::memory_order_relaxed);
 }
 
 void AIDrumAudioProcessor::releaseResources() {}
@@ -502,11 +504,16 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
 
     const double blockStartBeat = playheadBeats.load (std::memory_order_acquire);
     const double blockEndBeat   = blockStartBeat + blockBeats;
+    const bool   looping        = loopingEnabled.load (std::memory_order_acquire);
+
+    // If looping is OFF, clamp the emission window at the arrangement end
+    // so the song plays once and stops.
+    const double emissionEnd = looping ? blockEndBeat : std::min (blockEndBeat, total);
 
     // Loop arrangement: for each pass, emit notes that fall within [blockStart, blockEnd).
     double loopOffset = 0.0;
     // Walk enough loop copies to cover this block.
-    while (loopOffset <= blockEndBeat + total)
+    while (loopOffset <= emissionEnd + total)
     {
         double regionOffset = loopOffset;
         for (const auto& region : snapshot)
@@ -517,7 +524,7 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                 const double onBeat  = regionOffset + note.startBeat;
                 const double offBeat = onBeat + std::max (0.01, note.lengthBeat);
 
-                if (onBeat >= blockStartBeat && onBeat < blockEndBeat)
+                if (onBeat >= blockStartBeat && onBeat < emissionEnd)
                 {
                     const int sample = static_cast<int> (
                         (onBeat - blockStartBeat) * secondsPerBeat * sampleRate);
@@ -528,7 +535,7 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                         juce::jlimit (0, numSamples - 1, sample));
                 }
 
-                if (offBeat >= blockStartBeat && offBeat < blockEndBeat)
+                if (offBeat >= blockStartBeat && offBeat < emissionEnd)
                 {
                     const int sample = static_cast<int> (
                         (offBeat - blockStartBeat) * secondsPerBeat * sampleRate);
@@ -541,8 +548,26 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
         loopOffset += total;
     }
 
-    playheadBeats.store (std::fmod (blockEndBeat, total),
-                         std::memory_order_release);
+    // Advance (and optionally wrap) the playhead.
+    if (looping)
+    {
+        playheadBeats.store (std::fmod (blockEndBeat, total),
+                             std::memory_order_release);
+    }
+    else
+    {
+        const double next = std::min (blockEndBeat, total);
+        playheadBeats.store (next, std::memory_order_release);
+
+        // When the arrangement ends and looping is off, auto-stop so the
+        // Play button becomes 'start from 0' again next press.
+        if (next >= total - 1.0e-6)
+        {
+            transportState.store ((int) TransportState::Stopped,
+                                  std::memory_order_release);
+            playheadBeats.store (0.0, std::memory_order_release);
+        }
+    }
 }
 
 void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
@@ -552,13 +577,12 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     buffer.clear();
 
     // Don't let incoming MIDI leak into our generated pattern output.
-    // acceptsMidi() is true so hosts may route a MIDI keyboard here;
-    // producesMidi() is also true so whatever remains in `midi` is
-    // forwarded to downstream instruments. We generate everything fresh.
     midi.clear();
 
-    // Try to pull tempo from the host.
+    // Try to pull tempo + host transport state.
     double bpm = lastBpm.load (std::memory_order_relaxed);
+    bool   hostIsPlaying = false;
+    bool   hostDrivesPlayhead = false;
 
     if (auto* ph = getPlayHead())
     {
@@ -567,17 +591,107 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             if (auto hostBpm = pos->getBpm(); hostBpm.hasValue())
                 bpm = *hostBpm;
 
+            hostIsPlaying = pos->getIsPlaying();
+
+            // Only let the host own the transport when it exposes a musical
+            // position. Standalone commonly has a playhead object too, but no
+            // meaningful PPQ timeline; in that case we keep using our internal
+            // clock and the UI transport buttons.
             if (auto ppq = pos->getPpqPosition(); ppq.hasValue())
-                playheadBeats.store (*ppq, std::memory_order_release);
+            {
+                hostDrivesPlayhead = true;
+
+                if (hostIsPlaying)
+                {
+                    // Wrap host ppq into our arrangement length so looping still works.
+                    const double total = getArrangementTotalBeats();
+                    if (total > 0.0)
+                        playheadBeats.store (std::fmod (std::max (0.0, *ppq), total),
+                                             std::memory_order_release);
+                }
+            }
         }
     }
 
+    hostTransportSeen.store (hostDrivesPlayhead, std::memory_order_relaxed);
     lastBpm.store (bpm, std::memory_order_relaxed);
+
+    // Decide whether to advance / emit this block.
+    const auto state = (TransportState) transportState.load (std::memory_order_acquire);
+    const bool shouldPlay = hostDrivesPlayhead ? hostIsPlaying
+                                               : (state == TransportState::Playing);
+
+    if (! shouldPlay)
+    {
+        // Silent block. Still render existing synth tails so held voices decay
+        // instead of cutting off when the user hits pause.
+        drumSynth.renderInto (buffer);
+        return;
+    }
 
     renderArrangementToMidiBuffer (midi,
                                    buffer.getNumSamples(),
                                    getSampleRate(),
                                    bpm);
+
+    // Feed the freshly-generated MIDI notes into the drum synth so the
+    // Standalone app (and any DAW listening to audio output) makes sound.
+    drumSynth.setMasterGain (outputLevel.load (std::memory_order_relaxed));
+    for (const auto meta : midi)
+    {
+        const auto msg = meta.getMessage();
+        if (msg.isNoteOn())
+            drumSynth.noteOn (msg.getNoteNumber(),
+                              msg.getFloatVelocity(),
+                              meta.samplePosition);
+    }
+    drumSynth.renderInto (buffer);
+}
+
+// ============================================================================
+// v1.0.0 — Transport API
+// ============================================================================
+void AIDrumAudioProcessor::play()
+{
+    transportState.store ((int) TransportState::Playing, std::memory_order_release);
+}
+
+void AIDrumAudioProcessor::pause()
+{
+    // Freeze the playhead where it is; voices decay naturally.
+    transportState.store ((int) TransportState::Paused, std::memory_order_release);
+}
+
+void AIDrumAudioProcessor::stop()
+{
+    transportState.store ((int) TransportState::Stopped, std::memory_order_release);
+    playheadBeats.store (0.0, std::memory_order_release);
+    drumSynth.reset();
+}
+
+void AIDrumAudioProcessor::setLooping (bool shouldLoop)
+{
+    loopingEnabled.store (shouldLoop, std::memory_order_release);
+}
+
+bool AIDrumAudioProcessor::isLooping() const
+{
+    return loopingEnabled.load (std::memory_order_acquire);
+}
+
+AIDrumAudioProcessor::TransportState AIDrumAudioProcessor::getTransportState() const
+{
+    return (TransportState) transportState.load (std::memory_order_acquire);
+}
+
+void AIDrumAudioProcessor::setOutputLevel (float level01)
+{
+    outputLevel.store (juce::jlimit (0.0f, 1.0f, level01), std::memory_order_release);
+}
+
+float AIDrumAudioProcessor::getOutputLevel() const
+{
+    return outputLevel.load (std::memory_order_acquire);
 }
 
 juce::AudioProcessorEditor* AIDrumAudioProcessor::createEditor()

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ArrangementStrip.h"
+#include "DrumKit.h"
 #include "GothicLookAndFeel.h"
 #include "ManualGrid.h"
 #include "PluginProcessor.h"
@@ -45,6 +46,33 @@ private:
         juce::File tempMidiFile;
     };
 
+    class XYPad : public juce::Component,
+                  private juce::Timer,
+                  public juce::SettableTooltipClient
+    {
+    public:
+        XYPad();
+        void bind (juce::Slider* complexity, juce::Slider* velocity);
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+    private:
+        void timerCallback() override;
+        void updateFromPoint (juce::Point<float> p);
+        juce::Slider* complexitySlider = nullptr;
+        juce::Slider* velocitySlider   = nullptr;
+    };
+
+    class KitVisualizer : public juce::Component
+    {
+    public:
+        KitVisualizer();
+        void setSelectedKit (int index);
+        void paint (juce::Graphics&) override;
+    private:
+        int selectedKit = 0;
+    };
+
     void timerCallback() override;
 
     AIDrumAudioProcessor&     processorRef;
@@ -56,6 +84,8 @@ private:
 
     aidrum::ArrangementStrip  arrangementStrip;
     aidrum::ManualGrid        manualGrid;
+    KitVisualizer             kitVisualizer;
+    XYPad                     xyPad;
 
     // Main knobs.
     juce::Slider              variationSlider, complexitySlider, velocitySlider, humanizeSlider;
@@ -79,6 +109,7 @@ private:
 
     // Toggle.
     juce::TextButton          halfTimeButton { "HALF-TIME" };
+    juce::TextButton          loopButton     { "LOOP" };
 
     // Action buttons.
     PlusButton                plusButton;
@@ -86,6 +117,9 @@ private:
     juce::TextButton          undoButton     { "UNDO" };
     juce::TextButton          clearButton    { "CLEAR" };
     juce::TextButton          saveMidiButton { "SAVE MIDI" };
+    juce::TextButton          playButton     { "PLAY" };
+    juce::TextButton          pauseButton    { "PAUSE" };
+    juce::TextButton          stopButton     { "STOP" };
     MidiDragHandle            dragHandle     { processorRef };
 
     // v0.8.0 Manual mode.

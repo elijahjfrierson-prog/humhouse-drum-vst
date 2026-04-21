@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AIBackend.h"
+#include "DrumSynth.h"
 #include "MidiPattern.h"
 
 #include <JuceHeader.h>
@@ -94,6 +95,24 @@ public:
     int  getManualNumBars() const;
     void setManualNumBars (int bars);
 
+    // --- v1.0.0 Transport API -------------------------------------------
+    // Audio-generating transport for the Standalone app (and anywhere a
+    // host doesn't drive the playhead). Play/Pause/Stop/Loop mirror the
+    // buttons in the UI.
+    enum class TransportState : int { Stopped = 0, Playing, Paused };
+
+    void play();
+    void pause();
+    void stop();
+    void setLooping (bool shouldLoop);
+    bool isLooping() const;
+    TransportState getTransportState() const;
+
+    // Audio level, 0..1. UI-facing master drum-synth gain so users can
+    // tame or push the built-in synthesized kit.
+    void  setOutputLevel (float level01);
+    float getOutputLevel() const;
+
     // Backwards-compat alias — also dumps the full arrangement.
     bool writeCurrentPatternAsMidiFile (const juce::File& dest) const
     {
@@ -134,6 +153,16 @@ private:
     // Read/written from the audio thread — must be atomic.
     std::atomic<double>      playheadBeats { 0.0 };
     std::atomic<double>      lastBpm       { 120.0 };
+
+    // v1.0.0 — transport state + internal clock (used when no host drives us).
+    std::atomic<int>         transportState    { (int) TransportState::Stopped };
+    std::atomic<bool>        loopingEnabled    { true };
+    std::atomic<bool>        hostTransportSeen { false };
+    std::atomic<float>       outputLevel       { 0.85f };
+
+    // v1.0.0 — synthesized drum voice renderer so the Standalone app
+    // makes sound out of the box. Plugin hosts still receive MIDI too.
+    aidrum::DrumSynth        drumSynth;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AIDrumAudioProcessor)
 };
