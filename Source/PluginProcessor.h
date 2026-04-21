@@ -4,6 +4,7 @@
 #include "DrumBusMixer.h"
 #include "DrumSynth.h"
 #include "MidiPattern.h"
+#include "SampleKit.h"
 
 #include <JuceHeader.h>
 
@@ -114,6 +115,21 @@ public:
     void  setOutputLevel (float level01);
     float getOutputLevel() const;
 
+    // --- v1.4.0 Sampler API ---------------------------------------------
+    // Loads every recognised WAV in `folder` and hot-swaps it for the
+    // physical-model synth. Returns the number of samples loaded (0 on
+    // failure). Call on the UI thread; audio thread swaps atomically.
+    int  loadSampleKit   (const juce::File& folder);
+    void unloadSampleKit();
+    juce::String getSampleKitPath() const;
+    bool isSampleKitActive() const;
+
+    // --- v1.4.0 UI scale --------------------------------------------------
+    // Persisted UI scale factor for the editor (0.75× … 1.5×). Lives on
+    // the processor so it survives host saves.
+    float getUiScale() const;
+    void  setUiScale (float scale);
+
     // Backwards-compat alias — also dumps the full arrangement.
     bool writeCurrentPatternAsMidiFile (const juce::File& dest) const
     {
@@ -168,11 +184,20 @@ private:
     // v1.1.0 — per-drum mixer with EQ / Comp / Drive / Clip / Dampen / Reverb.
     aidrum::DrumBusMixer     busMixer;
 
+    // v1.4.0 — real-audio sampler that takes over from DrumSynth when a
+    // kit folder is loaded.
+    aidrum::SampleKit        sampleKit;
+    std::atomic<float>       uiScale { 1.0f };
+    juce::String             loadedKitPath;
+    mutable std::mutex       loadedKitPathMutex;
+
 public:
     // v1.1.0 mixer access for the UI.
     aidrum::DrumBusMixer& getBusMixer() { return busMixer; }
     // v1.2.0 — hit indicator access for the UI.
     aidrum::DrumSynth&    getDrumSynth() { return drumSynth; }
+    // v1.4.0 — sample-kit access for the UI.
+    aidrum::SampleKit&    getSampleKit()  { return sampleKit; }
 
 private:
 

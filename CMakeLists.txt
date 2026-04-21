@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(AIDrumVST VERSION 1.2.0 LANGUAGES C CXX)
+project(AIDrumVST VERSION 1.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -65,6 +65,21 @@ juce_add_plugin(AIDrumVST
 
 juce_generate_juce_header(AIDrumVST)
 
+# v1.4.0 — bundle the CC0 default drum kit so the plugin makes
+# real-sample sound out of the box, no user setup required.
+file(GLOB AIDRUM_DEFAULT_KIT_FILES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/DefaultKit/*.wav")
+if(AIDRUM_DEFAULT_KIT_FILES)
+    juce_add_binary_data(AIDrumBundledKit
+        HEADER_NAME BundledKitData.h
+        NAMESPACE   BundledKitData
+        SOURCES     ${AIDRUM_DEFAULT_KIT_FILES})
+    target_link_libraries(AIDrumVST PRIVATE AIDrumBundledKit)
+    target_compile_definitions(AIDrumVST PRIVATE AIDRUM_HAS_BUNDLED_KIT=1)
+else()
+    target_compile_definitions(AIDrumVST PRIVATE AIDRUM_HAS_BUNDLED_KIT=0)
+endif()
+
 target_sources(AIDrumVST PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginProcessor.h
@@ -76,6 +91,8 @@ target_sources(AIDrumVST PRIVATE
     Source/DrumKit.h
     Source/DrumSynth.h
     Source/DrumBusMixer.h
+    Source/SampleKit.h
+    Source/SampleKit.cpp
     Source/MixerPanel.h
     Source/MidiPattern.h
     Source/GothicLookAndFeel.h
@@ -93,6 +110,7 @@ target_compile_definitions(AIDrumVST PUBLIC
 
 target_link_libraries(AIDrumVST PRIVATE
     juce::juce_audio_utils
+    juce::juce_audio_formats
     juce::juce_audio_plugin_client
     juce::juce_dsp
     juce::juce_gui_extra

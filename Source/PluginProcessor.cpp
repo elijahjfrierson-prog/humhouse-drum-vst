@@ -77,6 +77,16 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
 
     // Manual pattern starts empty; 16 bars of 4/4 = 64 beats.
     manualPattern.lengthInBeats = static_cast<double> (manualNumBars * 4);
+
+    // v1.4.0 — auto-load the bundled PopRock kit so the plugin makes
+    // real-sample sound out of the box. User can override with LOAD KIT.
+    sampleKit.prepare (48000.0, 0);
+    const int bundled = sampleKit.loadBundled();
+    if (bundled > 0)
+    {
+        std::lock_guard<std::mutex> lock (loadedKitPathMutex);
+        loadedKitPath = "Built-in PopRock";
+    }
 }
 
 AIDrumAudioProcessor::~AIDrumAudioProcessor() = default;
@@ -158,9 +168,53 @@ void AIDrumAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerBlo
     lastBpm.store (120.0, std::memory_order_relaxed);
     drumSynth.prepare (sampleRate);
     drumSynth.reset();
+    sampleKit.prepare (sampleRate, 0);
+    sampleKit.reset();
     busMixer.prepare (sampleRate, 0, 2);
     busMixer.reset();
     hostTransportSeen.store (false, std::memory_order_relaxed);
+}
+
+// ============================================================================
+// v1.4.0 — Sampler API
+// ============================================================================
+int AIDrumAudioProcessor::loadSampleKit (const juce::File& folder)
+{
+    const int n = sampleKit.load (folder);
+    if (n > 0)
+    {
+        std::lock_guard<std::mutex> lock (loadedKitPathMutex);
+        loadedKitPath = folder.getFullPathName();
+    }
+    return n;
+}
+
+void AIDrumAudioProcessor::unloadSampleKit()
+{
+    sampleKit.unload();
+    std::lock_guard<std::mutex> lock (loadedKitPathMutex);
+    loadedKitPath.clear();
+}
+
+juce::String AIDrumAudioProcessor::getSampleKitPath() const
+{
+    std::lock_guard<std::mutex> lock (loadedKitPathMutex);
+    return loadedKitPath;
+}
+
+bool AIDrumAudioProcessor::isSampleKitActive() const
+{
+    return sampleKit.isActive();
+}
+
+float AIDrumAudioProcessor::getUiScale() const
+{
+    return uiScale.load (std::memory_order_relaxed);
+}
+
+void AIDrumAudioProcessor::setUiScale (float s)
+{
+    uiScale.store (juce::jlimit (0.75f, 1.5f, s), std::memory_order_relaxed);
 }
 
 void AIDrumAudioProcessor::releaseResources() {}
@@ -672,10 +726,13 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     if (! shouldPlay)
     {
-        // Silent block. Still render existing synth tails through the mixer
-        // so held voices decay naturally when the user hits pause.
+        // Silent block. Still render existing tails through the mixer so
+        // held voices decay naturally when the user hits pause.
         busMixer.beginBlock (buffer.getNumSamples());
-        drumSynth.renderIntoBuses (busMixer, buffer.getNumSamples());
+        if (sampleKit.isActive())
+            sampleKit.renderIntoBuses (busMixer, buffer.getNumSamples());
+        else
+            drumSynth.renderIntoBuses (busMixer, buffer.getNumSamples());
         busMixer.process (buffer);
         return;
     }
@@ -685,13 +742,20 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                    getSampleRate(),
                                    bpm);
 
-    // Feed the freshly-generated MIDI notes into the drum synth so the
-    // Standalone app (and any DAW listening to audio output) makes sound.
+    // Feed the freshly-generated MIDI notes into either the sampler
+    // (if a kit is loaded) or the physical-model synth (fallback).
     drumSynth.setMasterGain (outputLevel.load (std::memory_order_relaxed));
+    const bool useSamples = sampleKit.isActive();
     for (const auto meta : midi)
     {
         const auto msg = meta.getMessage();
-        if (msg.isNoteOn())
+        if (! msg.isNoteOn()) continue;
+
+        if (useSamples)
+            sampleKit.noteOn (msg.getNoteNumber(),
+                              msg.getFloatVelocity() * outputLevel.load (std::memory_order_relaxed),
+                              meta.samplePosition);
+        else
             drumSynth.noteOn (msg.getNoteNumber(),
                               msg.getFloatVelocity(),
                               meta.samplePosition);
@@ -699,7 +763,10 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     // v1.1.0 — render each voice into its own bus, then mixer sums to output.
     busMixer.beginBlock (buffer.getNumSamples());
-    drumSynth.renderIntoBuses (busMixer, buffer.getNumSamples());
+    if (useSamples)
+        sampleKit.renderIntoBuses (busMixer, buffer.getNumSamples());
+    else
+        drumSynth.renderIntoBuses (busMixer, buffer.getNumSamples());
     busMixer.process (buffer);
 }
 
@@ -756,14 +823,47 @@ juce::AudioProcessorEditor* AIDrumAudioProcessor::createEditor()
 
 void AIDrumAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts.copyState().createXml())
+    juce::ValueTree root ("AIDrumState");
+    root.appendChild (apvts.copyState(), nullptr);
+
+    // v1.4.0 — persist loaded kit path + UI scale so the host snapshot
+    // restores both when the project reopens.
+    juce::ValueTree kit ("Kit");
+    kit.setProperty ("path",  getSampleKitPath(), nullptr);
+    kit.setProperty ("scale", (double) getUiScale(), nullptr);
+    root.appendChild (kit, nullptr);
+
+    if (auto xml = root.createXml())
         copyXmlToBinary (*xml, destData);
 }
 
 void AIDrumAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary (data, sizeInBytes))
-        apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+    if (xml == nullptr) return;
+
+    auto root = juce::ValueTree::fromXml (*xml);
+
+    // Back-compat: older saves put APVTS straight at the root.
+    if (root.hasType ("state"))
+    {
+        apvts.replaceState (root);
+        return;
+    }
+
+    if (auto child = root.getChildWithName ("state"); child.isValid())
+        apvts.replaceState (child);
+
+    if (auto kit = root.getChildWithName ("Kit"); kit.isValid())
+    {
+        setUiScale ((float) (double) kit.getProperty ("scale", 1.0));
+        const auto path = kit.getProperty ("path", "").toString();
+        if (path.isNotEmpty())
+        {
+            juce::File f (path);
+            if (f.isDirectory()) loadSampleKit (f);
+        }
+    }
 }
 
 // JUCE plugin entry point

@@ -426,7 +426,16 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p)
 {
     setLookAndFeel (&gothicLnf);
-    setSize (960, 920);
+
+    // v1.4.0 — resizable editor + persisted UI scale. JUCE applies the
+    // AffineTransform around setSize() so the DAW reports the correct
+    // outer size to the host window manager.
+    setResizable (true, true);
+    setResizeLimits (720, 690, 1600, 1400);
+    const float initialScale = juce::jlimit (0.75f, 1.5f, processorRef.getUiScale());
+    setSize ((int) std::round (960.0f * initialScale),
+             (int) std::round (920.0f * initialScale));
+    setTransform (juce::AffineTransform::scale (initialScale));
 
     // Title
     {
@@ -707,6 +716,88 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (mixerButton);
     addChildComponent (mixerPanel);
 
+    // v1.4.0 — LOAD KIT FOLDER: point at any folder of WAV samples
+    // (kick.wav / snare.wav / hat_*.wav / tom_*.wav / ride.wav / crash.wav / china.wav)
+    // and the plugin plays those instead of the physical-model synth.
+    styleSmallBtn (loadKitButton);
+    loadKitButton.setTooltip ("LOAD KIT — pick a folder of WAV samples. Expected names: "
+                              "kick, snare, snare_ghost, hat_closed, hat_pedal, hat_open, "
+                              "tom_high, tom_mid, tom_low, ride, ride_bell, crash, china. "
+                              "Optional velocity layers: snare_1.wav … snare_8.wav.");
+    loadKitButton.onClick = [this]
+    {
+        kitFolderChooser = std::make_unique<juce::FileChooser> (
+            "Select a drum sample folder",
+            juce::File::getSpecialLocation (juce::File::userMusicDirectory));
+        kitFolderChooser->launchAsync (
+            juce::FileBrowserComponent::openMode
+              | juce::FileBrowserComponent::canSelectDirectories,
+            [this] (const juce::FileChooser& fc)
+            {
+                auto folder = fc.getResult();
+                if (folder == juce::File{} || ! folder.isDirectory()) return;
+                const int n = processorRef.loadSampleKit (folder);
+                if (n > 0)
+                    kitPathLabel.setText (juce::String (n) + " samples: "
+                                          + folder.getFileName(),
+                                          juce::dontSendNotification);
+                else
+                    kitPathLabel.setText ("No recognised WAVs in folder",
+                                          juce::dontSendNotification);
+            });
+    };
+    addAndMakeVisible (loadKitButton);
+
+    styleSmallBtn (unloadKitButton);
+    unloadKitButton.setTooltip ("UNLOAD — drop the loaded sample kit and fall back to the physical-model synth.");
+    unloadKitButton.onClick = [this]
+    {
+        processorRef.unloadSampleKit();
+        kitPathLabel.setText ("Physical-model synth", juce::dontSendNotification);
+    };
+    addAndMakeVisible (unloadKitButton);
+
+    kitPathLabel.setJustificationType (juce::Justification::centredLeft);
+    kitPathLabel.setColour (juce::Label::textColourId, juce::Colour (Palette::kMuted));
+    {
+        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::plain));
+        f.setExtraKerningFactor (0.15f);
+        kitPathLabel.setFont (f);
+    }
+    if (processorRef.isSampleKitActive())
+        kitPathLabel.setText (juce::File (processorRef.getSampleKitPath()).getFileName(),
+                              juce::dontSendNotification);
+    else
+        kitPathLabel.setText ("Physical-model synth", juce::dontSendNotification);
+    addAndMakeVisible (kitPathLabel);
+
+    // UI SCALE slider — resizes the entire editor 75% … 150%.
+    uiScaleSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    uiScaleSlider.setRange (0.75, 1.5, 0.01);
+    uiScaleSlider.setValue (processorRef.getUiScale(), juce::dontSendNotification);
+    uiScaleSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 16);
+    uiScaleSlider.textFromValueFunction = [] (double v)
+        { return juce::String ((int) std::round (v * 100.0)) + "%"; };
+    uiScaleSlider.setTooltip ("UI SCALE — resize the entire editor (75 % … 150 %). "
+                              "Handy when the VST window is cramped in your DAW.");
+    uiScaleSlider.onValueChange = [this]
+    {
+        const float s = (float) uiScaleSlider.getValue();
+        processorRef.setUiScale (s);
+        setTransform (juce::AffineTransform::scale (s));
+        setSize ((int) std::round (960.0f * s), (int) std::round (920.0f * s));
+    };
+    addAndMakeVisible (uiScaleSlider);
+
+    {
+        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+        f.setExtraKerningFactor (0.35f);
+        uiScaleLabel.setFont (f);
+    }
+    uiScaleLabel.setJustificationType (juce::Justification::centredRight);
+    uiScaleLabel.setColour (juce::Label::textColourId, juce::Colour (Palette::kMuted));
+    addAndMakeVisible (uiScaleLabel);
+
     // SAVE MIDI — saves the whole arrangement.
     saveMidiButton.onClick = [this]
     {
@@ -924,11 +1015,24 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (6);
 
-    // MANUAL / MIXER toggle bar — always visible above the strip/grid.
+    // MANUAL / MIXER / LOAD KIT / UNLOAD / UI SCALE toggle bar.
     auto manualBar = area.removeFromTop (30);
-    manualButton.setBounds (manualBar.removeFromLeft (140).reduced (2));
+    manualButton   .setBounds (manualBar.removeFromLeft (120).reduced (2));
+    manualBar.removeFromLeft (4);
+    mixerButton    .setBounds (manualBar.removeFromLeft (90) .reduced (2));
+    manualBar.removeFromLeft (4);
+    loadKitButton  .setBounds (manualBar.removeFromLeft (90) .reduced (2));
+    manualBar.removeFromLeft (4);
+    unloadKitButton.setBounds (manualBar.removeFromLeft (80) .reduced (2));
     manualBar.removeFromLeft (6);
-    mixerButton.setBounds (manualBar.removeFromLeft (120).reduced (2));
+
+    // UI scale cluster on the right side of the bar.
+    auto scaleCluster = manualBar.removeFromRight (200);
+    uiScaleLabel .setBounds (scaleCluster.removeFromLeft (60));
+    uiScaleSlider.setBounds (scaleCluster.reduced (2, 2));
+
+    // Kit path readout fills whatever horizontal space is left in the middle.
+    kitPathLabel.setBounds (manualBar.reduced (4, 0));
     loopButton.toFront (false);
 
     area.removeFromTop (4);

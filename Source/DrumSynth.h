@@ -170,6 +170,13 @@ namespace aidrum
             return busIndexForKind (Voice::kindFromNote (midiNote));
         }
 
+        // v1.4.0 — public re-export of the voice mapping so SampleKit can
+        // route incoming MIDI notes without needing friend access.
+        static Kind Voice_kindFromNote (int midiNote) noexcept
+        {
+            return Voice::kindFromNote (midiNote);
+        }
+
     private:
 
         // ---- Helpers ------------------------------------------------------

@@ -143,7 +143,15 @@ private:
     juce::TextButton          mixerButton    { "MIXER" };
     aidrum::MixerPanel        mixerPanel     { processorRef.getBusMixer() };
 
+    // v1.4.0 Sampler loader + UI scale
+    juce::TextButton          loadKitButton    { "LOAD KIT" };
+    juce::TextButton          unloadKitButton  { "UNLOAD" };
+    juce::Label               kitPathLabel;
+    juce::Slider              uiScaleSlider;
+    juce::Label               uiScaleLabel     { {}, "UI SCALE" };
+
     std::unique_ptr<juce::FileChooser> fileChooser;
+    std::unique_ptr<juce::FileChooser> kitFolderChooser;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ComboAttachment  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
