@@ -68,6 +68,32 @@ public:
     // as a Type-1 MIDI file. Used by both "Save MIDI" and "Drag to DAW".
     bool writeArrangementAsMidiFile (const juce::File& dest) const;
 
+    // --- v0.8.0 Manual Mode API -----------------------------------------
+    // 16-bar (default) click-to-edit step grid. When manual mode is on,
+    // playback/export use the manual pattern instead of the AI arrangement.
+    // The manual pattern stores GM drum notes; the active DrumKit remaps
+    // them at render/export time so the KIT combo still alters timbre.
+    bool isManualMode() const;
+    void setManualMode (bool shouldBeOn);
+
+    // Clickable grid toggles — velocity is 0..1 (default 0.85, ghost ~0.35).
+    void setManualCell   (int midiNote, int stepIndex, float velocity);
+    void clearManualCell (int midiNote, int stepIndex);
+    void clearManualPattern();
+
+    // Copy of the manual pattern for UI rendering (thread-safe).
+    // Notes are returned with their GM note numbers (pre-kit remap)
+    // so the grid can hit-test against the displayed rows directly.
+    aidrum::MidiPattern getManualPattern() const;
+
+    // Commits the current manual pattern as a new region at the end of
+    // the arrangement (with kit remapping applied). Lets the user mix
+    // hand-built bars in with AI-generated ones.
+    void commitManualPatternAsRegion();
+
+    int  getManualNumBars() const;
+    void setManualNumBars (int bars);
+
     // Backwards-compat alias — also dumps the full arrangement.
     bool writeCurrentPatternAsMidiFile (const juce::File& dest) const
     {
@@ -93,6 +119,16 @@ private:
 
     mutable std::mutex                  arrangementMutex;
     std::vector<aidrum::MidiPattern>    arrangement; // concatenated regions
+
+    // v0.8.0 — manual pattern (16-bar step grid, user-editable).
+    mutable std::mutex                  manualMutex;
+    aidrum::MidiPattern                 manualPattern;   // GM notes, length = numBars * 4 beats
+    int                                 manualNumBars = 16;
+    std::atomic<bool>                   manualModeActive { false };
+
+    // Applies the active DrumKit remap to a pattern copy (used when rendering
+    // the manual pattern to MIDI — AI patterns already go through AIBackend).
+    aidrum::MidiPattern withActiveKitApplied (aidrum::MidiPattern p) const;
 
     // Playback position (in beats) across blocks when the host isn't providing ppq.
     // Read/written from the audio thread — must be atomic.

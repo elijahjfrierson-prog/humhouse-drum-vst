@@ -65,6 +65,9 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
     // Seed arrangement with a single initial groove so the visualizer has
     // something to draw on first launch.
     arrangement.push_back (backend.generate (buildRequestForMode (aidrum::GenerationMode::Groove)));
+
+    // Manual pattern starts empty; 16 bars of 4/4 = 64 beats.
+    manualPattern.lengthInBeats = static_cast<double> (manualNumBars * 4);
 }
 
 AIDrumAudioProcessor::~AIDrumAudioProcessor() = default;
@@ -240,9 +243,169 @@ aidrum::MidiPattern AIDrumAudioProcessor::getCurrentPattern() const
     return arrangement.empty() ? aidrum::MidiPattern{} : arrangement.back();
 }
 
+// ============================================================================
+// v0.8.0 Manual Mode
+// ============================================================================
+
+bool AIDrumAudioProcessor::isManualMode() const
+{
+    return manualModeActive.load (std::memory_order_acquire);
+}
+
+void AIDrumAudioProcessor::setManualMode (bool shouldBeOn)
+{
+    manualModeActive.store (shouldBeOn, std::memory_order_release);
+    // Restart playhead when flipping modes so the user hears the
+    // new source from beat 1.
+    playheadBeats.store (0.0, std::memory_order_release);
+}
+
+namespace
+{
+    // 16th note = 0.25 beats.
+    constexpr double kStepBeats = 0.25;
+}
+
+void AIDrumAudioProcessor::setManualCell (int midiNote, int stepIndex, float velocity)
+{
+    if (stepIndex < 0) return;
+    std::lock_guard<std::mutex> lock (manualMutex);
+
+    const double startBeat = stepIndex * kStepBeats;
+    if (startBeat >= manualPattern.lengthInBeats) return;
+
+    // Replace any existing note on this cell so repeat-clicks update velocity
+    // rather than stacking duplicates.
+    for (auto& n : manualPattern.notes)
+    {
+        if (n.noteNumber == midiNote
+            && std::abs (n.startBeat - startBeat) < 1.0e-4)
+        {
+            n.velocity = juce::jlimit (0.05f, 1.0f, velocity);
+            return;
+        }
+    }
+
+    aidrum::MidiNote note;
+    note.noteNumber = midiNote;
+    note.startBeat  = startBeat;
+    note.lengthBeat = kStepBeats * 0.9; // slightly shorter so cells read distinct
+    note.velocity   = juce::jlimit (0.05f, 1.0f, velocity);
+    manualPattern.notes.push_back (note);
+}
+
+void AIDrumAudioProcessor::clearManualCell (int midiNote, int stepIndex)
+{
+    if (stepIndex < 0) return;
+    std::lock_guard<std::mutex> lock (manualMutex);
+    const double startBeat = stepIndex * kStepBeats;
+    manualPattern.notes.erase (
+        std::remove_if (manualPattern.notes.begin(), manualPattern.notes.end(),
+                        [&] (const aidrum::MidiNote& n)
+                        {
+                            return n.noteNumber == midiNote
+                                && std::abs (n.startBeat - startBeat) < 1.0e-4;
+                        }),
+        manualPattern.notes.end());
+}
+
+void AIDrumAudioProcessor::clearManualPattern()
+{
+    std::lock_guard<std::mutex> lock (manualMutex);
+    manualPattern.notes.clear();
+}
+
+aidrum::MidiPattern AIDrumAudioProcessor::getManualPattern() const
+{
+    std::lock_guard<std::mutex> lock (manualMutex);
+    return manualPattern;
+}
+
+int AIDrumAudioProcessor::getManualNumBars() const
+{
+    std::lock_guard<std::mutex> lock (manualMutex);
+    return manualNumBars;
+}
+
+void AIDrumAudioProcessor::setManualNumBars (int bars)
+{
+    bars = juce::jlimit (1, 32, bars);
+    std::lock_guard<std::mutex> lock (manualMutex);
+    manualNumBars = bars;
+    manualPattern.lengthInBeats = static_cast<double> (bars * 4);
+    // Drop notes that no longer fit.
+    const double maxBeat = manualPattern.lengthInBeats;
+    manualPattern.notes.erase (
+        std::remove_if (manualPattern.notes.begin(), manualPattern.notes.end(),
+                        [&] (const aidrum::MidiNote& n) { return n.startBeat >= maxBeat; }),
+        manualPattern.notes.end());
+}
+
+aidrum::MidiPattern AIDrumAudioProcessor::withActiveKitApplied (aidrum::MidiPattern p) const
+{
+    const auto kit = static_cast<aidrum::DrumKit> (
+        (int) apvts.getRawParameterValue (kParamDrumKit)->load());
+    const auto& prof = aidrum::drumKitProfile (kit);
+
+    // GM drum constants (mirror AIBackend's internal ones).
+    constexpr int kKickGM = 36, kSnareGM = 38, kSideStickGM = 37, kClapGM = 39;
+    constexpr int kClosedHatGM = 42, kPedalHatGM = 44, kOpenHatGM = 46;
+    constexpr int kRideGM = 51, kRideBellGM = 53, kCrashGM = 49, kCrashAltGM = 57, kChinaGM = 52;
+    constexpr int kLowTomGM = 41, kMidTomGM = 45, kHighTomGM = 48;
+
+    for (auto& n : p.notes)
+    {
+        if      (n.noteNumber == kKickGM)      n.noteNumber = prof.kick;
+        else if (n.noteNumber == kSnareGM)
+            n.noteNumber = (n.velocity <= prof.ghostThreshold && prof.ghostSnare != prof.snare)
+                             ? prof.ghostSnare : prof.snare;
+        else if (n.noteNumber == kSideStickGM) n.noteNumber = prof.sideStick;
+        else if (n.noteNumber == kClapGM)      n.noteNumber = prof.clap;
+        else if (n.noteNumber == kClosedHatGM) n.noteNumber = prof.closedHat;
+        else if (n.noteNumber == kPedalHatGM)  n.noteNumber = prof.pedalHat;
+        else if (n.noteNumber == kOpenHatGM)   n.noteNumber = prof.openHat;
+        else if (n.noteNumber == kRideGM)      n.noteNumber = prof.ride;
+        else if (n.noteNumber == kRideBellGM)  n.noteNumber = prof.rideBell;
+        else if (n.noteNumber == kCrashGM)     n.noteNumber = prof.crash;
+        else if (n.noteNumber == kCrashAltGM)  n.noteNumber = prof.crashAlt;
+        else if (n.noteNumber == kChinaGM)     n.noteNumber = prof.china;
+        else if (n.noteNumber == kLowTomGM)    n.noteNumber = prof.lowTom;
+        else if (n.noteNumber == kMidTomGM)    n.noteNumber = prof.midTom;
+        else if (n.noteNumber == kHighTomGM)   n.noteNumber = prof.highTom;
+
+        n.velocity = juce::jlimit (0.01f, 1.0f, n.velocity * prof.velocityScale);
+    }
+    return p;
+}
+
+void AIDrumAudioProcessor::commitManualPatternAsRegion()
+{
+    aidrum::MidiPattern remapped;
+    {
+        std::lock_guard<std::mutex> lock (manualMutex);
+        remapped = manualPattern;
+    }
+    remapped = withActiveKitApplied (std::move (remapped));
+
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    arrangement.push_back (std::move (remapped));
+}
+
 bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) const
 {
     std::vector<aidrum::MidiPattern> snapshot;
+
+    if (manualModeActive.load (std::memory_order_acquire))
+    {
+        // Manual mode: export just the manual pattern, with active kit remap.
+        aidrum::MidiPattern manual;
+        {
+            std::lock_guard<std::mutex> lock (manualMutex);
+            manual = manualPattern;
+        }
+        snapshot.push_back (withActiveKitApplied (std::move (manual)));
+    }
+    else
     {
         std::lock_guard<std::mutex> lock (arrangementMutex);
         snapshot = arrangement;
@@ -309,6 +472,17 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                                                           double            bpm)
 {
     std::vector<aidrum::MidiPattern> snapshot;
+
+    if (manualModeActive.load (std::memory_order_acquire))
+    {
+        aidrum::MidiPattern manual;
+        {
+            std::lock_guard<std::mutex> lock (manualMutex);
+            manual = manualPattern;
+        }
+        snapshot.push_back (withActiveKitApplied (std::move (manual)));
+    }
+    else
     {
         std::lock_guard<std::mutex> lock (arrangementMutex);
         snapshot = arrangement;

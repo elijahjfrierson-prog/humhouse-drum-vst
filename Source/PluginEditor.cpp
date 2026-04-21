@@ -93,7 +93,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p)
 {
     setLookAndFeel (&gothicLnf);
-    setSize (860, 720);
+    setSize (960, 820);
 
     // Title
     {
@@ -122,6 +122,19 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         return s;
     });
     addAndMakeVisible (arrangementStrip);
+
+    // Manual grid (v0.8.0) — interactive 16-bar step sequencer.
+    manualGrid.provider    = [this] { return processorRef.getManualPattern(); };
+    manualGrid.onSetCell   = [this] (int note, int step, float vel)
+        { processorRef.setManualCell (note, step, vel); manualGrid.repaint(); };
+    manualGrid.onClearCell = [this] (int note, int step)
+        { processorRef.clearManualCell (note, step); manualGrid.repaint(); };
+    manualGrid.setNumBars (processorRef.getManualNumBars());
+    manualGrid.setTooltip ("MANUAL GRID \u2014 click cells to place kick / snare / tom / hat hits. "
+                           "Alt-click or right-click to erase. Drag to paint multiple cells. "
+                           "Works across all 16 bars; DRUM KIT remaps the timbre in your sampler.");
+    manualGrid.setVisible (false);
+    addChildComponent (manualGrid);
 
     // Rotary knobs
     auto addRotary = [this] (juce::Slider& s, juce::Label& l)
@@ -235,6 +248,39 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (undoButton);
     addAndMakeVisible (clearButton);
 
+    // MANUAL mode toggle — swaps the arrangement strip for the interactive grid.
+    styleSmallBtn (manualButton);
+    styleSmallBtn (clearManualButton);
+    styleSmallBtn (commitManualButton);
+    manualButton.setClickingTogglesState (true);
+    manualButton.onClick = [this]
+    {
+        const bool on = manualButton.getToggleState();
+        processorRef.setManualMode (on);
+        arrangementStrip.setVisible (! on);
+        manualGrid      .setVisible (on);
+        clearManualButton  .setVisible (on);
+        commitManualButton .setVisible (on);
+        undoButton  .setVisible (! on);
+        clearButton .setVisible (! on);
+        plusHelper.setText (on ? "MANUAL" : "APPEND", juce::dontSendNotification);
+        resized();
+        repaint();
+    };
+    clearManualButton.onClick = [this]
+    {
+        processorRef.clearManualPattern();
+        manualGrid.repaint();
+    };
+    commitManualButton.onClick = [this]
+    {
+        processorRef.commitManualPatternAsRegion();
+        plusButton.bump();
+    };
+    addAndMakeVisible (manualButton);
+    addChildComponent (clearManualButton);   // hidden until MANUAL is on
+    addChildComponent (commitManualButton);
+
     // SAVE MIDI — saves the whole arrangement.
     saveMidiButton.onClick = [this]
     {
@@ -284,6 +330,10 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     dragHandle      .setTooltip ("DRAG MIDI — hold and drag onto a DAW track to drop the full arrangement as a .mid file.");
     saveMidiButton  .setTooltip ("SAVE MIDI — export the full arrangement to a .mid file on disk.");
 
+    manualButton       .setTooltip ("MANUAL — 16-bar click-to-edit grid. Place kicks / snares / toms / hats yourself instead of letting the AI generate.");
+    clearManualButton  .setTooltip ("CLEAR GRID — wipe every cell in the manual pattern.");
+    commitManualButton .setTooltip ("APPEND TO ARR. — commit the current manual 16-bar pattern as a new region in the arrangement (with DRUM KIT remap).");
+
     // APVTS attachments
     auto& apvts = processorRef.getAPVTS();
     variationAttachment     = std::make_unique<SliderAttachment> (apvts, "variation",     variationSlider);
@@ -311,6 +361,8 @@ AIDrumAudioProcessorEditor::~AIDrumAudioProcessorEditor()
 void AIDrumAudioProcessorEditor::timerCallback()
 {
     plusButton.tickGlow();
+    if (manualGrid.isVisible())
+        manualGrid.repaint();
 }
 
 void AIDrumAudioProcessorEditor::paint (juce::Graphics& g)
@@ -387,14 +439,17 @@ void AIDrumAudioProcessorEditor::resized()
     plusHelper.setBounds (plusRect.getX() - 40, plusRect.getBottom() - 4,
                           plusRect.getWidth() + 80, 18);
 
-    // Left of +: UNDO and CLEAR stacked
+    // Left of +: either UNDO/CLEAR (AI mode) or CLEAR GRID/APPEND TO ARR. (manual mode)
     auto leftCluster = juce::Rectangle<int> (action.getX() + 12, action.getY() + 14,
                                              plusRect.getX() - action.getX() - 24,
                                              action.getHeight() - 28);
     const int lBtnH = (leftCluster.getHeight() - 8) / 2;
-    undoButton .setBounds (leftCluster.removeFromTop (lBtnH).reduced (2));
-    leftCluster.removeFromTop (8);
-    clearButton.setBounds (leftCluster.removeFromTop (lBtnH).reduced (2));
+    undoButton        .setBounds (leftCluster.getX(), leftCluster.getY(),
+                                  leftCluster.getWidth(), lBtnH);
+    clearManualButton .setBounds (undoButton.getBounds());
+    clearButton       .setBounds (leftCluster.getX(), leftCluster.getY() + lBtnH + 8,
+                                  leftCluster.getWidth(), lBtnH);
+    commitManualButton.setBounds (clearButton.getBounds());
 
     // Right of +: DRAG-MIDI + SAVE-MIDI stacked
     auto rightCluster = juce::Rectangle<int> (plusRect.getRight() + 12,
@@ -408,6 +463,13 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (6);
 
-    // Arrangement strip fills the rest (piano-roll grid below +).
+    // MANUAL mode toggle bar — always visible above the strip/grid.
+    auto manualBar = area.removeFromTop (30);
+    manualButton.setBounds (manualBar.removeFromLeft (140).reduced (2));
+
+    area.removeFromTop (4);
+
+    // Arrangement strip / manual grid share the remaining area.
     arrangementStrip.setBounds (area);
+    manualGrid      .setBounds (area);
 }

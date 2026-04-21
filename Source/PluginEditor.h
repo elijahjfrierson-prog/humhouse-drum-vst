@@ -2,6 +2,7 @@
 
 #include "ArrangementStrip.h"
 #include "GothicLookAndFeel.h"
+#include "ManualGrid.h"
 #include "PluginProcessor.h"
 
 #include <JuceHeader.h>
@@ -54,6 +55,7 @@ private:
     juce::Label               subtitleLabel { {}, "\u2020 hum. house. haunt. \u2020" };
 
     aidrum::ArrangementStrip  arrangementStrip;
+    aidrum::ManualGrid        manualGrid;
 
     // Main knobs.
     juce::Slider              variationSlider, complexitySlider, velocitySlider, humanizeSlider;
@@ -85,6 +87,11 @@ private:
     juce::TextButton          clearButton    { "CLEAR" };
     juce::TextButton          saveMidiButton { "SAVE MIDI" };
     MidiDragHandle            dragHandle     { processorRef };
+
+    // v0.8.0 Manual mode.
+    juce::TextButton          manualButton   { "MANUAL" };
+    juce::TextButton          clearManualButton { "CLEAR GRID" };
+    juce::TextButton          commitManualButton { "APPEND TO ARR." };
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 
