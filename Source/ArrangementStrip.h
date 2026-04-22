@@ -48,8 +48,18 @@ namespace aidrum
         // allowed; the `+` button becomes the only interactive element.
         std::function<void (int regionIndex)> onDeleteRegion;
 
+        // v1.6.1-rc.4 — per-note click editing. Left-click on a drawn note
+        // selects it (highlighted). Right-click or Alt-click on a selected
+        // note calls onDeleteNote. Ctrl+click duplicates the clicked note.
+        std::function<void (int regionIndex, int noteIndex)> onDeleteNote;
+        std::function<void (int regionIndex, int noteIndex)> onDuplicateNote;
+
         void paint (juce::Graphics& g) override
         {
+            // Reset the click-map; rebuilt below as notes are drawn so
+            // mouseDown can hit-test individual hits.
+            noteHits.clear();
+
             auto bounds = getLocalBounds().toFloat().reduced (0.5f);
 
             // Gothic panel
@@ -181,16 +191,32 @@ namespace aidrum
                     const float v    = juce::jlimit (0.15f, 1.0f, note.velocity);
                     const auto  base = juce::Colour (kLanes[lane].col);
 
+                    // Pad the hit-box horizontally so short hits (w~3px)
+                    // are still easy to click.
+                    const juce::Rectangle<float> drawRect (x, y, w, h);
+                    const juce::Rectangle<float> hitRect  (x - 2.0f, y - 2.0f,
+                                                           std::max (8.0f, w + 4.0f),
+                                                           h + 4.0f);
+                    const int  noteIdx      = (int) (&note - region.notes.data());
+                    const bool isSelected   = (selectedRegion == (int) i && selectedNote == noteIdx);
+                    noteHits.push_back ({ (int) i, noteIdx, hitRect });
+
                     // soft outer glow
                     g.setColour (base.withAlpha (0.12f + 0.30f * v));
                     g.fillRoundedRectangle (
                         juce::Rectangle<float> (x - 1.5f, y - 1.5f, w + 3.0f, h + 3.0f), 4.0f);
                     // solid block, brightness scales with velocity
                     g.setColour (base.withAlpha (0.55f + 0.45f * v));
-                    g.fillRoundedRectangle (juce::Rectangle<float> (x, y, w, h), 3.0f);
+                    g.fillRoundedRectangle (drawRect, 3.0f);
                     // thin highlight top edge for a 3-D-ish feel
                     g.setColour (base.withAlpha (0.25f + 0.30f * v).brighter (0.4f));
                     g.drawLine (x + 1.0f, y + 0.5f, x + w - 1.0f, y + 0.5f, 1.0f);
+
+                    if (isSelected)
+                    {
+                        g.setColour (juce::Colour (GothicPalette::kBone).withAlpha (0.95f));
+                        g.drawRoundedRectangle (drawRect.expanded (1.5f), 4.0f, 1.8f);
+                    }
                 }
 
                 // v1.6.1-rc.3 — when HIGHLIGHT ALL is armed, draw a bright
@@ -262,6 +288,48 @@ namespace aidrum
                                     2.5f, btnR * 0.9f, 1.0f);
         }
 
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            // v1.6.1-rc.4 — per-note click editing. First see if the user
+            // clicked a drawn note; if so, handle select / delete /
+            // duplicate BEFORE the old region-delete path fires.
+            for (auto it = noteHits.rbegin(); it != noteHits.rend(); ++it)
+            {
+                if (! it->rect.contains (e.position))
+                    continue;
+
+                if ((e.mods.isRightButtonDown() || e.mods.isAltDown())
+                    && onDeleteNote != nullptr)
+                {
+                    onDeleteNote (it->regionIdx, it->noteIdx);
+                    selectedRegion = -1;
+                    selectedNote   = -1;
+                    repaint();
+                    return;
+                }
+                if (e.mods.isCtrlDown() || e.mods.isCommandDown())
+                {
+                    if (onDuplicateNote != nullptr)
+                        onDuplicateNote (it->regionIdx, it->noteIdx);
+                    repaint();
+                    return;
+                }
+                selectedRegion = it->regionIdx;
+                selectedNote   = it->noteIdx;
+                repaint();
+                return;
+            }
+
+            // No note hit — fall back to the original region-delete path.
+            selectedRegion = -1;
+            selectedNote   = -1;
+
+            const auto inner = getLocalBounds().toFloat().reduced (10.5f, 8.5f);
+            if (e.mods.isRightButtonDown() || e.mods.isAltDown())
+                handleRegionDelete (e.position, inner);
+            repaint();
+        }
+
         void mouseUp (const juce::MouseEvent& e) override
         {
             const auto inner = getLocalBounds().toFloat().reduced (10.5f, 8.5f);
@@ -295,7 +363,68 @@ namespace aidrum
             }
         }
 
+        // v1.6.1-rc.4 — keyboard handler: Delete removes the selected
+        // note, Ctrl+D duplicates it. The editor forwards key events here
+        // by making this component a keyboard focus target when the
+        // arrangement is showing.
+        bool keyPressed (const juce::KeyPress& key) override
+        {
+            if (selectedRegion < 0 || selectedNote < 0)
+                return false;
+
+            if (key == juce::KeyPress::deleteKey
+                || key == juce::KeyPress::backspaceKey)
+            {
+                if (onDeleteNote) onDeleteNote (selectedRegion, selectedNote);
+                selectedRegion = -1;
+                selectedNote   = -1;
+                repaint();
+                return true;
+            }
+            if (key.getTextCharacter() == 'd' || key.getTextCharacter() == 'D')
+            {
+                if (onDuplicateNote) onDuplicateNote (selectedRegion, selectedNote);
+                repaint();
+                return true;
+            }
+            return false;
+        }
+
+        bool isSelectedNoteSet() const noexcept
+        {
+            return selectedRegion >= 0 && selectedNote >= 0;
+        }
+
     private:
+        struct NoteHit
+        {
+            int regionIdx;
+            int noteIdx;
+            juce::Rectangle<float> rect;
+        };
+
+        void handleRegionDelete (juce::Point<float> p,
+                                 juce::Rectangle<float> inner)
+        {
+            if (onDeleteRegion == nullptr || last.totalBeats <= 0.0
+                || last.regions.empty())
+                return;
+            auto gridRect = inner.withTrimmedRight (getAppendButtonBounds (inner).getWidth() + 10.0f)
+                                 .withTrimmedLeft  (54.0f + 6.0f)
+                                 .withTrimmedTop   (14.0f);
+            if (! gridRect.contains (p)) return;
+            const double total = std::max (1.0, last.totalBeats);
+            const double rel = (p.x - gridRect.getX()) / gridRect.getWidth();
+            const double beat = juce::jlimit (0.0, total - 1e-6, rel * total);
+            double acc = 0.0;
+            for (size_t i = 0; i < last.regions.size(); ++i)
+            {
+                const double len = std::max (0.001, last.regions[i].lengthInBeats);
+                if (beat < acc + len) { onDeleteRegion ((int) i); return; }
+                acc += len;
+            }
+        }
+
         static juce::Rectangle<float> getAppendButtonBounds (juce::Rectangle<float> inner)
         {
             const float size = juce::jmin (28.0f, inner.getHeight() * 0.34f);
@@ -324,5 +453,8 @@ namespace aidrum
         std::function<Snapshot()> provider;
         bool                      highlightAll = false;
         Snapshot                  last;
+        int                       selectedRegion = -1;
+        int                       selectedNote   = -1;
+        std::vector<NoteHit>      noteHits;
     };
 }

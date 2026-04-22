@@ -70,6 +70,12 @@ namespace
     constexpr const char* kParamFillComplexity  = "fillComplexity";
     constexpr const char* kParamStepDiv         = "stepDiv";
 
+    // v1.6.1-rc.4 — arrangement playback time scale (½× / 1× / 2×).
+    // Affects the rate the playhead advances through the arrangement so
+    // the user can audition HALF TIME / NORMAL / DOUBLE TIME without
+    // changing the host BPM.
+    constexpr const char* kParamTimeScale       = "timeScale";
+
     const juce::StringArray kBundledKitChoices {
         "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash"
     };
@@ -77,6 +83,20 @@ namespace
     const juce::StringArray kStepDivChoices {
         "1/16", "1/32", "1/64"
     };
+
+    const juce::StringArray kTimeScaleChoices {
+        "HALF", "NORMAL", "DOUBLE"
+    };
+
+    inline double timeScaleFactorForChoice (int choiceIndex) noexcept
+    {
+        switch (choiceIndex)
+        {
+            case 0:  return 0.5;   // HALF
+            case 2:  return 2.0;   // DOUBLE
+            default: return 1.0;   // NORMAL
+        }
+    }
 
     const juce::StringArray kPatternLengthChoices {
         "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars"
@@ -289,6 +309,11 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamStepDiv, 1 }, "Step Div",
         kStepDivChoices, 0));
+
+    // v1.6.1-rc.4 — arrangement playback time scale.
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { kParamTimeScale, 1 }, "Time Scale",
+        kTimeScaleChoices, 1)); // default: NORMAL
 
     return { params.begin(), params.end() };
 }
@@ -562,6 +587,52 @@ void AIDrumAudioProcessor::remapLastRegionToKit (int kitIndex)
     if (arrangement.empty())
         return;
     arrangement.back() = lib[(size_t) libIdx].pattern;
+}
+
+// ============================================================================
+// v1.6.1-rc.4 per-note editing
+// ============================================================================
+
+void AIDrumAudioProcessor::deleteNoteInRegion (int regionIndex, int noteIndex)
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (regionIndex < 0 || regionIndex >= static_cast<int> (arrangement.size()))
+        return;
+    auto& region = arrangement[(size_t) regionIndex];
+    if (noteIndex < 0 || noteIndex >= static_cast<int> (region.notes.size()))
+        return;
+    region.notes.erase (region.notes.begin() + noteIndex);
+}
+
+void AIDrumAudioProcessor::duplicateNoteInRegion (int regionIndex, int noteIndex)
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (regionIndex < 0 || regionIndex >= static_cast<int> (arrangement.size()))
+        return;
+    auto& region = arrangement[(size_t) regionIndex];
+    if (noteIndex < 0 || noteIndex >= static_cast<int> (region.notes.size()))
+        return;
+    aidrum::MidiNote copy = region.notes[(size_t) noteIndex];
+    // nudge 1 sixteenth to the right so it's audible; clamp to region end.
+    copy.startBeat = std::min (region.lengthInBeats - 0.05,
+                               copy.startBeat + 0.25);
+    region.notes.push_back (copy);
+}
+
+void AIDrumAudioProcessor::addNoteToRegion (int regionIndex, int noteNumber,
+                                            double startBeat, double lengthBeats,
+                                            float velocity)
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (regionIndex < 0 || regionIndex >= static_cast<int> (arrangement.size()))
+        return;
+    auto& region = arrangement[(size_t) regionIndex];
+    aidrum::MidiNote n;
+    n.noteNumber = juce::jlimit (0, 127, noteNumber);
+    n.velocity   = juce::jlimit (0.0f, 1.0f, velocity);
+    n.startBeat  = juce::jlimit (0.0, region.lengthInBeats - 0.01, startBeat);
+    n.lengthBeat = std::max (0.05, lengthBeats);
+    region.notes.push_back (n);
 }
 
 // ============================================================================
@@ -888,8 +959,15 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
     if (total <= 0.0)
         return;
 
+    // v1.6.1-rc.4 — arrangement time scale (HALF / NORMAL / DOUBLE). The
+    // playhead advances `scale ×` faster through the arrangement so the
+    // full composition audibly halves or doubles in speed without the
+    // user changing the host BPM.
+    const double timeScale = timeScaleFactorForChoice (
+        (int) apvts.getRawParameterValue (kParamTimeScale)->load());
     const double secondsPerBeat = 60.0 / std::max (1.0, bpm);
-    const double blockBeats     = (static_cast<double> (numSamples) / sampleRate) / secondsPerBeat;
+    const double blockBeats     = (static_cast<double> (numSamples) / sampleRate)
+                                / secondsPerBeat * timeScale;
 
     const double blockStartBeat = playheadBeats.load (std::memory_order_acquire);
     const double blockEndBeat   = blockStartBeat + blockBeats;
@@ -917,7 +995,7 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                 if (onBeat >= winStart && onBeat < winEnd)
                 {
                     const int sample = static_cast<int> (
-                        (onBeat - blockStartBeat) * secondsPerBeat * sampleRate);
+                        (onBeat - blockStartBeat) * secondsPerBeat * sampleRate / timeScale);
                     midiOut.addEvent (
                         juce::MidiMessage::noteOn (10, note.noteNumber,
                             static_cast<juce::uint8> (
@@ -928,7 +1006,7 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                 if (offBeat >= winStart && offBeat < winEnd)
                 {
                     const int sample = static_cast<int> (
-                        (offBeat - blockStartBeat) * secondsPerBeat * sampleRate);
+                        (offBeat - blockStartBeat) * secondsPerBeat * sampleRate / timeScale);
                     midiOut.addEvent (juce::MidiMessage::noteOff (10, note.noteNumber),
                                       juce::jlimit (0, numSamples - 1, sample));
                 }

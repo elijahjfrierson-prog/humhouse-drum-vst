@@ -485,6 +485,18 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         processorRef.deleteRegion (idx);
         arrangementStrip.repaint();
     };
+    // v1.6.1-rc.4 — per-note click editing in the arrangement.
+    arrangementStrip.onDeleteNote = [this] (int region, int note)
+    {
+        processorRef.deleteNoteInRegion (region, note);
+        arrangementStrip.repaint();
+    };
+    arrangementStrip.onDuplicateNote = [this] (int region, int note)
+    {
+        processorRef.duplicateNoteInRegion (region, note);
+        arrangementStrip.repaint();
+    };
+    arrangementStrip.setWantsKeyboardFocus (true);
     addAndMakeVisible (arrangementStrip);
 
     // Manual grid (v0.8.0) — interactive 16-bar step sequencer.
@@ -643,6 +655,14 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     halfTimeButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
     halfTimeButton.setTooltip ("HALF-TIME — backbeat moves to 3 instead of 2 & 4, giving every groove a slower, heavier feel.");
     addAndMakeVisible (halfTimeButton);
+
+    // v1.6.1-rc.4 — TIME SCALE: HALF / NORMAL / DOUBLE playback speed.
+    timeScaleBox.addItem ("HALF",   1);
+    timeScaleBox.addItem ("NORMAL", 2);
+    timeScaleBox.addItem ("DOUBLE", 3);
+    timeScaleBox.setSelectedId (2, juce::dontSendNotification);
+    timeScaleBox.setTooltip ("TIME — playback speed of the arrangement. HALF = half-time, NORMAL = 1×, DOUBLE = double-time.");
+    styleCombo (timeScaleBox, timeScaleLabel);
 
 
     // v1.6.1-rc.3 — APPEND (+) button now picks a random groove from
@@ -957,6 +977,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     roomAttachment          = std::make_unique<ComboAttachment>  (apvts, "room",          roomBox);
     roomAmountAttachment    = std::make_unique<SliderAttachment> (apvts, "roomAmount",    roomAmountSlider);
     halfTimeAttachment      = std::make_unique<ButtonAttachment> (apvts, "halfTime",      halfTimeButton);
+    timeScaleAttachment     = std::make_unique<ComboAttachment>   (apvts, "timeScale",     timeScaleBox);
 
     startTimerHz (30);
 }
@@ -1043,6 +1064,7 @@ void AIDrumAudioProcessorEditor::resized()
     placeCombo (modeBox);
     placeCombo (hiHatBox);
     placeCombo (stepDivBox);
+    placeCombo (timeScaleBox);
     halfTimeButton.setBounds (rightCombos.removeFromTop (28).reduced (0, 2));
 
     area.removeFromTop (8);

@@ -140,6 +140,10 @@ private:
     // Toggle.
     juce::TextButton          halfTimeButton { "HALF-TIME" };
 
+    // v1.6.1-rc.4 — arrangement playback speed (HALF / NORMAL / DOUBLE).
+    juce::ComboBox            timeScaleBox;
+    juce::Label               timeScaleLabel { {}, "TIME" };
+
     // Action buttons.
     PlusButton                plusButton;
     juce::Label               plusHelper     { {}, "APPEND" };
@@ -196,6 +200,7 @@ private:
     std::unique_ptr<ComboAttachment>  roomAttachment;
     std::unique_ptr<SliderAttachment> roomAmountAttachment;
     std::unique_ptr<ButtonAttachment> halfTimeAttachment;
+    std::unique_ptr<ComboAttachment>  timeScaleAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AIDrumAudioProcessorEditor)
 };

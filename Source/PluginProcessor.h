@@ -97,6 +97,15 @@ public:
     // No-op if the arrangement is empty.
     void remapLastRegionToKit (int kitIndex);
 
+    // v1.6.1-rc.4 — per-note editing in the arrangement. Lets the user
+    // click a single snare hit in the arrangement strip and delete or
+    // duplicate it without touching the rest of the region. Indices are
+    // bounds-checked; out-of-range calls are no-ops.
+    void deleteNoteInRegion (int regionIndex, int noteIndex);
+    void duplicateNoteInRegion (int regionIndex, int noteIndex);
+    void addNoteToRegion (int regionIndex, int noteNumber,
+                          double startBeat, double lengthBeats, float velocity);
+
     // v1.6.0 — COPY / PASTE region. Copy stores a snapshot of the region
     // at `index`; paste appends the stored snapshot as a new region at the
     // end of the arrangement. Used by the arrangement strip's
