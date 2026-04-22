@@ -167,4 +167,17 @@ namespace aidrum
             g.drawRoundedRectangle (r, 8.0f, 1.0f);
         }
     };
+
+    // v1.6.1-rc.5 — thinner kerning + smaller cap so PLAY / PAUSE /
+    // STOP labels always fit inside their compact transport boxes.
+    class CompactGothicLookAndFeel : public GothicLookAndFeel
+    {
+    public:
+        juce::Font getTextButtonFont (juce::TextButton&, int h) override
+        {
+            auto f = juce::Font (juce::FontOptions ((float) h * 0.38f, juce::Font::bold));
+            f.setExtraKerningFactor (0.02f);
+            return f;
+        }
+    };
 }

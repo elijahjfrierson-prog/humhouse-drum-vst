@@ -496,6 +496,14 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         processorRef.duplicateNoteInRegion (region, note);
         arrangementStrip.repaint();
     };
+    // v1.6.1-rc.5 — left-click an empty cell to drop a new note
+    // (step-sequencer toggle). Drag across cells to paint a run.
+    arrangementStrip.onAddNote = [this] (int region, double startBeat,
+                                         int noteNumber, float velocity)
+    {
+        processorRef.addNoteToRegion (region, noteNumber, startBeat, 0.25, velocity);
+        arrangementStrip.repaint();
+    };
     arrangementStrip.setWantsKeyboardFocus (true);
     addAndMakeVisible (arrangementStrip);
 
@@ -700,6 +708,12 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     styleSmallBtn (playButton);
     styleSmallBtn (pauseButton);
     styleSmallBtn (stopButton);
+
+    // v1.6.1-rc.5 — use a compact LookAndFeel just for the transport
+    // trio so PLAY / PAUSE / STOP always fit inside their boxes.
+    playButton .setLookAndFeel (&compactLnf);
+    pauseButton.setLookAndFeel (&compactLnf);
+    stopButton .setLookAndFeel (&compactLnf);
 
     undoButton     .setTooltip ("UNDO — remove the last appended region from the arrangement.");
     clearButton    .setTooltip ("CLEAR — wipe every region from the arrangement and rewind to bar 1.");
@@ -985,6 +999,9 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
 AIDrumAudioProcessorEditor::~AIDrumAudioProcessorEditor()
 {
     stopTimer();
+    playButton .setLookAndFeel (nullptr);
+    pauseButton.setLookAndFeel (nullptr);
+    stopButton .setLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
 }
 

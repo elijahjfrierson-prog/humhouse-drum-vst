@@ -48,11 +48,17 @@ namespace aidrum
         // allowed; the `+` button becomes the only interactive element.
         std::function<void (int regionIndex)> onDeleteRegion;
 
-        // v1.6.1-rc.4 — per-note click editing. Left-click on a drawn note
-        // selects it (highlighted). Right-click or Alt-click on a selected
-        // note calls onDeleteNote. Ctrl+click duplicates the clicked note.
+        // v1.6.1-rc.5 — step-sequencer toggle semantics. Left-click on a
+        // drawn note immediately deletes it (same motion = toggle off).
+        // Left-click on an empty grid cell drops a new note at that lane
+        // and beat (toggle on). Ctrl+click still duplicates a clicked
+        // note; right-click / alt-click on empty grid deletes the whole
+        // region under the cursor.
         std::function<void (int regionIndex, int noteIndex)> onDeleteNote;
         std::function<void (int regionIndex, int noteIndex)> onDuplicateNote;
+        // New in rc.5 — (regionIndex, localStartBeat, noteNumber, velocity)
+        std::function<void (int regionIndex, double localStartBeat,
+                            int noteNumber, float velocity)> onAddNote;
 
         void paint (juce::Graphics& g) override
         {
@@ -72,6 +78,8 @@ namespace aidrum
             const auto appendButton = getAppendButtonBounds (inner);
             inner = inner.withTrimmedRight (appendButton.getWidth() + 10.0f);
 
+            cachedRegionOffsets.clear();
+
             // v1.6.1-rc.2 — reserve a narrow column on the left for per-lane
             // labels (CRASH / RIDE / HI-HAT / TOM / SNARE / KICK). 6 lanes
             // now — RIDE is explicit instead of being lumped with crashes.
@@ -84,6 +92,9 @@ namespace aidrum
 
             const double totalBeats = std::max (1.0, last.totalBeats);
             const float  pxPerBeat  = inner.getWidth() / (float) totalBeats;
+
+            cachedGridInner = inner;
+            cachedPxPerBeat = pxPerBeat;
 
             // --- v1.6.1-rc.2 lane definitions — 6 fixed rows, each a distinct
             // colour. Top → bottom: CRASH, RIDE, HI-HAT, TOM, SNARE, KICK.
@@ -137,20 +148,28 @@ namespace aidrum
                 g.drawLine (inner.getX(), yTop, inner.getRight(), yTop, 0.6f);
             }
 
-            // --- Background beat grid (faint 16ths, brighter on each beat) --
-            g.setColour (juce::Colour (GothicPalette::kPanelEdge).withAlpha (0.25f));
-            const int totalSixteenths = (int) std::ceil (totalBeats * 4.0);
-            for (int s = 0; s <= totalSixteenths; ++s)
+            // --- Background beat grid (Logic-style 1/4-note cells) --------
+            // Alternating cell shading every quarter-note so the grid
+            // reads as discrete beat cells at a glance, with brighter
+            // vertical lines on each beat and bars.
+            const int totalBeatsCeil = (int) std::ceil (totalBeats);
+            for (int b = 0; b < totalBeatsCeil; ++b)
             {
-                const float x = inner.getX() + (float) (s * 0.25) * pxPerBeat;
-                g.drawVerticalLine ((int) x, inner.getY(), inner.getBottom());
+                if ((b & 1) == 0)
+                {
+                    const float x0 = inner.getX() + (float) b * pxPerBeat;
+                    const float x1 = inner.getX() + (float) (b + 1) * pxPerBeat;
+                    g.setColour (juce::Colour (GothicPalette::kPanelEdge).withAlpha (0.08f));
+                    g.fillRect (juce::Rectangle<float> (x0, inner.getY(),
+                                                        x1 - x0, inner.getHeight()));
+                }
             }
             g.setColour (juce::Colour (GothicPalette::kPanelEdge).withAlpha (0.55f));
-            for (int b = 0; b <= (int) std::ceil (totalBeats); ++b)
+            for (int b = 0; b <= totalBeatsCeil; ++b)
             {
                 const float x = inner.getX() + (float) b * pxPerBeat;
                 g.drawLine (x, inner.getY(), x, inner.getBottom(),
-                            (b % 4 == 0) ? 1.2f : 0.6f);
+                            (b % 4 == 0) ? 1.3f : 0.7f);
             }
 
             // --- Render each region end-to-end + vertical dividers --------
@@ -161,6 +180,8 @@ namespace aidrum
                 const double regionLen = std::max (0.001, region.lengthInBeats);
                 const float  regionX0  = inner.getX()
                                          + (float) regionOffset * pxPerBeat;
+
+                cachedRegionOffsets.push_back (regionOffset);
 
                 // Region label at top-left of its cell
                 if (last.regions.size() > 1)
@@ -290,23 +311,14 @@ namespace aidrum
 
         void mouseDown (const juce::MouseEvent& e) override
         {
-            // v1.6.1-rc.4 — per-note click editing. First see if the user
-            // clicked a drawn note; if so, handle select / delete /
-            // duplicate BEFORE the old region-delete path fires.
+            // v1.6.1-rc.5 — step-sequencer toggle. Left-click on a drawn
+            // note deletes it; left-click on an empty grid cell drops a
+            // new note at that lane / beat. Ctrl+click duplicates.
             for (auto it = noteHits.rbegin(); it != noteHits.rend(); ++it)
             {
                 if (! it->rect.contains (e.position))
                     continue;
 
-                if ((e.mods.isRightButtonDown() || e.mods.isAltDown())
-                    && onDeleteNote != nullptr)
-                {
-                    onDeleteNote (it->regionIdx, it->noteIdx);
-                    selectedRegion = -1;
-                    selectedNote   = -1;
-                    repaint();
-                    return;
-                }
                 if (e.mods.isCtrlDown() || e.mods.isCommandDown())
                 {
                     if (onDuplicateNote != nullptr)
@@ -314,25 +326,69 @@ namespace aidrum
                     repaint();
                     return;
                 }
-                selectedRegion = it->regionIdx;
-                selectedNote   = it->noteIdx;
+                // Left-click (or right/alt): delete, and enter erase-drag mode.
+                if (onDeleteNote != nullptr)
+                    onDeleteNote (it->regionIdx, it->noteIdx);
+                selectedRegion = -1;
+                selectedNote   = -1;
+                dragMode = DragMode::Erase;
                 repaint();
                 return;
             }
 
-            // No note hit — fall back to the original region-delete path.
+            // No note hit — fall back to either paint-a-note (left-click)
+            // or delete-the-region (right/alt-click).
             selectedRegion = -1;
             selectedNote   = -1;
 
             const auto inner = getLocalBounds().toFloat().reduced (10.5f, 8.5f);
             if (e.mods.isRightButtonDown() || e.mods.isAltDown())
+            {
                 handleRegionDelete (e.position, inner);
+            }
+            else if (onAddNote != nullptr)
+            {
+                if (handleAddNote (e.position, /*suppressDuplicates*/ false))
+                    dragMode = DragMode::Paint;
+            }
             repaint();
+        }
+
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            // v1.6.1-rc.5 — drag to paint or erase across cells. The
+            // dragMode latched in mouseDown decides whether we add or
+            // delete as the cursor visits new grid cells.
+            if (dragMode == DragMode::None) return;
+
+            if (dragMode == DragMode::Paint)
+            {
+                // Only paint if the cursor is over an empty cell right now.
+                for (auto it = noteHits.rbegin(); it != noteHits.rend(); ++it)
+                    if (it->rect.contains (e.position))
+                        return;
+                handleAddNote (e.position, /*suppressDuplicates*/ true);
+                return;
+            }
+
+            // Erase mode — delete any note the cursor is now over.
+            for (auto it = noteHits.rbegin(); it != noteHits.rend(); ++it)
+            {
+                if (! it->rect.contains (e.position)) continue;
+                if (onDeleteNote != nullptr)
+                    onDeleteNote (it->regionIdx, it->noteIdx);
+                repaint();
+                return;
+            }
         }
 
         void mouseUp (const juce::MouseEvent& e) override
         {
             const auto inner = getLocalBounds().toFloat().reduced (10.5f, 8.5f);
+            dragMode = DragMode::None;
+            lastAddedRegion = -1;
+            lastAddedStepBeat = -1.0;
+            lastAddedNote = -1;
             if (onAppend != nullptr && getAppendButtonBounds (inner).contains (e.position))
             {
                 onAppend();
@@ -403,6 +459,69 @@ namespace aidrum
             juce::Rectangle<float> rect;
         };
 
+        // v1.6.1-rc.5 — convert a click position to (region, localBeat,
+        // midiNote) and emit onAddNote. Returns true on success so
+        // mouseDown knows to enter paint-drag mode.
+        bool handleAddNote (juce::Point<float> p, bool suppressDuplicates)
+        {
+            if (onAddNote == nullptr || cachedPxPerBeat <= 0.0f
+                || cachedRegionOffsets.empty())
+                return false;
+            if (! cachedGridInner.contains (p)) return false;
+
+            // Lane → midi note. Order must mirror laneFor() in paint().
+            //  0=CRASH(49), 1=RIDE(51), 2=HI-HAT(42), 3=TOM(45),
+            //  4=SNARE(38), 5=KICK(36)
+            static constexpr int kLaneNote[6] = { 49, 51, 42, 45, 38, 36 };
+
+            const float laneH = cachedGridInner.getHeight() / 6.0f;
+            int lane = (int) ((p.y - cachedGridInner.getY()) / laneH);
+            lane = juce::jlimit (0, 5, lane);
+
+            const double totalBeats = std::max (1.0, last.totalBeats);
+            const double absBeat = juce::jlimit (
+                0.0,
+                totalBeats - 1e-4,
+                (p.x - cachedGridInner.getX()) / (double) cachedPxPerBeat);
+
+            // Snap to quarter notes (Logic-style beat cells).
+            const double snapped = std::floor (absBeat);
+
+            // Figure out which region this beat lives in.
+            int regionIdx = -1;
+            double regionStart = 0.0;
+            for (size_t i = 0; i < last.regions.size(); ++i)
+            {
+                const double start = cachedRegionOffsets[i];
+                const double len = std::max (0.001, last.regions[i].lengthInBeats);
+                if (snapped < start + len)
+                {
+                    regionIdx = (int) i;
+                    regionStart = start;
+                    break;
+                }
+            }
+            if (regionIdx < 0) return false;
+
+            const double localBeat = juce::jmax (0.0, snapped - regionStart);
+            const int    noteNumber = kLaneNote[lane];
+
+            if (suppressDuplicates
+                && regionIdx == lastAddedRegion
+                && std::abs (localBeat - lastAddedStepBeat) < 1e-3
+                && noteNumber == lastAddedNote)
+            {
+                return false;
+            }
+
+            onAddNote (regionIdx, localBeat, noteNumber, 0.85f);
+            lastAddedRegion = regionIdx;
+            lastAddedStepBeat = localBeat;
+            lastAddedNote = noteNumber;
+            repaint();
+            return true;
+        }
+
         void handleRegionDelete (juce::Point<float> p,
                                  juce::Rectangle<float> inner)
         {
@@ -456,5 +575,18 @@ namespace aidrum
         int                       selectedRegion = -1;
         int                       selectedNote   = -1;
         std::vector<NoteHit>      noteHits;
+
+        // v1.6.1-rc.5 — geometry cached from paint() so mouseDown/drag
+        // can map cursor coords back to (region, beat, lane) without
+        // recomputing the layout.
+        juce::Rectangle<float>  cachedGridInner;
+        float                   cachedPxPerBeat = 0.0f;
+        std::vector<double>     cachedRegionOffsets;
+
+        enum class DragMode { None, Paint, Erase };
+        DragMode dragMode        = DragMode::None;
+        int      lastAddedRegion = -1;
+        double   lastAddedStepBeat = -1.0;
+        int      lastAddedNote   = -1;
     };
 }

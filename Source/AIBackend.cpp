@@ -355,66 +355,69 @@ namespace aidrum
         switch (k)
         {
             case BundledKit::PopRock:
+                // v1.6.1-rc.5 — truly simple boom-boom-bap at cx=0.25.
                 // Classic straight backbeat: kick on 1 + 3, snare on 2 + 4.
-                // As complexity rises, add the "and of 3" kick (classic pop-rock
-                // pickup) then the "e of 4" ghost.
-                p.extraKicks = { { 10, 0.90f, 0.45f }, { 8,  0.85f, 0.75f } };
-                p.hatEighthGate    = 0.12f;
-                p.hatSixteenthGate = 0.60f;
-                p.ghostGate        = 0.35f;
-                p.ghostScale       = 1.0f;
+                // COMPLEXITY additively layers: 1/8 hats (>0.40),
+                // "and of 3" kick (>0.55), ghost snares (>0.65),
+                // 1/16 hats (>0.80).
+                p.extraKicks = { { 10, 0.90f, 0.55f }, { 8,  0.85f, 0.80f } };
+                p.hatEighthGate    = 0.40f;
+                p.hatSixteenthGate = 0.80f;
+                p.ghostGate        = 0.65f;
+                p.ghostScale       = 0.9f;
                 break;
 
             case BundledKit::NuRock:
-                // Syncopated: kick on 1, "and of 2", 3, "and of 3".
-                p.extraKicks = { { 6,  0.95f, 0.25f },   // "and of 2"
-                                 { 10, 0.90f, 0.35f },   // "and of 3"
-                                 { 14, 0.80f, 0.65f } }; // "and of 4"
-                p.hatEighthGate    = 0.10f;
-                p.hatSixteenthGate = 0.45f;
-                p.ghostGate        = 0.30f;
-                p.ghostScale       = 1.1f;
+                // v1.6.1-rc.5 — starts as a plain backbeat; syncopation
+                // grows as cx rises past 0.45.
+                p.extraKicks = { { 6,  0.95f, 0.50f },   // "and of 2"
+                                 { 10, 0.90f, 0.65f },   // "and of 3"
+                                 { 14, 0.80f, 0.85f } }; // "and of 4"
+                p.hatEighthGate    = 0.40f;
+                p.hatSixteenthGate = 0.75f;
+                p.ghostGate        = 0.60f;
+                p.ghostScale       = 0.95f;
                 p.variationSideStick = 0.25f;
                 break;
 
             case BundledKit::AltRock:
-                // Laid-back grunge: snare pulled late, kick a hair behind,
-                // sparse ghosts. Less 1/16 hat even at high complexity.
-                p.extraKicks = { { 10, 0.85f, 0.55f } }; // "and of 3" comes in late
+                // v1.6.1-rc.5 — grunge starts sparse (1/4 hats + backbeat).
+                p.extraKicks = { { 10, 0.85f, 0.70f } }; // "and of 3" only high cx
                 p.snareLayback = -0.012;
                 p.kickLayback  = -0.006;
-                p.hatEighthGate    = 0.20f;
-                p.hatSixteenthGate = 0.75f;   // rarely goes to 1/16
-                p.ghostGate        = 0.45f;
-                p.ghostScale       = 0.75f;
+                p.hatEighthGate    = 0.45f;
+                p.hatSixteenthGate = 0.90f;   // almost never 1/16
+                p.ghostGate        = 0.70f;
+                p.ghostScale       = 0.7f;
                 break;
 
             case BundledKit::IndieLofi:
-                // Half-time hip-hop feel: kick on 1, snare on 3, loads of room.
-                p.extraKicks = { { 10, 0.80f, 0.50f }, // "and of 3"
-                                 { 3,  0.75f, 0.60f }  // "e of 1" pickup
+                // v1.6.1-rc.5 — half-time feel, very sparse at cx=0.25.
+                p.extraKicks = { { 10, 0.80f, 0.70f }, // "and of 3"
+                                 { 3,  0.75f, 0.85f }  // "e of 1" pickup
                                };
                 p.halfTimeFeel = true;
                 p.snareLayback = -0.018; // deep pocket
                 p.kickLayback  = -0.004;
-                p.hatEighthGate    = 0.30f;
-                p.hatSixteenthGate = 0.85f;
-                p.ghostGate        = 0.25f;
-                p.ghostScale       = 1.2f; // ghost-heavy D'Angelo feel
+                p.hatEighthGate    = 0.50f;
+                p.hatSixteenthGate = 0.95f;
+                p.ghostGate        = 0.55f;
+                p.ghostScale       = 1.0f;
                 p.variationSideStick = 0.35f;
                 break;
 
             case BundledKit::Thrash:
-                // Aggressive: kick on every beat + gallop as complexity rises.
-                p.extraKicks = { { 2,  0.95f, 0.10f },   // "e of 1"
-                                 { 6,  0.95f, 0.15f },   // "and of 2"
-                                 { 10, 0.95f, 0.20f },   // "and of 3"
-                                 { 14, 0.95f, 0.25f } }; // "and of 4"
+                // v1.6.1-rc.5 — even thrash starts simple (1/8 hats,
+                // kick on 1+3). Gallop / double-kick layers in at high cx.
+                p.extraKicks = { { 2,  0.95f, 0.55f },   // "e of 1"
+                                 { 6,  0.95f, 0.60f },   // "and of 2"
+                                 { 10, 0.95f, 0.65f },   // "and of 3"
+                                 { 14, 0.95f, 0.70f } }; // "and of 4"
                 p.doubleKick       = true;
-                p.hatEighthGate    = 0.05f; // tight hats always
-                p.hatSixteenthGate = 0.35f; // opens up fast
-                p.ghostGate        = 0.60f;
-                p.ghostScale       = 0.6f;
+                p.hatEighthGate    = 0.35f;
+                p.hatSixteenthGate = 0.80f;
+                p.ghostGate        = 0.80f;
+                p.ghostScale       = 0.5f;
                 break;
 
             case BundledKit::Count:
@@ -486,9 +489,9 @@ namespace aidrum
                          hatDivisor == 1 ? 0.0625 : (hatDivisor == 2 ? 0.125 : 0.25));
             }
 
-            // 1/2-bar open-hat accent (on the "and of 2" of each bar), gated by
-            // complexity + variation. Only a single hit per half-bar.
-            if (! g.rideNotHat && cx > 0.4f)
+            // v1.6.1-rc.5 — open-hat and crash accents are now gated by
+            // higher cx so defaults (cx=0.25) stay totally clean.
+            if (! g.rideNotHat && cx > 0.55f)
             {
                 for (int barStart = 0; barStart < numSixteenths; barStart += 16)
                 {
@@ -498,8 +501,9 @@ namespace aidrum
                 }
             }
 
-            // 1-bar crash accent: first downbeat of the first bar of a phrase.
-            if ((r.phraseBar % 8) == 0 && pattern.lengthInBeats >= 2.0)
+            // 1-bar crash accent: first downbeat of the first bar of a phrase,
+            // only when the user has cranked complexity past a light threshold.
+            if ((r.phraseBar % 8) == 0 && pattern.lengthInBeats >= 2.0 && cx > 0.35f)
                 addNote (pattern, g.crashCymbal, g.velAccent, 0.0, 1.0);
         }
 

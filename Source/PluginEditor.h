@@ -92,8 +92,9 @@ private:
     // belonging to the currently-selected kit's bucket.
     void rebuildStarterBox();
 
-    AIDrumAudioProcessor&     processorRef;
-    aidrum::GothicLookAndFeel gothicLnf;
+    AIDrumAudioProcessor&            processorRef;
+    aidrum::GothicLookAndFeel        gothicLnf;
+    aidrum::CompactGothicLookAndFeel compactLnf;
     juce::TooltipWindow       tooltipWindow { this, 350 };
 
     juce::Label               titleLabel    { {}, "HUMHOUSE  DRUMS" };
