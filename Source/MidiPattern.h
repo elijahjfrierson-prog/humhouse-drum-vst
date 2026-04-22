@@ -17,5 +17,13 @@ namespace aidrum
     {
         double                lengthInBeats = 4.0; // one bar of 4/4 by default
         std::vector<MidiNote> notes;
+
+        // v1.6.1-rc.5 — remember whether this region was generated as a
+        // Fill (drum roll / transition) or a Groove (backbone). A live-
+        // knob regen reads this flag so a Fill region stays a Fill after
+        // the user tweaks variation/complexity/etc., instead of silently
+        // decaying into a Groove. Starter grooves appended via
+        // appendStarterGroove leave this false (they are grooves).
+        bool                  isFill = false;
     };
 }

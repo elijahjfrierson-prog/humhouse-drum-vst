@@ -201,8 +201,13 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
     // the last region so the user hears their tweak immediately. Pattern
     // length / genre / drumKit / room changes also re-emit — all cheap
     // compared to the audio thread. Skip regen for purely cosmetic or
-    // transport params.
-    if (id == kParamRoom || id == kParamRoomAmount || id == kParamStepDiv)
+    // transport params. v1.6.1-rc.5: kParamTimeScale only affects the
+    // playback-rate in renderArrangementToMidiBuffer and is never read
+    // by buildRequestForMode/backend.generate — regenerating on it
+    // would silently destroy any hand-chosen STARTER groove the user
+    // appended into the last region.
+    if (id == kParamRoom || id == kParamRoomAmount
+     || id == kParamStepDiv || id == kParamTimeScale)
         return;
 
     regenerateCurrentRegion();
@@ -214,15 +219,20 @@ void AIDrumAudioProcessor::regenerateCurrentRegion()
     if (arrangement.empty())
         return;
 
-    auto req = buildRequestForMode (aidrum::GenerationMode::Groove);
+    // v1.6.1-rc.5 — preserve the region's fill/groove slot across live
+    // regen. The old code always used Groove mode, silently converting
+    // any Fill region into a Groove the moment the user touched a knob.
+    const bool wasFill = arrangement.back().isFill;
+    auto req = buildRequestForMode (wasFill ? aidrum::GenerationMode::Fill
+                                            : aidrum::GenerationMode::Groove);
     req.phraseBar = static_cast<int> (arrangement.size()) - 1;
 
-    // Keep the existing fill/groove slot — a user who generated a fill
-    // shouldn't have a knob drag turn it back into a groove.
     const auto existingLen = arrangement.back().lengthInBeats;
     if (existingLen > 0.0) req.lengthInBeats = existingLen;
 
-    arrangement.back() = backend.generate (req);
+    auto regenerated = backend.generate (req);
+    regenerated.isFill = wasFill;
+    arrangement.back() = std::move (regenerated);
 }
 
 APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
@@ -472,6 +482,11 @@ void AIDrumAudioProcessor::appendRegion (aidrum::GenerationMode requestedMode)
         pattern = previous;
     else
         pattern = backend.generate (req);
+
+    // v1.6.1-rc.5 — tag the region with its generation mode so
+    // regenerateCurrentRegion can preserve Fill-vs-Groove on knob-tweak
+    // regen instead of silently converting every Fill into a Groove.
+    pattern.isFill = (req.mode == aidrum::GenerationMode::Fill);
 
     std::lock_guard<std::mutex> lock (arrangementMutex);
     arrangement.push_back (std::move (pattern));
