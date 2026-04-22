@@ -214,7 +214,8 @@ private:
     void renderArrangementToMidiBuffer (juce::MidiBuffer& midiOut,
                                         int               numSamples,
                                         double            sampleRate,
-                                        double            bpm);
+                                        double            bpm,
+                                        bool              hostDrivesPlayhead);
 
     // Maps the Pattern Length choice index to a length in beats.
     static double patternLengthBeatsFromChoice (int choiceIndex);

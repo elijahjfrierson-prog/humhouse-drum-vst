@@ -931,7 +931,8 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
 void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midiOut,
                                                           int               numSamples,
                                                           double            sampleRate,
-                                                          double            bpm)
+                                                          double            bpm,
+                                                          bool              hostDrivesPlayhead)
 {
     std::vector<aidrum::MidiPattern> snapshot;
 
@@ -963,8 +964,17 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
     // playhead advances `scale ×` faster through the arrangement so the
     // full composition audibly halves or doubles in speed without the
     // user changing the host BPM.
-    const double timeScale = timeScaleFactorForChoice (
-        (int) apvts.getRawParameterValue (kParamTimeScale)->load());
+    //
+    // v1.6.1-rc.5 — when the DAW host drives the playhead via PPQ, the
+    // host already owns the musical timeline; overlaying timeScale on top
+    // makes consecutive emission windows overlap (DOUBLE: notes fire
+    // twice in the overlap) or gap (HALF: notes never emit). Force
+    // timeScale = 1.0 in host-driven mode so timeScale only affects the
+    // internal standalone transport.
+    const double timeScale = hostDrivesPlayhead
+        ? 1.0
+        : timeScaleFactorForChoice (
+            (int) apvts.getRawParameterValue (kParamTimeScale)->load());
     const double secondsPerBeat = 60.0 / std::max (1.0, bpm);
     const double blockBeats     = (static_cast<double> (numSamples) / sampleRate)
                                 / secondsPerBeat * timeScale;
@@ -1110,7 +1120,8 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     renderArrangementToMidiBuffer (midi,
                                    buffer.getNumSamples(),
                                    getSampleRate(),
-                                   bpm);
+                                   bpm,
+                                   hostDrivesPlayhead);
 
     // Feed the freshly-generated MIDI notes into either the sampler
     // (if a kit is loaded) or the physical-model synth (fallback).

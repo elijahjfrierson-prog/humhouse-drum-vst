@@ -371,12 +371,22 @@ namespace aidrum
                 return;
             }
 
-            // Erase mode — delete any note the cursor is now over.
+            // Erase mode — delete any note the cursor is now over. Because
+            // JUCE's repaint() is asynchronous, `noteHits` (built during the
+            // last paint) still contains entries for notes that have already
+            // been deleted earlier in this same drag. Their stored noteIdx
+            // values no longer match the region's notes vector after it has
+            // been shifted down, so we clear the whole map after each
+            // successful delete and wait for the next paint to rebuild it
+            // with correct indices — this turns multi-note drag-erase into
+            // a sequence of one-safe-delete-per-paint instead of chained
+            // wrong-index deletes.
             for (auto it = noteHits.rbegin(); it != noteHits.rend(); ++it)
             {
                 if (! it->rect.contains (e.position)) continue;
                 if (onDeleteNote != nullptr)
                     onDeleteNote (it->regionIdx, it->noteIdx);
+                noteHits.clear();
                 repaint();
                 return;
             }
