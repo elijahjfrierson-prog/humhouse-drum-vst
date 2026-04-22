@@ -76,8 +76,15 @@ namespace
     // changing the host BPM.
     constexpr const char* kParamTimeScale       = "timeScale";
 
+    // v1.6.1-rc.6 — single bundled kit. The plugin now pivots around
+    // user-loaded sample packs (LOAD KIT). We only ship one crispy
+    // default kit so there's no "which built-in sounds the most like my
+    // track" friction; if the user wants a different character they
+    // drop in their own folder. Internally the kit is still named
+    // "Thrash" so all sample-loading / kitProfileFor() paths keep
+    // working unchanged.
     const juce::StringArray kBundledKitChoices {
-        "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash", "HardRock"
+        "Thrash"
     };
 
     const juce::StringArray kStepDivChoices {
@@ -146,15 +153,16 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
     // Manual pattern starts empty; 16 bars of 4/4 = 64 beats.
     manualPattern.lengthInBeats = static_cast<double> (manualNumBars * 4);
 
-    // v1.4.0 — auto-load the bundled PopRock kit so the plugin makes
-    // real-sample sound out of the box. User can override with LOAD KIT
-    // or the KIT combo (v1.5.0: 5 bundled kits; v1.6.1-rc.5 adds HardRock = 6).
+    // v1.4.0 — auto-load the bundled default kit so the plugin makes
+    // real-sample sound out of the box. v1.6.1-rc.6 collapses to a
+    // single bundled kit; the user overrides with LOAD KIT to drop in
+    // their own samples.
     sampleKit.prepare (48000.0, 0);
-    const int bundled = sampleKit.loadBundled ("PopRock");
+    const int bundled = sampleKit.loadBundled ("Thrash");
     if (bundled > 0)
     {
         std::lock_guard<std::mutex> lock (loadedKitPathMutex);
-        loadedKitPath = "Built-in PopRock";
+        loadedKitPath = "Built-in Default";
     }
 
     // v1.6.0 — per-bus default trims: kick and snare lead, cymbals drop to
@@ -303,12 +311,13 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
         juce::ParameterID { kParamRoomAmount, 1 }, "Room Amount",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f));
 
-    // v1.5.0 — Bundled kit dropdown (5 CC0 kits, each with a distinct
-    // snare/kick character arc). Replaces the old 20-kit voicing combo
-    // for the user-facing "which drums do I want" choice.
+    // v1.6.1-rc.6 — single bundled kit (see kBundledKitChoices above).
+    // The param is kept as an AudioParameterChoice (rather than deleted
+    // outright) so existing save files / host state still round-trip
+    // cleanly.
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamBundledKit, 1 }, "Bundled Kit",
-        kBundledKitChoices, 0)); // default: PopRock
+        kBundledKitChoices, 0));
 
     // v1.5.0 — Fill complexity knob, independent of overall complexity.
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
@@ -429,12 +438,14 @@ AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
     // knob; this lets users dial "simple groove + intricate fills" or vice-versa.
     req.fillComplexity = apvts.getRawParameterValue (kParamFillComplexity)->load();
 
-    // v1.6.0 — which of the 6 bundled character kits is loaded drives the
-    // kick/snare placement profile (PopRock = straight, NuRock = syncopated,
-    // AltRock = laid-back, IndieLofi = half-time, Thrash = double-kick drive).
-    const int bundledIndex = (int) apvts.getRawParameterValue (kParamBundledKit)->load();
-    if (bundledIndex >= 0 && bundledIndex < (int) aidrum::BundledKit::Count)
-        req.bundledKit = static_cast<aidrum::BundledKit> (bundledIndex);
+    // v1.6.1-rc.6 — single bundled kit. We always request the "Thrash"
+    // groove profile (tight quick kick, cracking snare, bright hats;
+    // the kit the user approved in rc.5 when we collapsed from 6 to 1).
+    // The choice parameter is retained for save-file round-tripping
+    // but its index is ignored — we never want the old PopRock /
+    // NuRock / AltRock / IndieLofi / HardRock placement profiles
+    // driving the single "Default" kit.
+    req.bundledKit = aidrum::BundledKit::Thrash;
     return req;
 }
 

@@ -34,7 +34,7 @@ SR = 48000
 ROOT = Path(__file__).resolve().parent.parent / "Resources" / "DefaultKit"
 ROOT.mkdir(parents=True, exist_ok=True)
 
-KITS = ["PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash", "HardRock"]
+KITS = ["Thrash"]
 
 
 # ---------- DSP helpers ---------------------------------------------------
@@ -66,64 +66,27 @@ def to_wav(path: Path, y: np.ndarray, peak=0.9):
 # Each profile encodes the spectral fingerprint we're targeting, derived
 # from the librosa analysis of the user's reference MP3s.
 PROFILES = {
-    "PopRock": dict(
-        # POPROCK1 + ageless.84: bright wooden, high rolloff, kick-dominant.
-        kick_fund=45, kick_sweep_from=140, kick_decay=0.22, kick_sub=0.5,
-        kick_click_gain=0.6, kick_click_hp=1800, kick_lp=5500,
-        snare_fund=205, snare_body_decay=0.14, snare_wire_lo=900, snare_wire_hi=6500,
-        snare_wire_gain=0.85, snare_click_gain=0.55, snare_lp=8500,
-        hat_bright=12000, hat_decay=0.033,
-        cym_lp=13000, cym_attack_f=6400,
-    ),
-    "NuRock": dict(
-        # BARRIERS Nu Rock: 66% kick, 7% crack, aggressive+punchy.
-        kick_fund=52, kick_sweep_from=170, kick_decay=0.17, kick_sub=0.35,
-        kick_click_gain=0.9, kick_click_hp=2200, kick_lp=6500,
-        snare_fund=220, snare_body_decay=0.10, snare_wire_lo=1100, snare_wire_hi=7500,
-        snare_wire_gain=1.1, snare_click_gain=0.75, snare_lp=9500,
-        hat_bright=13500, hat_decay=0.025,
-        cym_lp=14000, cym_attack_f=7200,
-    ),
-    "AltRock": dict(
-        # amped.83 + acoldshoulder.81: warm saturated body-heavy (42% body).
-        kick_fund=48, kick_sweep_from=130, kick_decay=0.28, kick_sub=0.55,
-        kick_click_gain=0.45, kick_click_hp=1500, kick_lp=4800,
-        snare_fund=190, snare_body_decay=0.18, snare_wire_lo=700, snare_wire_hi=5500,
-        snare_wire_gain=0.7, snare_click_gain=0.45, snare_lp=7000,
-        hat_bright=10500, hat_decay=0.04,
-        cym_lp=11000, cym_attack_f=5400,
-    ),
-    "IndieLofi": dict(
-        # acourseofitsown + bledthru: dull thuddy background, dark rolloff.
-        kick_fund=42, kick_sweep_from=110, kick_decay=0.32, kick_sub=0.7,
-        kick_click_gain=0.25, kick_click_hp=1100, kick_lp=3800,
-        snare_fund=170, snare_body_decay=0.22, snare_wire_lo=500, snare_wire_hi=4500,
-        snare_wire_gain=0.55, snare_click_gain=0.3, snare_lp=5500,
-        hat_bright=8500, hat_decay=0.06,
-        cym_lp=9500, cym_attack_f=4300,
-    ),
     "Thrash": dict(
-        # No reference MP3; targets thrash/metal: choppy quick kick, bright crack snare.
+        # v1.6.1-rc.6 — the plugin now ships a single "crispy" default
+        # kit (user: "stick to one drum kit that sounds AMAZING") and is
+        # otherwise designed around the user loading their own samples
+        # via LOAD KIT. The default is the old Thrash profile tightened
+        # up: choppy quick kick, bright cracking 14x5 snare, tight hats,
+        # and a FAT 18" crash (not the old thin chimey splash).
+        #
+        # Crash-specific params were added in rc.6 so the ride can stay
+        # bright (8k attack, 15k rolloff) while the crash is wider and
+        # darker (5.5k attack, 11.5k rolloff). User feedback on rc.5:
+        # "the crash sound is also a bad light chimey tambourine ...
+        # too thin chingy and small".
         kick_fund=58, kick_sweep_from=200, kick_decay=0.12, kick_sub=0.2,
         kick_click_gain=1.3, kick_click_hp=2800, kick_lp=7500,
         snare_fund=240, snare_body_decay=0.08, snare_wire_lo=1400, snare_wire_hi=9000,
         snare_wire_gain=1.3, snare_click_gain=1.0, snare_lp=11000,
         hat_bright=15000, hat_decay=0.02,
         cym_lp=15000, cym_attack_f=8500,
-    ),
-    "HardRock": dict(
-        # v1.6.1-rc.5 — modelled on IK MODO Drum's "Hard Rock" preset:
-        # 22" maple kick with strong beater click, 14x6.5 bright crack
-        # snare (brass/bronze-leaning), 14" New-Beat hats, punchy rock
-        # room. Sits between PopRock's clean studio wood and Thrash's
-        # aggressive bite — fatter body than Thrash, more click than
-        # PopRock, brighter top than AltRock.
-        kick_fund=50, kick_sweep_from=180, kick_decay=0.18, kick_sub=0.45,
-        kick_click_gain=1.05, kick_click_hp=2400, kick_lp=6800,
-        snare_fund=215, snare_body_decay=0.12, snare_wire_lo=1000, snare_wire_hi=7800,
-        snare_wire_gain=1.0, snare_click_gain=0.85, snare_lp=10000,
-        hat_bright=13500, hat_decay=0.028,
-        cym_lp=13500, cym_attack_f=6800,
+        crash_attack_f=5500, crash_lp=11500, crash_body_decay=1.7,
+        crash_noise_lo=1200,
     ),
 }
 
@@ -264,20 +227,48 @@ def make_ride_bell(p, seed=7):
 
 
 def make_crash(p, seed=8):
-    dur = 2.2
+    # v1.6.1-rc.6 — modelled on an 18" rock crash, not an 8" splash.
+    # User feedback on rc.5: the old crash sounded like "a bad light
+    # chimey tambourine ... too thin chingy and small". Fix: use
+    # crash-specific params (crash_attack_f, crash_lp, crash_body_decay,
+    # crash_noise_lo) if present so the crash gets wider low-mid body
+    # while the ride keeps its bright ping. Also adds a brief cupped
+    # "spread" pre-wash so the attack isn't a single sine ding.
+    dur = 2.6
     n = int(dur * SR)
     t = np.arange(n) / SR
     rng = np.random.default_rng(seed + 8)
-    base = p["cym_attack_f"]
-    partials = [base * r for r in [0.06, 0.10, 0.16, 0.26, 0.40, 0.58, 0.81, 1.18, 1.68, 2.06]]
+    base      = p.get("crash_attack_f",   p["cym_attack_f"])
+    lp_fc     = p.get("crash_lp",         p["cym_lp"])
+    body_dec  = p.get("crash_body_decay", 1.1)
+    noise_lo  = p.get("crash_noise_lo",   2000)
+
+    # Wider partial stack (12 partials, both above and below the attack
+    # centre freq) so the body has more low-mid weight.
+    partials = [base * r for r in
+                [0.04, 0.07, 0.11, 0.17, 0.24, 0.33, 0.45, 0.60, 0.80, 1.05, 1.38, 1.80]]
     y = np.zeros(n)
     for f in partials:
-        y += (0.4 + 0.6 * rng.random()) * np.sin(2 * math.pi * f * t) * np.exp(-t / 1.1)
-    y = 0.28 * y
-    noise = rng.standard_normal(n) * np.exp(-t / 1.0)
-    noise = bp(noise, 2000, p["cym_lp"])
-    attack = np.sin(2 * math.pi * base * t) * np.exp(-t / 0.04) * 0.4
-    return y + 0.9 * noise + attack
+        amp = 0.4 + 0.6 * rng.random()
+        decay = body_dec if f < base else body_dec * 0.6
+        y += amp * np.sin(2 * math.pi * f * t) * np.exp(-t / decay)
+    y = 0.32 * y
+
+    # Broader noise wash that reaches further down into the shell range
+    # (1.2 kHz rather than 2 kHz) — this is what gives a real crash its
+    # "whoosh" instead of the rc.5 "ching".
+    noise = rng.standard_normal(n) * np.exp(-t / 1.3)
+    noise = bp(noise, noise_lo, lp_fc)
+
+    # Attack: a short filtered-noise burst plus a single sine, not just
+    # a lone sine — avoids the "ding" character.
+    burst = rng.standard_normal(n) * np.exp(-t / 0.012)
+    burst = bp(burst, base * 0.6, min(lp_fc, base * 2.6)) * 0.55
+    sine  = np.sin(2 * math.pi * base * 0.85 * t) * np.exp(-t / 0.05) * 0.3
+
+    out = y + 1.0 * noise + burst + sine
+    out = lp(out, lp_fc)
+    return out
 
 
 def make_china(p, seed=9):

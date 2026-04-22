@@ -607,13 +607,14 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     hiHatBox.addItem ("Ride",    4);
     styleCombo (hiHatBox, hiHatLabel);
 
-    // v1.5.0 — DRUM KIT combo shows the bundled CC0 kits, one per
-    // character archetype. v1.6.1-rc.5 adds HardRock, modelled on
-    // MODO Drum's "Hard Rock" preset (maple shell kick, cracking
-    // 14x6.5 snare, driving 1/8 hats).
+    // v1.6.1-rc.6 — single bundled kit. User feedback: "stick to one
+    // drum kit that sounds AMAZING ... this plug in will be based
+    // around adding your own drumkit samples mainly with one crispy
+    // sounding drumkit instead of 5". The combo still exists (so state
+    // round-trips), but only holds the single default; the real kit
+    // variety comes from LOAD KIT.
     drumKitBox.addItemList (
-        juce::StringArray { "PopRock", "NuRock", "AltRock",
-                            "IndieLofi", "Thrash", "HardRock" }, 1);
+        juce::StringArray { "Default" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
     drumKitBox.onChange = [this]
     {
@@ -735,12 +736,11 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (pauseButton);
     addAndMakeVisible (stopButton);
 
-    // v1.6.1-rc.3 — STARTER combobox is KIT-FILTERED. Each of the 5
-    // bundled kits gets its own subset of the 119 grooves so the
-    // dropdown only shows grooves that feel right for the active kit
-    // (Thrash = punk/double-kick, IndieLofi = brushed/shuffle, etc.).
-    // rebuildStarterBox() is called now and whenever the kit changes.
-    starterBox.setTooltip ("STARTER — pick a hand-played groove that matches the current kit; drops in as a new region at the end of the arrangement.");
+    // v1.6.1-rc.6 — STARTER combobox shows the full 119-groove library.
+    // Kit-filtering was removed in rc.6 because the plugin collapsed
+    // from 6 built-in kits to a single "Default" (with LOAD KIT for
+    // user packs), so filtering by kit index is a no-op now.
+    starterBox.setTooltip ("STARTER — pick a hand-played groove from the full library; drops in as a new region at the end of the arrangement.");
     rebuildStarterBox();
     starterBox.onChange = [this]
     {

@@ -81,10 +81,9 @@ public:
     juce::String starterGrooveName (int index) const;
     void appendStarterGroove (int index);
 
-    // v1.6.1-rc.3 — kit-filtered STARTERs. Each of the 6 bundled kits
-    // gets its own subset of the 119 grooves so the dropdown feels
-    // curated to the active kit and a NuRock groove never plays like
-    // an AltRock groove.
+    // v1.6.1-rc.6 — single bundled kit; STARTER filtering is a no-op.
+    // These wrappers exist for API back-compat with the rc.3..rc.5
+    // editor; they now just forward to the full STARTER library.
     int  starterGrooveCountForKit (int kitIndex) const;
     juce::String starterGrooveNameForKit (int kitIndex, int subIndex) const;
     void appendStarterGrooveForKit (int kitIndex, int subIndex);
@@ -189,8 +188,10 @@ public:
     juce::String getSampleKitPath() const;
     bool isSampleKitActive() const;
 
-    // v1.5.0 — Switch to one of the CC0 kits compiled into the plugin binary.
-    // Names: "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash".
+    // v1.6.1-rc.6 — Switch to the CC0 kit compiled into the plugin
+    // binary. Only one kit ships now ("Thrash"); the name arg is kept
+    // for API compatibility but anything other than "Thrash" falls
+    // back to it.
     int loadBundledKit (const juce::String& kitName);
 
     // --- v1.4.0 UI scale --------------------------------------------------

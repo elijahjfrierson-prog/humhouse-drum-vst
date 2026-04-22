@@ -8,7 +8,7 @@ Strategy:
    filter outputs a kick, a ride filter outputs a ride, etc.
 2. Overlay the user's 16 reference snare WAVs (every filename contains
    "snare", so classification is trivially correct) across the snare
-   slots for all 5 kits. Each kit gets a main + 3 velocity-layer snares.
+   slots for the bundled kit (main + 3 velocity-layer snares).
 3. Audit the resulting Resources/DefaultKit/ and fail loudly if any
    file's measured spectral content disagrees with its slot label.
 
@@ -45,7 +45,7 @@ def regen_synth():
         print(r.stdout)
         print(r.stderr, file=sys.stderr)
         raise SystemExit("generate_default_kit.py failed")
-    print("   ok — all 5 kits regenerated")
+    print("   ok — bundled kit regenerated")
 
 
 # ---------- step 2: overlay user snares ---------------------------------
@@ -71,17 +71,14 @@ SNARE_FRAGMENTS = [
     "747+Snare",
 ]
 
-# 6 kits × 4 snare slots (main + 3 velocity layers) = 24 target slots.
-# We have 16 reference snares; distribute them intentionally with some
-# reuse. HardRock picks echo the MODO "Hard Rock" preset: bright
-# cracking brass-ish snares with a tight body.
+# v1.6.1-rc.6 — ONE bundled kit × 4 snare slots (main + 3 velocity
+# layers). User asked us to ship a single "crispy" default kit and
+# pivot the product around the LOAD KIT workflow (bring your own
+# samples). We picked the 4 brightest cracking snares from the 16
+# references for the velocity stack: Pop Punk (tight main), 747
+# (bright crack), Deftones (aggressive), Heart Shaped (fat accent).
 SNARE_MAP = {
-    "PopRock":   ["Pop+Punk+Snare",  "Air+Snare",                "Dawn+Snare",            "747+Snare"],
-    "NuRock":    ["Deftones+Snare",  "adt_snare_deep_1",         "Heart+Shaped+Snare",    "dirty+snare"],
-    "AltRock":   ["Nice+Snare",      "Snare+Indie",              "Uncanny+long+arms+snare","Heart+Shaped+Snare"],
-    "IndieLofi": ["Shoegaze+Snare",  "Slowdive+Snare",           "underscores+snare",     "Snare+Indie"],
-    "Thrash":    ["snare+-+trek_2",  "TS_NEON_snare_one_shot_pearly_pizzica", "dirty+snare","Pop+Punk+Snare"],
-    "HardRock":  ["Deftones+Snare",  "747+Snare",                "Pop+Punk+Snare",        "Dawn+Snare"],
+    "Thrash": ["Pop+Punk+Snare", "747+Snare", "Deftones+Snare", "Heart+Shaped+Snare"],
 }
 
 

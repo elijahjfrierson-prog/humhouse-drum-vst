@@ -74,10 +74,10 @@ namespace aidrum
         // contains nothing the kit recognises).
         int load (const juce::File& folder);
 
-        // Load one of the CC0 kits compiled into the plugin binary.
-        // v1.5.0 shipped 5 kits; v1.6.1-rc.5 adds HardRock for a total of 6:
-        // "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash", "HardRock".
-        // Pass the empty string to default to PopRock.
+        // Load the CC0 kit compiled into the plugin binary.
+        // v1.6.1-rc.6 — single bundled kit ("Thrash"). The name param
+        // is retained for API compatibility; empty string or anything
+        // other than "Thrash" falls back to "Thrash".
         // `currentKitPath()` after a successful load returns "Built-in <KitName>".
         // Returns the number of samples loaded (0 if the binary blob is empty).
         int loadBundled (const juce::String& kitName = {});

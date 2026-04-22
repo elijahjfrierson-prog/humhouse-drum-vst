@@ -150,7 +150,13 @@ namespace aidrum
     int SampleKit::loadBundled (const juce::String& kitNameIn)
     {
        #if AIDRUM_HAS_BUNDLED_KIT
-        const juce::String kitName = kitNameIn.isEmpty() ? juce::String ("PopRock") : kitNameIn;
+        // v1.6.1-rc.6 — single bundled kit. Anything other than the
+        // one we ship falls back to "Thrash" so legacy save files that
+        // still reference PopRock/NuRock/AltRock/IndieLofi/HardRock
+        // don't come up empty.
+        juce::String kitName = kitNameIn.isEmpty() ? juce::String ("Thrash") : kitNameIn;
+        if (kitName != "Thrash")
+            kitName = "Thrash";
         const juce::String prefix  = kitName + "__";
 
         auto data = std::make_shared<KitData>();
