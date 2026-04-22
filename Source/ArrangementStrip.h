@@ -384,39 +384,17 @@ namespace aidrum
 
         void mouseUp (const juce::MouseEvent& e) override
         {
+            // v1.6.1-rc.5 — mouseUp only clears drag state and handles the
+            // append (+) button. Right/alt-click region delete is handled
+            // exclusively in mouseDown via handleRegionDelete so a single
+            // right-click can only delete one region.
             const auto inner = getLocalBounds().toFloat().reduced (10.5f, 8.5f);
             dragMode = DragMode::None;
             lastAddedRegion = -1;
             lastAddedStepBeat = -1.0;
             lastAddedNote = -1;
             if (onAppend != nullptr && getAppendButtonBounds (inner).contains (e.position))
-            {
                 onAppend();
-                return;
-            }
-
-            // v1.5.0 — right-click or alt-click deletes the region under the cursor.
-            if (onDeleteRegion != nullptr
-                && (e.mods.isRightButtonDown() || e.mods.isAltDown())
-                && last.totalBeats > 0.0 && ! last.regions.empty())
-            {
-                // v1.6.1 — skip the label column + header row the paint routine
-                // carves out so clicks map to the correct beat.
-                auto gridRect = inner.withTrimmedRight (getAppendButtonBounds (inner).getWidth() + 10.0f)
-                                     .withTrimmedLeft  (54.0f + 6.0f)
-                                     .withTrimmedTop   (14.0f);
-                if (! gridRect.contains (e.position)) return;
-                const double total = std::max (1.0, last.totalBeats);
-                const double rel = (e.position.x - gridRect.getX()) / gridRect.getWidth();
-                const double beat = juce::jlimit (0.0, total - 1e-6, rel * total);
-                double acc = 0.0;
-                for (size_t i = 0; i < last.regions.size(); ++i)
-                {
-                    const double len = std::max (0.001, last.regions[i].lengthInBeats);
-                    if (beat < acc + len) { onDeleteRegion ((int) i); return; }
-                    acc += len;
-                }
-            }
         }
 
         // v1.6.1-rc.4 — keyboard handler: Delete removes the selected
