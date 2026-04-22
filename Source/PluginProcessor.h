@@ -81,6 +81,22 @@ public:
     juce::String starterGrooveName (int index) const;
     void appendStarterGroove (int index);
 
+    // v1.6.1-rc.3 — kit-filtered STARTERs. Each of the 5 bundled kits
+    // gets its own subset of the 119 grooves so the dropdown feels
+    // curated to the active kit and a NuRock groove never plays like
+    // an AltRock groove.
+    int  starterGrooveCountForKit (int kitIndex) const;
+    juce::String starterGrooveNameForKit (int kitIndex, int subIndex) const;
+    void appendStarterGrooveForKit (int kitIndex, int subIndex);
+    // Picks a random groove from the kit's subset and appends it.
+    void appendRandomGrooveForKit (int kitIndex);
+
+    // v1.6.1-rc.3 — when the user changes kits, swap the last-appended
+    // arrangement region for a groove from the new kit's bucket so the
+    // user immediately hears a pattern that matches the kit's feel.
+    // No-op if the arrangement is empty.
+    void remapLastRegionToKit (int kitIndex);
+
     // v1.6.0 — COPY / PASTE region. Copy stores a snapshot of the region
     // at `index`; paste appends the stored snapshot as a new region at the
     // end of the arrangement. Used by the arrangement strip's

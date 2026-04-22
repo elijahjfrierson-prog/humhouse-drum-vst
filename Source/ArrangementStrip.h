@@ -38,6 +38,11 @@ namespace aidrum
         void setProvider (std::function<Snapshot()> p) { provider = std::move (p); }
         std::function<void()> onAppend;
 
+        // v1.6.1-rc.3 — when on, every region is drawn with a bright
+        // highlight border so the user can see the whole arrangement is
+        // "selected" as one block before dragging it to the DAW.
+        void setHighlightAll (bool on) { highlightAll = on; repaint(); }
+
         // v1.5.0 — right-click (or alt-click) on a region tile calls this with
         // the region's index so the editor can remove it. Empty arrangement is
         // allowed; the `+` button becomes the only interactive element.
@@ -188,6 +193,21 @@ namespace aidrum
                     g.drawLine (x + 1.0f, y + 0.5f, x + w - 1.0f, y + 0.5f, 1.0f);
                 }
 
+                // v1.6.1-rc.3 — when HIGHLIGHT ALL is armed, draw a bright
+                // border around every region tile so it's visually obvious
+                // that the full arrangement is what gets dragged to the DAW.
+                if (highlightAll)
+                {
+                    const float x0 = regionX0;
+                    const float x1 = inner.getX() + (float) (regionOffset + regionLen) * pxPerBeat;
+                    g.setColour (juce::Colour (GothicPalette::kAccentSoft).withAlpha (0.28f));
+                    g.fillRect (juce::Rectangle<float> (x0, inner.getY(),
+                                                        x1 - x0, inner.getHeight()));
+                    g.setColour (juce::Colour (GothicPalette::kAccent).withAlpha (0.95f));
+                    g.drawRect (juce::Rectangle<float> (x0, inner.getY(),
+                                                        x1 - x0, inner.getHeight()), 1.8f);
+                }
+
                 regionOffset += regionLen;
 
                 // Divider line between regions
@@ -302,6 +322,7 @@ namespace aidrum
         }
 
         std::function<Snapshot()> provider;
+        bool                      highlightAll = false;
         Snapshot                  last;
     };
 }

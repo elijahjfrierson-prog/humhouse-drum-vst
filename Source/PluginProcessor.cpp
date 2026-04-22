@@ -1,6 +1,39 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "StarterGrooves.generated.h"
+#include "StarterGrooveKitFilter.h"
+
+namespace
+{
+    // v1.6.1-rc.3 — strict 6-instrument whitelist. User: "just kick,
+    // snare, tom, crash, ride and hi-hat will be triggered … no
+    // tambourines, no shakers, no cowbells". We drop any MIDI note
+    // that isn't one of those six families at both render-time and
+    // MIDI-export-time so tambourine/shaker/clap/etc. are silently
+    // scrubbed from the 119 STARTER patterns.
+    inline bool isAllowedDrumNote (int note) noexcept
+    {
+        switch (note)
+        {
+            // KICK
+            case 35: case 36:
+            // SNARE (incl. side-stick 37, electric 40)
+            case 37: case 38: case 39: case 40:
+            // TOMS (low floor 41, high floor 43, low 45, low-mid 47,
+            // hi-mid 48, high 50)
+            case 41: case 43: case 45: case 47: case 48: case 50:
+            // HI-HAT (closed 42, pedal 44, open 46)
+            case 42: case 44: case 46:
+            // CRASH (crash-1 49, crash-2 57, chinese 52, splash 55)
+            case 49: case 52: case 55: case 57:
+            // RIDE (ride-1 51, ride-bell 53, ride-cymbal-2 59)
+            case 51: case 53: case 59:
+                return true;
+            default:
+                return false;
+        }
+    }
+}
 
 #include <algorithm>
 #include <numeric>
@@ -479,6 +512,58 @@ void AIDrumAudioProcessor::appendStarterGroove (int index)
     arrangement.push_back (std::move (pat));
 }
 
+// ---------- v1.6.1-rc.3 kit-filtered STARTERs ----------
+
+int AIDrumAudioProcessor::starterGrooveCountForKit (int kitIndex) const
+{
+    return static_cast<int> (aidrum::starterIndicesForKit (kitIndex).size());
+}
+
+juce::String AIDrumAudioProcessor::starterGrooveNameForKit (int kitIndex, int subIndex) const
+{
+    const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
+    if (subIndex < 0 || subIndex >= static_cast<int> (bucket.size()))
+        return {};
+    return starterGrooveName (bucket[(size_t) subIndex]);
+}
+
+void AIDrumAudioProcessor::appendStarterGrooveForKit (int kitIndex, int subIndex)
+{
+    const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
+    if (subIndex < 0 || subIndex >= static_cast<int> (bucket.size()))
+        return;
+    appendStarterGroove (bucket[(size_t) subIndex]);
+}
+
+void AIDrumAudioProcessor::appendRandomGrooveForKit (int kitIndex)
+{
+    const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
+    if (bucket.empty())
+        return;
+    std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
+    std::uniform_int_distribution<size_t> pick (0, bucket.size() - 1);
+    appendStarterGroove (bucket[pick (rng)]);
+}
+
+void AIDrumAudioProcessor::remapLastRegionToKit (int kitIndex)
+{
+    const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
+    if (bucket.empty())
+        return;
+
+    std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
+    std::uniform_int_distribution<size_t> pick (0, bucket.size() - 1);
+    const auto& lib = aidrum::starterGrooveLibrary();
+    const int libIdx = bucket[pick (rng)];
+    if (libIdx < 0 || libIdx >= static_cast<int> (lib.size()))
+        return;
+
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (arrangement.empty())
+        return;
+    arrangement.back() = lib[(size_t) libIdx].pattern;
+}
+
 // ============================================================================
 // v1.6.0 COPY / PASTE region
 // ============================================================================
@@ -733,6 +818,8 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
     {
         for (const auto& note : region.notes)
         {
+            if (! isAllowedDrumNote (note.noteNumber))
+                continue;
             const double onTicks  = (regionOffset + note.startBeat) * kPPQ;
             const double offTicks = (regionOffset + note.startBeat
                                      + std::max (0.01, note.lengthBeat)) * kPPQ;
@@ -807,25 +894,24 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
     const double blockStartBeat = playheadBeats.load (std::memory_order_acquire);
     const double blockEndBeat   = blockStartBeat + blockBeats;
 
-    // v1.6.1-rc.2 — a SINGLE region loops forever (so users can sketch
-    // on one groove without re-pressing play); TWO OR MORE regions play
-    // through end-to-end and STOP (so a composed arrangement doesn't
-    // snap back every 4 bars). This is what the user asked for
-    // explicitly: "the pattern should NOT LOOP EVERY 4 BARS … it should
-    // only loop if there is one pattern".
-    const bool loopSingleRegion = (snapshot.size() == 1);
-
-    auto emitNotesInWindow = [&] (double winStart, double winEnd, double phaseOffset)
+    // v1.6.1-rc.3 — NO PLUGIN-SIDE LOOPING EVER. The user was explicit:
+    // "DO NOT LOOP … play each region in the arrangement until the end".
+    // Regardless of whether there is one region or ten, playback walks
+    // the full arrangement end-to-end exactly once, then auto-stops and
+    // rewinds so the next Play press starts from bar 1. If the user
+    // wants a loop they should use the DAW's transport loop, not a
+    // plugin-side one.
+    auto emitNotesInWindow = [&] (double winStart, double winEnd)
     {
-        // Walk each region's notes and emit those whose beat-position
-        // (plus phaseOffset wrap) lands inside [winStart, winEnd).
         double regionOffset = 0.0;
         for (const auto& region : snapshot)
         {
             const double regionLen = std::max (0.001, region.lengthInBeats);
             for (const auto& note : region.notes)
             {
-                const double onBeat  = regionOffset + note.startBeat + phaseOffset;
+                if (! isAllowedDrumNote (note.noteNumber))
+                    continue;
+                const double onBeat  = regionOffset + note.startBeat;
                 const double offBeat = onBeat + std::max (0.01, note.lengthBeat);
 
                 if (onBeat >= winStart && onBeat < winEnd)
@@ -851,36 +937,17 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
         }
     };
 
-    if (loopSingleRegion)
-    {
-        // Wrap-emit: each loop iteration covers `total` beats, shifted
-        // by k*total. Emit every loop cycle that intersects this block.
-        const int firstCycle = (int) std::floor (blockStartBeat / total);
-        const int lastCycle  = (int) std::floor ((blockEndBeat - 1e-9) / total);
-        for (int cycle = firstCycle; cycle <= lastCycle; ++cycle)
-            emitNotesInWindow (blockStartBeat, blockEndBeat, (double) cycle * total);
+    const double emissionEnd = std::min (blockEndBeat, total);
+    emitNotesInWindow (blockStartBeat, emissionEnd);
 
-        // Advance playhead and wrap so the UI playhead keeps scrubbing
-        // bar-1 → end → bar-1 without ever stopping.
-        double next = blockEndBeat;
-        while (next >= total) next -= total;
-        playheadBeats.store (next, std::memory_order_release);
-    }
-    else
+    const double next = std::min (blockEndBeat, total);
+    playheadBeats.store (next, std::memory_order_release);
+    if (next >= total - 1.0e-6)
     {
-        const double emissionEnd = std::min (blockEndBeat, total);
-        emitNotesInWindow (blockStartBeat, emissionEnd, 0.0);
-
-        // Advance; when we pass the end, auto-stop and rewind so Play
-        // starts from bar 1 next press.
-        const double next = std::min (blockEndBeat, total);
-        playheadBeats.store (next, std::memory_order_release);
-        if (next >= total - 1.0e-6)
-        {
-            transportState.store ((int) TransportState::Stopped,
-                                  std::memory_order_release);
-            playheadBeats.store (0.0, std::memory_order_release);
-        }
+        // End of arrangement: stop and rewind. No wrap, no loop.
+        transportState.store ((int) TransportState::Stopped,
+                              std::memory_order_release);
+        playheadBeats.store (0.0, std::memory_order_release);
     }
 }
 

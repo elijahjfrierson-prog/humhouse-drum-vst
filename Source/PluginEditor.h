@@ -41,6 +41,12 @@ private:
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp   (const juce::MouseEvent&) override;
+        // v1.6.1-rc.3 — fires on mouseDown (button pressed → highlight on)
+        // and mouseUp (released → highlight off). Used by the editor to
+        // visually highlight every region in the arrangement strip while
+        // the user is grabbing the full arrangement for drag-to-DAW.
+        std::function<void (bool highlight)> onHighlightChange;
     private:
         AIDrumAudioProcessor& processorRef;
         bool      dragStarted = false;
@@ -81,6 +87,10 @@ private:
     };
 
     void timerCallback() override;
+
+    // v1.6.1-rc.3 — rebuild STARTER dropdown to only show grooves
+    // belonging to the currently-selected kit's bucket.
+    void rebuildStarterBox();
 
     AIDrumAudioProcessor&     processorRef;
     aidrum::GothicLookAndFeel gothicLnf;

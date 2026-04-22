@@ -395,13 +395,19 @@ void AIDrumAudioProcessorEditor::MidiDragHandle::paint (juce::Graphics& g)
     auto f = juce::Font (juce::FontOptions (11.5f, juce::Font::bold));
     f.setExtraKerningFactor (0.18f);
     g.setFont (f);
-    g.drawText ("DRAG  MIDI  \u2192  DAW", getLocalBounds().withTrimmedLeft (10),
+    g.drawText ("HIGHLIGHT  ALL  \u2192  DAW", getLocalBounds().withTrimmedLeft (10),
                 juce::Justification::centredLeft, false);
 }
 
 void AIDrumAudioProcessorEditor::MidiDragHandle::mouseDown (const juce::MouseEvent&)
 {
     dragStarted = false;
+    if (onHighlightChange) onHighlightChange (true);
+}
+
+void AIDrumAudioProcessorEditor::MidiDragHandle::mouseUp (const juce::MouseEvent&)
+{
+    if (onHighlightChange) onHighlightChange (false);
 }
 
 void AIDrumAudioProcessorEditor::MidiDragHandle::mouseDrag (const juce::MouseEvent& e)
@@ -588,7 +594,17 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     drumKitBox.addItemList (
         juce::StringArray { "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
-    drumKitBox.onChange = [this] { kitVisualizer.setSelectedKit (drumKitBox.getSelectedItemIndex()); };
+    drumKitBox.onChange = [this]
+    {
+        kitVisualizer.setSelectedKit (drumKitBox.getSelectedItemIndex());
+        // v1.6.1-rc.3 — kit changed: repopulate STARTER dropdown with
+        // just this kit's grooves, and re-map the current arrangement
+        // region (if any) to a groove from the new kit's bucket so the
+        // user immediately hears a groove that matches the kit.
+        rebuildStarterBox();
+        processorRef.remapLastRegionToKit (drumKitBox.getSelectedItemIndex());
+        arrangementStrip.repaint();
+    };
 
     // v1.5.0 — step-division combo (for the manual grid).
     stepDivBox.addItemList (juce::StringArray { "1/16", "1/32", "1/64" }, 1);
@@ -629,17 +645,17 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (halfTimeButton);
 
 
-    // APPEND (+) button — now *appends* instead of replacing.
+    // v1.6.1-rc.3 — APPEND (+) button now picks a random groove from
+    // the CURRENT KIT's bucket of 119 grooves (instead of synthesising
+    // a new pattern). User explicitly asked to scrap ML-style
+    // generation and stay inside the 119-groove library.
     plusButton.onClick = [this]
     {
-        const auto mode = (modeBox.getSelectedId() == 2)
-                            ? aidrum::GenerationMode::Fill
-                            : aidrum::GenerationMode::Groove;
-        processorRef.appendRegion (mode);
+        processorRef.appendRandomGrooveForKit (drumKitBox.getSelectedItemIndex());
         plusButton.bump();
         arrangementStrip.repaint();
     };
-    plusButton.setTooltip ("APPEND GROOVE (+) — adds a new region to the right of the arrangement so you can keep stacking verses, fills and choruses.");
+    plusButton.setTooltip ("APPEND GROOVE (+) — picks a random groove from the current kit's bucket and drops it in as a new region.");
     addAndMakeVisible (plusButton);
 
     {
@@ -684,19 +700,20 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (pauseButton);
     addAndMakeVisible (stopButton);
 
-    // v1.6.0 — STARTER GROOVES combobox: pick a hand-played groove from the
-    // analysed library and drop it into the arrangement as a new region.
-    starterBox.addItem ("STARTER GROOVE ...", 1);
-    for (int i = 0; i < processorRef.starterGrooveCount(); ++i)
-        starterBox.addItem (processorRef.starterGrooveName (i), i + 2);
-    starterBox.setSelectedId (1, juce::dontSendNotification);
-    starterBox.setTooltip ("STARTER — pick a hand-played Logic-style groove template; it drops in as a new region at the end of the arrangement.");
+    // v1.6.1-rc.3 — STARTER combobox is KIT-FILTERED. Each of the 5
+    // bundled kits gets its own subset of the 119 grooves so the
+    // dropdown only shows grooves that feel right for the active kit
+    // (Thrash = punk/double-kick, IndieLofi = brushed/shuffle, etc.).
+    // rebuildStarterBox() is called now and whenever the kit changes.
+    starterBox.setTooltip ("STARTER — pick a hand-played groove that matches the current kit; drops in as a new region at the end of the arrangement.");
+    rebuildStarterBox();
     starterBox.onChange = [this]
     {
         const int sel = starterBox.getSelectedId();
         if (sel >= 2)
         {
-            processorRef.appendStarterGroove (sel - 2);
+            const int kit = drumKitBox.getSelectedItemIndex();
+            processorRef.appendStarterGrooveForKit (kit, sel - 2);
             plusButton.bump();
             arrangementStrip.repaint();
         }
@@ -907,7 +924,11 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     plusButton      .setTooltip ("APPEND — generate a new region with current settings and add it after the last one.");
     undoButton      .setTooltip ("UNDO — remove the last appended region from the arrangement.");
     clearButton     .setTooltip ("CLEAR — wipe the arrangement and start a fresh single region.");
-    dragHandle      .setTooltip ("DRAG MIDI — hold and drag onto a DAW track to drop the full arrangement as a .mid file.");
+    dragHandle      .setTooltip ("HIGHLIGHT ALL → DAW — click to highlight every region in the arrangement, then drag onto a DAW track to drop the full multi-region arrangement as one .mid file.");
+    dragHandle.onHighlightChange = [this] (bool on)
+    {
+        arrangementStrip.setHighlightAll (on);
+    };
     saveMidiButton  .setTooltip ("SAVE MIDI — export the full arrangement to a .mid file on disk.");
     playButton      .setTooltip ("PLAY — starts the built-in audio engine in Standalone. In a DAW, playback follows host transport.");
     pauseButton     .setTooltip ("PAUSE — freezes playback at the current position.");
@@ -1116,4 +1137,18 @@ void AIDrumAudioProcessorEditor::resized()
     arrangementStrip.setBounds (area);
     manualGrid      .setBounds (area);
     mixerPanel      .setBounds (area);
+}
+
+// v1.6.1-rc.3 — kit-filtered STARTER dropdown. Rebuilt whenever the kit
+// selection changes so the combo only shows the grooves that belong to
+// the active kit's bucket.
+void AIDrumAudioProcessorEditor::rebuildStarterBox()
+{
+    starterBox.clear (juce::dontSendNotification);
+    starterBox.addItem ("STARTER GROOVE ...", 1);
+    const int kit = drumKitBox.getSelectedItemIndex();
+    const int n = processorRef.starterGrooveCountForKit (kit);
+    for (int i = 0; i < n; ++i)
+        starterBox.addItem (processorRef.starterGrooveNameForKit (kit, i), i + 2);
+    starterBox.setSelectedId (1, juce::dontSendNotification);
 }
