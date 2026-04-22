@@ -1,10 +1,11 @@
-// v1.6.1-rc.3 — map each of the 119 STARTER grooves to one of the 5
-// bundled kits so each kit has its own subset of grooves that feel
-// right for that kit's personality (Thrash gets punk/double-kick,
-// IndieLofi gets brush/shuffle/soft, etc.). The user explicitly asked
-// that "a NuRock groove should not sound like an AltRock groove" —
-// with no other randomness, the kit + its groove pool is what gives
-// each kit its identity.
+// v1.6.1-rc.3 — map each STARTER groove to one of the bundled kits so
+// each kit has its own subset of grooves that feel right for that
+// kit's personality (Thrash gets punk/double-kick, IndieLofi gets
+// brush/shuffle/soft, etc.). The user explicitly asked that "a NuRock
+// groove should not sound like an AltRock groove" — with no other
+// randomness, the kit + its groove pool is what gives each kit its
+// identity. v1.6.1-rc.5 adds a 6th kit, HardRock, modelled on MODO
+// Drum's "Hard Rock" preset — driving quarter-kick rock grooves.
 #pragma once
 
 #include "StarterGrooves.generated.h"
@@ -15,8 +16,8 @@
 
 namespace aidrum
 {
-    // 0 = PopRock, 1 = NuRock, 2 = AltRock, 3 = IndieLofi, 4 = Thrash.
-    // Matches PluginEditor.cpp's drumKitBox order.
+    // 0 = PopRock, 1 = NuRock, 2 = AltRock, 3 = IndieLofi, 4 = Thrash,
+    // 5 = HardRock. Matches PluginEditor.cpp's drumKitBox order.
     inline int kitIndexForStarterGroove (std::string_view name)
     {
         auto contains = [&] (const char* needle)
@@ -30,6 +31,15 @@ namespace aidrum
          || contains ("METAL")
          || contains ("PUNK"))
             return 4;
+
+        // HardRock — driving rock grooves, quarter-kick pocket with
+        // "and of 3"/"and of 4" accents. Classic arena-rock feel.
+        if (contains ("HARD+ROCK")
+         || contains ("ARENA")
+         || contains ("STADIUM")
+         || contains ("CLASSIC+ROCK")
+         || contains ("POWER+BALLAD"))
+            return 5;
 
         // IndieLofi — brushed, shuffled, soft half-time.
         if (contains ("60S")
@@ -70,7 +80,7 @@ namespace aidrum
         static const std::vector<std::vector<int>> kBuckets = []
         {
             const auto& lib = starterGrooveLibrary();
-            std::vector<std::vector<int>> buckets (5);
+            std::vector<std::vector<int>> buckets (6);
             for (int i = 0; i < static_cast<int> (lib.size()); ++i)
             {
                 const int k = kitIndexForStarterGroove (lib[(size_t) i].name);

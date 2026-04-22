@@ -2,13 +2,16 @@
 Generate the bundled HumHouse Drums default kits (CC0).
 
 v1.5.0 — **5 kits**, one per musical archetype, each tuned to the
-spectral fingerprint of the user-provided reference MP3s:
+spectral fingerprint of the user-provided reference MP3s.
+v1.6.1-rc.5 — adds a 6th kit, HardRock, modelled on MODO Drum's
+"Hard Rock" preset.
 
     PopRock    -> POPROCK1SAMPLE.mp3, ageless.84.mp3       (bright wooden, 8k rolloff)
     NuRock     -> BARRIERS - Nu Rock.mp3                   (aggressive, kick-dominant, crack)
     AltRock    -> amped.83.mp3, acoldshoulder.81.mp3       (warm saturated mid-body)
     IndieLofi  -> acourseofitsown.mp3, bledthru.mp3        (dull thuddy, dark rolloff ~4.4k)
     Thrash     -> (no reference; targets thrash-metal)     (choppy quick kick, bright crack snare)
+    HardRock   -> MODO Drum "Hard Rock" .cst               (maple kick + click, bright crack snare)
 
 Snare character axis: dry-bright-saturated -> dull-background-thuddy
 Kick character axis : round-thud           -> choppy-quick-thrash
@@ -31,7 +34,7 @@ SR = 48000
 ROOT = Path(__file__).resolve().parent.parent / "Resources" / "DefaultKit"
 ROOT.mkdir(parents=True, exist_ok=True)
 
-KITS = ["PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash"]
+KITS = ["PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash", "HardRock"]
 
 
 # ---------- DSP helpers ---------------------------------------------------
@@ -107,6 +110,20 @@ PROFILES = {
         snare_wire_gain=1.3, snare_click_gain=1.0, snare_lp=11000,
         hat_bright=15000, hat_decay=0.02,
         cym_lp=15000, cym_attack_f=8500,
+    ),
+    "HardRock": dict(
+        # v1.6.1-rc.5 — modelled on IK MODO Drum's "Hard Rock" preset:
+        # 22" maple kick with strong beater click, 14x6.5 bright crack
+        # snare (brass/bronze-leaning), 14" New-Beat hats, punchy rock
+        # room. Sits between PopRock's clean studio wood and Thrash's
+        # aggressive bite — fatter body than Thrash, more click than
+        # PopRock, brighter top than AltRock.
+        kick_fund=50, kick_sweep_from=180, kick_decay=0.18, kick_sub=0.45,
+        kick_click_gain=1.05, kick_click_hp=2400, kick_lp=6800,
+        snare_fund=215, snare_body_decay=0.12, snare_wire_lo=1000, snare_wire_hi=7800,
+        snare_wire_gain=1.0, snare_click_gain=0.85, snare_lp=10000,
+        hat_bright=13500, hat_decay=0.028,
+        cym_lp=13500, cym_attack_f=6800,
     ),
 }
 

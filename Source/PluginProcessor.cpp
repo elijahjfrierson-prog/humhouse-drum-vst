@@ -77,7 +77,7 @@ namespace
     constexpr const char* kParamTimeScale       = "timeScale";
 
     const juce::StringArray kBundledKitChoices {
-        "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash"
+        "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash", "HardRock"
     };
 
     const juce::StringArray kStepDivChoices {
@@ -148,7 +148,7 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
 
     // v1.4.0 — auto-load the bundled PopRock kit so the plugin makes
     // real-sample sound out of the box. User can override with LOAD KIT
-    // or the KIT combo (v1.5.0: 5 bundled kits).
+    // or the KIT combo (v1.5.0: 5 bundled kits; v1.6.1-rc.5 adds HardRock = 6).
     sampleKit.prepare (48000.0, 0);
     const int bundled = sampleKit.loadBundled ("PopRock");
     if (bundled > 0)
@@ -419,7 +419,7 @@ AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
     // knob; this lets users dial "simple groove + intricate fills" or vice-versa.
     req.fillComplexity = apvts.getRawParameterValue (kParamFillComplexity)->load();
 
-    // v1.6.0 — which of the 5 bundled character kits is loaded drives the
+    // v1.6.0 — which of the 6 bundled character kits is loaded drives the
     // kick/snare placement profile (PopRock = straight, NuRock = syncopated,
     // AltRock = laid-back, IndieLofi = half-time, Thrash = double-kick drive).
     const int bundledIndex = (int) apvts.getRawParameterValue (kParamBundledKit)->load();

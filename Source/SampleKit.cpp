@@ -170,7 +170,7 @@ namespace aidrum
             juce::String origName = BundledKitData::getNamedResourceOriginalFilename (resName);
             if (origName.isEmpty()) origName = resName;
 
-            // v1.5.0: five kits share one binary blob; filenames are prefixed
+            // v1.5.0+: all bundled kits share one binary blob; filenames are prefixed
             // with "<KitName>__" (e.g. "PopRock__kick.wav"). Only load entries
             // belonging to the requested kit.
             if (! origName.startsWith (prefix)) continue;

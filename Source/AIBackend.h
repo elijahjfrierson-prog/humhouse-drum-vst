@@ -42,11 +42,12 @@ namespace aidrum
         Count
     };
 
-    // v1.6.0 \u2014 one of the five bundled character kits. Each one has its
-    // own kick/snare placement profile so the same COMPLEXITY value produces
+    // v1.6.0 \u2014 one of the bundled character kits. Each one has its own
+    // kick/snare placement profile so the same COMPLEXITY value produces
     // slightly different feels between genres (PopRock = straight backbeat,
     // NuRock = syncopated, AltRock = laid-back, IndieLofi = half-time hip-hop,
-    // Thrash = aggressive double-kick drive).
+    // Thrash = aggressive double-kick drive, HardRock = driving quarter-kick
+    // with cracking backbeat, modelled on MODO Drum's "Hard Rock" preset).
     enum class BundledKit : int
     {
         PopRock = 0,
@@ -54,6 +55,7 @@ namespace aidrum
         AltRock,
         IndieLofi,
         Thrash,
+        HardRock,
         Count
     };
 

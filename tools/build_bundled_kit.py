@@ -71,14 +71,17 @@ SNARE_FRAGMENTS = [
     "747+Snare",
 ]
 
-# 5 kits × 4 snare slots (main + 3 velocity layers) = 20 target slots.
-# We have 16 reference snares; distribute them intentionally.
+# 6 kits × 4 snare slots (main + 3 velocity layers) = 24 target slots.
+# We have 16 reference snares; distribute them intentionally with some
+# reuse. HardRock picks echo the MODO "Hard Rock" preset: bright
+# cracking brass-ish snares with a tight body.
 SNARE_MAP = {
     "PopRock":   ["Pop+Punk+Snare",  "Air+Snare",                "Dawn+Snare",            "747+Snare"],
     "NuRock":    ["Deftones+Snare",  "adt_snare_deep_1",         "Heart+Shaped+Snare",    "dirty+snare"],
     "AltRock":   ["Nice+Snare",      "Snare+Indie",              "Uncanny+long+arms+snare","Heart+Shaped+Snare"],
     "IndieLofi": ["Shoegaze+Snare",  "Slowdive+Snare",           "underscores+snare",     "Snare+Indie"],
     "Thrash":    ["snare+-+trek_2",  "TS_NEON_snare_one_shot_pearly_pizzica", "dirty+snare","Pop+Punk+Snare"],
+    "HardRock":  ["Deftones+Snare",  "747+Snare",                "Pop+Punk+Snare",        "Dawn+Snare"],
 }
 
 

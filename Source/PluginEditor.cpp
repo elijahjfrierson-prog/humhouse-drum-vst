@@ -607,12 +607,13 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     hiHatBox.addItem ("Ride",    4);
     styleCombo (hiHatBox, hiHatLabel);
 
-    // v1.5.0 — DRUM KIT combo now shows the 5 CC0 bundled kits, one per
-    // character archetype (PopRock, NuRock, AltRock, IndieLofi, Thrash).
-    // Replaces the 20-kit voicing combo so users get meaningful variation
-    // instead of 20 minor timbre tweaks.
+    // v1.5.0 — DRUM KIT combo shows the bundled CC0 kits, one per
+    // character archetype. v1.6.1-rc.5 adds HardRock, modelled on
+    // MODO Drum's "Hard Rock" preset (maple shell kick, cracking
+    // 14x6.5 snare, driving 1/8 hats).
     drumKitBox.addItemList (
-        juce::StringArray { "PopRock", "NuRock", "AltRock", "IndieLofi", "Thrash" }, 1);
+        juce::StringArray { "PopRock", "NuRock", "AltRock",
+                            "IndieLofi", "Thrash", "HardRock" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
     drumKitBox.onChange = [this]
     {

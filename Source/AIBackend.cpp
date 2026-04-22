@@ -420,6 +420,24 @@ namespace aidrum
                 p.ghostScale       = 0.5f;
                 break;
 
+            case BundledKit::HardRock:
+                // v1.6.1-rc.5 — modelled on MODO Drum's "Hard Rock" preset:
+                // maple kick with beater click, bright 14x6.5 cracking snare,
+                // 1/8-note hats, driving quarter-kicks. Starts as a classic
+                // boom-boom-bap at cx=0.25, then layers "and of 3" kick,
+                // ghosts, and a punchy "and of 4" push before hitting
+                // 1/16 hats. Sits between PopRock straight and NuRock's
+                // syncopation — the hard-rock pocket.
+                p.extraKicks = { { 10, 0.95f, 0.45f },   // "and of 3" early
+                                 { 14, 0.85f, 0.65f },   // "and of 4"
+                                 { 6,  0.80f, 0.85f } }; // "and of 2" very high cx
+                p.hatEighthGate    = 0.30f;    // 1/8 hats arrive earlier than PopRock
+                p.hatSixteenthGate = 0.80f;
+                p.ghostGate        = 0.55f;
+                p.ghostScale       = 1.0f;
+                p.variationSideStick = 0.15f;  // occasional rim crack on variation
+                break;
+
             case BundledKit::Count:
                 break;
         }

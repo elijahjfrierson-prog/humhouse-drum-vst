@@ -81,7 +81,7 @@ public:
     juce::String starterGrooveName (int index) const;
     void appendStarterGroove (int index);
 
-    // v1.6.1-rc.3 — kit-filtered STARTERs. Each of the 5 bundled kits
+    // v1.6.1-rc.3 — kit-filtered STARTERs. Each of the 6 bundled kits
     // gets its own subset of the 119 grooves so the dropdown feels
     // curated to the active kit and a NuRock groove never plays like
     // an AltRock groove.
