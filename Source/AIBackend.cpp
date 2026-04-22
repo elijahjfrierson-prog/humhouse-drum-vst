@@ -721,8 +721,13 @@ namespace aidrum
                 for (int beat = 0; beat < beats; ++beat)
                 {
                     const double b = beat;
-                    // Grace note 18ms before the accent (~1/48 beat)
-                    addNote (pattern, g.snareMain, 0.35f, b - 0.04, 0.0625);
+                    // Grace note 18ms before the accent (~1/48 beat).
+                    // Skip at b==0: there's no room before the downbeat and
+                    // finalize() would otherwise clamp startBeat to 0.0,
+                    // stacking the flam on top of the accent and losing
+                    // the wrist-wobble feel.
+                    if (beat > 0)
+                        addNote (pattern, g.snareMain, 0.35f, b - 0.04, 0.0625);
                     addNote (pattern, g.snareMain, 0.95f, b, 0.25);
                     // Floor tom on the "and"
                     if (beat % 2 == 0)

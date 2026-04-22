@@ -641,10 +641,16 @@ void AIDrumAudioProcessor::addNoteToRegion (int regionIndex, int noteNumber,
 
 void AIDrumAudioProcessor::copyRegionToClipboard (int index)
 {
-    std::lock_guard<std::mutex> lockA (arrangementMutex);
-    if (index < 0 || index >= static_cast<int> (arrangement.size()))
-        return;
-    aidrum::MidiPattern snap = arrangement[(size_t) index];
+    // v1.6.1-rc.5 — match pasteCopiedRegion's lock order
+    // (arrangementMutex → release → clipboardMutex) so the two routines
+    // can't ABBA-deadlock if they're ever invoked from different threads.
+    aidrum::MidiPattern snap;
+    {
+        std::lock_guard<std::mutex> lockA (arrangementMutex);
+        if (index < 0 || index >= static_cast<int> (arrangement.size()))
+            return;
+        snap = arrangement[(size_t) index];
+    }
     std::lock_guard<std::mutex> lockC (clipboardMutex);
     clipboardPattern = std::move (snap);
 }
