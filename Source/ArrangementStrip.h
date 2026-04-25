@@ -525,9 +525,13 @@ namespace aidrum
         void mouseWheelMove (const juce::MouseEvent& e,
                              const juce::MouseWheelDetails& w) override
         {
+            // Cmd/Ctrl is required so a plain trackpad scroll still falls
+            // through to the host (lists, kit visualizer, etc). Without the
+            // modifier the wheel must NOT zoom — that would resize the
+            // editor on every two-finger gesture.
             if (onZoom != nullptr
-                && (e.mods.isCommandDown() || e.mods.isCtrlDown()
-                    || std::abs (w.deltaY) > 0.001f))
+                && (e.mods.isCommandDown() || e.mods.isCtrlDown())
+                && std::abs (w.deltaY) > 0.001f)
             {
                 onZoom (w.deltaY);
                 return;
@@ -603,10 +607,16 @@ namespace aidrum
             // Snap to quarter notes (Logic-style beat cells).
             const double snapped = std::floor (absBeat);
 
-            // Figure out which region this beat lives in.
+            // Figure out which region this beat lives in. The cached
+            // offsets are only rebuilt during paint(); a click that lands
+            // between the timer appending a region and the next paint can
+            // see last.regions.size() > cachedRegionOffsets.size(), so
+            // bound the loop on the smaller of the two.
             int regionIdx = -1;
             double regionStart = 0.0;
-            for (size_t i = 0; i < last.regions.size(); ++i)
+            const size_t safeRegions = std::min (last.regions.size(),
+                                                 cachedRegionOffsets.size());
+            for (size_t i = 0; i < safeRegions; ++i)
             {
                 const double start = cachedRegionOffsets[i];
                 const double len = std::max (0.001, last.regions[i].lengthInBeats);
