@@ -304,6 +304,14 @@ private:
     juce::String             loadedKitPath;
     mutable std::mutex       loadedKitPathMutex;
 
+    // v1.6.1-rc.7 — name of the active bundled kit (empty string when a
+    // user-loaded folder is in use, or when nothing is loaded). Stored
+    // so prepareToPlay() can re-load the kit at the host's actual sample
+    // rate; SampleKit bakes its samples to `sr` at load time, so a kit
+    // loaded in the ctor at a placeholder 48 kHz must be re-baked once
+    // the DAW reports its real rate (e.g. 44.1 kHz on macOS / Logic).
+    juce::String             currentBundledKitName;
+
     // v1.6.1-rc.7 — Logic-Pro Scripter-style COMPOSE cycler. Per-kit
     // round-robin counter that walks the kit's groove bucket in order.
     // Sized to comfortably exceed the number of drum-kit entries so we

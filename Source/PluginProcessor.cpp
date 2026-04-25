@@ -163,9 +163,13 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
     // real-sample sound out of the box. v1.6.1-rc.6 collapses to a
     // single bundled kit; the user overrides with LOAD KIT to drop in
     // their own samples.
+    // v1.6.1-rc.7 — defer the actual bundled-kit load to prepareToPlay()
+    // so the WAVs are baked to the host's real sample rate. We just
+    // record the name here; loading at a placeholder 48 kHz and never
+    // re-baking would mean every drum hit plays ~8.8% slow / 1.4 semi-
+    // tones flat on a 44.1 kHz Logic Pro project.
     sampleKit.prepare (48000.0, 0);
-    const int bundled = sampleKit.loadBundled ("Thrash");
-    if (bundled > 0)
+    currentBundledKitName = "Thrash";
     {
         std::lock_guard<std::mutex> lock (loadedKitPathMutex);
         loadedKitPath = "Built-in Default";
@@ -378,6 +382,14 @@ void AIDrumAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerBlo
     drumSynth.reset();
     sampleKit.prepare (sampleRate, 0);
     sampleKit.reset();
+    // v1.6.1-rc.7 — re-bake the bundled kit at the host's actual sample
+    // rate. SampleKit::loadBundled() resamples the WAV data to the rate
+    // most-recently passed to prepare(), so loading once in the ctor at
+    // a placeholder 48 kHz and never re-loading meant any non-48 kHz
+    // host (44.1 kHz Logic Pro by default, 96 kHz mastering sessions)
+    // played the kit at the wrong pitch and tempo.
+    if (currentBundledKitName.isNotEmpty())
+        sampleKit.loadBundled (currentBundledKitName);
     busMixer.prepare (sampleRate, 0, 2);
     busMixer.reset();
     hostTransportSeen.store (false, std::memory_order_relaxed);
@@ -391,6 +403,7 @@ int AIDrumAudioProcessor::loadSampleKit (const juce::File& folder)
     const int n = sampleKit.load (folder);
     if (n > 0)
     {
+        currentBundledKitName.clear();
         std::lock_guard<std::mutex> lock (loadedKitPathMutex);
         loadedKitPath = folder.getFullPathName();
     }
@@ -400,6 +413,7 @@ int AIDrumAudioProcessor::loadSampleKit (const juce::File& folder)
 void AIDrumAudioProcessor::unloadSampleKit()
 {
     sampleKit.unload();
+    currentBundledKitName.clear();
     std::lock_guard<std::mutex> lock (loadedKitPathMutex);
     loadedKitPath.clear();
 }
@@ -409,6 +423,7 @@ int AIDrumAudioProcessor::loadBundledKit (const juce::String& kitName)
     const int n = sampleKit.loadBundled (kitName);
     if (n > 0)
     {
+        currentBundledKitName = kitName;
         std::lock_guard<std::mutex> lock (loadedKitPathMutex);
         loadedKitPath = "Built-in " + kitName;
     }
