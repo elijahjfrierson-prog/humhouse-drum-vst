@@ -144,7 +144,7 @@ namespace aidrum
             };
 
             // --- Lane labels + alternating lane bands ---------------------
-            auto laneFont = juce::Font (juce::FontOptions (9.5f, juce::Font::bold));
+            auto laneFont = juce::Font (juce::FontOptions (9.5f, juce::Font::italic));
             laneFont.setExtraKerningFactor (0.26f);
             g.setFont (laneFont);
             for (int i = 0; i < kNumLanes; ++i)

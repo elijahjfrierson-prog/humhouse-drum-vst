@@ -72,25 +72,44 @@ namespace aidrum
             setColour (juce::TextButton::textColourOnId,   juce::Colour (GothicPalette::kBone));
         }
 
-        // Thin serif, tracked-out caps.
+        // v1.6.1-rc.7 — silky italic body face. The user asked for the
+        // entire project to read "cursive-ish, less blocky" (logo aside).
+        // We coerce every Label / Button / ComboBox into italic with
+        // generous kerning so caps still feel tracked-out and readable
+        // but the overall vibe is closer to a one-sheet than a console.
+        // We deliberately preserve the caller's font HEIGHT so existing
+        // call-site Font() constructors that pass explicit sizes still
+        // win — only the style + tracking come from here.
         juce::Font getLabelFont (juce::Label& l) override
         {
-            auto f = juce::Font (juce::FontOptions (l.getFont().getHeight()));
-            f.setExtraKerningFactor (0.12f);
+            auto f = juce::Font (juce::FontOptions (l.getFont().getHeight(),
+                                                    juce::Font::italic));
+            f.setExtraKerningFactor (0.18f);
             return f;
         }
 
         juce::Font getTextButtonFont (juce::TextButton&, int h) override
         {
-            auto f = juce::Font (juce::FontOptions ((float) h * 0.55f, juce::Font::bold));
-            f.setExtraKerningFactor (0.10f);
+            auto f = juce::Font (juce::FontOptions ((float) h * 0.55f,
+                                                    juce::Font::italic));
+            f.setExtraKerningFactor (0.16f);
             return f;
         }
 
         juce::Font getComboBoxFont (juce::ComboBox& cb) override
         {
-            auto f = juce::Font (juce::FontOptions ((float) cb.getHeight() * 0.45f));
-            f.setExtraKerningFactor (0.08f);
+            auto f = juce::Font (juce::FontOptions ((float) cb.getHeight() * 0.45f,
+                                                    juce::Font::italic));
+            f.setExtraKerningFactor (0.14f);
+            return f;
+        }
+
+        // Pop-up menus (the STARTER dropdown, etc.) inherit the same
+        // silky face so the menu list visually matches the closed combo.
+        juce::Font getPopupMenuFont() override
+        {
+            auto f = juce::Font (juce::FontOptions (14.0f, juce::Font::italic));
+            f.setExtraKerningFactor (0.14f);
             return f;
         }
 
@@ -196,7 +215,7 @@ namespace aidrum
     public:
         juce::Font getTextButtonFont (juce::TextButton&, int h) override
         {
-            auto f = juce::Font (juce::FontOptions ((float) h * 0.38f, juce::Font::bold));
+            auto f = juce::Font (juce::FontOptions ((float) h * 0.38f, juce::Font::italic));
             f.setExtraKerningFactor (0.02f);
             return f;
         }

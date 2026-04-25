@@ -738,12 +738,17 @@ void AIDrumAudioProcessor::clearArrangement()
 
 int AIDrumAudioProcessor::starterGrooveCount() const
 {
-    return static_cast<int> (aidrum::starterGrooveLibrary().size());
+    // v1.6.1-rc.7 fix — index against the merged library (analyzer +
+    // BFD palette grooves). starterIndicesForKit() returns indices into
+    // allStarterGrooves(), so every lookup that consumes those indices
+    // must too — otherwise the 55 BFD palette grooves are silently
+    // unreachable and a third of the STARTER dropdown goes blank.
+    return static_cast<int> (aidrum::allStarterGrooves().size());
 }
 
 juce::String AIDrumAudioProcessor::starterGrooveName (int index) const
 {
-    const auto& lib = aidrum::starterGrooveLibrary();
+    const auto& lib = aidrum::allStarterGrooves();
     if (index < 0 || index >= static_cast<int> (lib.size()))
         return {};
     return juce::String (std::string (lib[(size_t) index].name));
@@ -751,7 +756,7 @@ juce::String AIDrumAudioProcessor::starterGrooveName (int index) const
 
 void AIDrumAudioProcessor::appendStarterGroove (int index)
 {
-    const auto& lib = aidrum::starterGrooveLibrary();
+    const auto& lib = aidrum::allStarterGrooves();
     if (index < 0 || index >= static_cast<int> (lib.size()))
         return;
 
@@ -787,12 +792,22 @@ void AIDrumAudioProcessor::appendStarterGrooveForKit (int kitIndex, int subIndex
 
 void AIDrumAudioProcessor::appendRandomGrooveForKit (int kitIndex)
 {
+    // v1.6.1-rc.7 — Logic-Pro Scripter-style cycler. The user explicitly
+    // asked the COMPOSE button to walk through groove options "in a
+    // reasonable and predictable way" rather than dealing a random card
+    // every press. We round-robin through the kit's bucket so repeated
+    // taps audition every groove in order, then loop. The counter is
+    // per-kit (kitIndex 0..N-1) so switching kits doesn't yank the user
+    // mid-cycle.
     const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
     if (bucket.empty())
         return;
-    std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
-    std::uniform_int_distribution<size_t> pick (0, bucket.size() - 1);
-    appendStarterGroove (bucket[pick (rng)]);
+    const int safeKit = juce::jlimit (0, (int) composeCycleIndex.size() - 1,
+                                      std::max (0, kitIndex));
+    auto& counter = composeCycleIndex[(size_t) safeKit];
+    const size_t pick = counter % bucket.size();
+    counter = (counter + 1) % (bucket.size() * 16); // bound so it never overflows
+    appendStarterGroove (bucket[pick]);
 }
 
 void AIDrumAudioProcessor::remapLastRegionToKit (int kitIndex)
@@ -803,7 +818,7 @@ void AIDrumAudioProcessor::remapLastRegionToKit (int kitIndex)
 
     std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
     std::uniform_int_distribution<size_t> pick (0, bucket.size() - 1);
-    const auto& lib = aidrum::starterGrooveLibrary();
+    const auto& lib = aidrum::allStarterGrooves();
     const int libIdx = bucket[pick (rng)];
     if (libIdx < 0 || libIdx >= static_cast<int> (lib.size()))
         return;

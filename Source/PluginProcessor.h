@@ -8,6 +8,7 @@
 
 #include <JuceHeader.h>
 
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <optional>
@@ -302,6 +303,12 @@ private:
     std::atomic<int>         ghostMask { 0 };
     juce::String             loadedKitPath;
     mutable std::mutex       loadedKitPathMutex;
+
+    // v1.6.1-rc.7 — Logic-Pro Scripter-style COMPOSE cycler. Per-kit
+    // round-robin counter that walks the kit's groove bucket in order.
+    // Sized to comfortably exceed the number of drum-kit entries so we
+    // never index out of range; unused slots stay at 0.
+    std::array<size_t, 64>   composeCycleIndex {};
 
 public:
     // v1.1.0 mixer access for the UI.

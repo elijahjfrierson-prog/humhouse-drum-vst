@@ -180,7 +180,7 @@ private:
 
     // Action buttons.
     PlusButton                plusButton;
-    juce::Label               plusHelper     { {}, "APPEND" };
+    juce::Label               plusHelper     { {}, "COMPOSE" };
     juce::TextButton          undoButton     { "UNDO" };
     juce::TextButton          clearButton    { "CLEAR" };
 

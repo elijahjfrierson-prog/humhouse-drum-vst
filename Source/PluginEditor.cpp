@@ -129,7 +129,7 @@ void AIDrumAudioProcessorEditor::XYPad::paint (juce::Graphics& g)
         g.drawHorizontalLine ((int) y, pad.getX(), pad.getRight());
     }
 
-    auto labelFont = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+    auto labelFont = juce::Font (juce::FontOptions (10.0f, juce::Font::italic));
     labelFont.setExtraKerningFactor (0.30f);
     g.setFont (labelFont);
     g.setColour (juce::Colour (Palette::kMuted));
@@ -203,7 +203,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
                     && selectedKit <= (int) aidrum::DrumKit::YamahaPHXProgMetal;
     const bool jazz = selectedKit <= (int) aidrum::DrumKit::GretschCoolJazz;
 
-    auto titleFont = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+    auto titleFont = juce::Font (juce::FontOptions (10.0f, juce::Font::italic));
     titleFont.setExtraKerningFactor (0.30f);
     g.setFont (titleFont);
     g.setColour (juce::Colour (Palette::kMuted));
@@ -238,7 +238,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         if (label != nullptr)
         {
             g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
-            auto lf = juce::Font (juce::FontOptions (8.5f, juce::Font::bold));
+            auto lf = juce::Font (juce::FontOptions (8.5f, juce::Font::italic));
             lf.setExtraKerningFactor (0.25f);
             g.setFont (lf);
             g.drawText (label, shell.toNearestInt(), juce::Justification::centred, false);
@@ -266,7 +266,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
                 g.setColour (kitAccent.withAlpha (juce::jlimit (0.0f, 1.0f, 0.75f + f * 0.25f)));
                 g.drawRoundedRectangle (pad, 6.0f, 1.0f + 1.4f * f);
                 g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
-                auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
+                auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::italic));
                 lf.setExtraKerningFactor (0.25f);
                 g.setFont (lf);
                 g.drawText (padLabel[idx], pad.toNearestInt(), juce::Justification::centred, false);
@@ -321,7 +321,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         if (label != nullptr)
         {
             g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
-            auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
+            auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::italic));
             lf.setExtraKerningFactor (0.25f);
             g.setFont (lf);
             g.drawText (label, c.toNearestInt(), juce::Justification::centred, false);
@@ -344,7 +344,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         g.setColour (kitAccent.brighter (0.15f).withAlpha (juce::jlimit (0.0f, 1.0f, 0.72f + hatFlash * 0.28f)));
         g.drawEllipse (c, 1.5f + 1.0f * hatFlash);
         g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * hatFlash));
-        auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
+        auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::italic));
         lf.setExtraKerningFactor (0.25f);
         g.setFont (lf);
         g.drawText ("HAT", c.toNearestInt(), juce::Justification::centred, false);
@@ -366,7 +366,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         g.setColour (kitAccent.brighter (0.2f).withAlpha (juce::jlimit (0.0f, 1.0f, 0.85f + f * 0.15f)));
         g.drawEllipse (chinaRect, 1.6f + 1.0f * f);
         g.setColour (juce::Colour (Palette::kMuted).withAlpha (0.55f + 0.45f * f));
-        auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::bold));
+        auto lf = juce::Font (juce::FontOptions (7.5f, juce::Font::italic));
         lf.setExtraKerningFactor (0.25f);
         g.setFont (lf);
         g.drawText ("CHINA", chinaRect.toNearestInt(), juce::Justification::centred, false);
@@ -396,7 +396,7 @@ void AIDrumAudioProcessorEditor::MidiDragHandle::paint (juce::Graphics& g)
     g.fillRoundedRectangle (r.withWidth (4.0f), 2.0f);
 
     g.setColour (juce::Colour (Palette::kBone));
-    auto f = juce::Font (juce::FontOptions (11.5f, juce::Font::bold));
+    auto f = juce::Font (juce::FontOptions (11.5f, juce::Font::italic));
     f.setExtraKerningFactor (0.18f);
     g.setFont (f);
     g.drawText ("HIGHLIGHT  ALL  \u2192  DAW", getLocalBounds().withTrimmedLeft (10),
@@ -595,7 +595,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         s.setColour (juce::Slider::textBoxTextColourId, juce::Colour (Palette::kBone));
         addAndMakeVisible (s);
 
-        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::italic));
         f.setExtraKerningFactor (0.35f);
         l.setFont (f);
         l.setColour (juce::Label::textColourId, juce::Colour (Palette::kMuted));
@@ -647,7 +647,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     auto styleCombo = [this] (juce::ComboBox& c, juce::Label& l)
     {
         addAndMakeVisible (c);
-        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::italic));
         f.setExtraKerningFactor (0.35f);
         l.setFont (f);
         l.setColour (juce::Label::textColourId, juce::Colour (Palette::kMuted));
@@ -815,7 +815,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         { processorRef.cycleFillSelector (+1); refreshFillName(); };
 
     {
-        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::italic));
         f.setExtraKerningFactor (0.45f);
         fillSelectorTitle.setFont (f);
         fillSelectorTitle.setColour (juce::Label::textColourId,
@@ -868,11 +868,11 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         plusButton.bump();
         arrangementStrip.repaint();
     };
-    plusButton.setTooltip ("APPEND GROOVE (+) — picks a random groove from the current kit's bucket and drops it in as a new region.");
+    plusButton.setTooltip ("COMPOSE GROOVE (+) — picks a random groove from the current kit's bucket and drops it in as a new region.");
     addAndMakeVisible (plusButton);
 
     {
-        auto f = juce::Font (juce::FontOptions (11.0f, juce::Font::bold));
+        auto f = juce::Font (juce::FontOptions (11.0f, juce::Font::italic));
         f.setExtraKerningFactor (0.45f);
         plusHelper.setFont (f);
         plusHelper.setColour (juce::Label::textColourId, juce::Colour (Palette::kAccentSoft));
@@ -971,7 +971,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     styleSmallBtn (commitManualButton);
     manualButton       .setTooltip ("MANUAL — swap the arrangement for a 16-bar interactive step grid. Click cells to place kick/snare/tom/hat hits, drag to paint, alt-click to erase.");
     clearManualButton  .setTooltip ("CLEAR GRID — erase every cell in the manual step grid.");
-    commitManualButton .setTooltip ("APPEND TO ARR. — commit the manual pattern into the arrangement as a new region so you can mix it with AI-generated regions.");
+    commitManualButton .setTooltip ("COMPOSE TO ARR. — commit the manual pattern into the arrangement as a new region so you can mix it with AI-generated regions.");
     manualButton.setClickingTogglesState (true);
     manualButton.onClick = [this]
     {
@@ -983,7 +983,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         commitManualButton .setVisible (on);
         undoButton  .setVisible (! on);
         clearButton .setVisible (! on);
-        plusHelper.setText (on ? "MANUAL" : "APPEND", juce::dontSendNotification);
+        plusHelper.setText (on ? "MANUAL" : "COMPOSE", juce::dontSendNotification);
         resized();
         repaint();
     };
@@ -1088,7 +1088,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (uiScaleSlider);
 
     {
-        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::italic));
         f.setExtraKerningFactor (0.35f);
         uiScaleLabel.setFont (f);
     }
@@ -1130,7 +1130,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     velocitySlider  .setTooltip ("VELOCITY — master MIDI velocity scale (how hard the notes hit).");
     humanizeSlider  .setTooltip ("HUMANIZE — random timing + velocity jitter for a natural, non-robotic feel.");
     swingSlider     .setTooltip ("SWING — shifts off-beat 16ths toward a triplet feel (classic shuffle groove).");
-    fillsSlider     .setTooltip ("FILLS — probability that the next APPEND becomes a drum fill instead of a groove.");
+    fillsSlider     .setTooltip ("FILLS — probability that the next COMPOSE becomes a drum fill instead of a groove.");
 
     genreBox        .setTooltip ("GENRE — rock, metal, jazz, funk, hip-hop, trap, pop, country… Auto picks one per press.");
     patternLengthBox.setTooltip ("LENGTH — how long each appended region is (1/16 note → 2 bars).");
@@ -1139,7 +1139,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     drumKitBox      .setTooltip ("DRUM KIT — 20 models from jazz Ludwig to thrash Sonor. Each remaps GM notes + velocity / ghost / accent curves for a distinct timbre in your sampler.");
     halfTimeButton  .setTooltip ("HALF-TIME — snare on beat 3 only (kick on 1). Classic hip-hop / shoegaze feel.");
 
-    plusButton      .setTooltip ("APPEND — generate a new region with current settings and add it after the last one.");
+    plusButton      .setTooltip ("COMPOSE — generate a new region with current settings and add it after the last one.");
     undoButton      .setTooltip ("UNDO — remove the last appended region from the arrangement.");
     clearButton     .setTooltip ("CLEAR — wipe the arrangement and start a fresh single region.");
     dragHandle      .setTooltip ("HIGHLIGHT ALL → DAW — click to highlight every region in the arrangement, then drag onto a DAW track to drop the full multi-region arrangement as one .mid file.");
@@ -1154,7 +1154,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
 
     manualButton       .setTooltip ("MANUAL — 16-bar click-to-edit grid. Place kicks / snares / toms / hats yourself instead of letting the AI generate.");
     clearManualButton  .setTooltip ("CLEAR GRID — wipe every cell in the manual pattern.");
-    commitManualButton .setTooltip ("APPEND TO ARR. — commit the current manual 16-bar pattern as a new region in the arrangement (with DRUM KIT remap).");
+    commitManualButton .setTooltip ("COMPOSE TO ARR. — commit the current manual 16-bar pattern as a new region in the arrangement (with DRUM KIT remap).");
 
     // APVTS attachments
     auto& apvts = processorRef.getAPVTS();

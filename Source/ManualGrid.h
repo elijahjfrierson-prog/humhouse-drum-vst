@@ -79,7 +79,7 @@ namespace aidrum
             const float stepW  = grid.getWidth()  / (float) totalSteps();
 
             // Row labels + alternating row band
-            auto f = juce::Font (juce::FontOptions (9.5f, juce::Font::bold));
+            auto f = juce::Font (juce::FontOptions (9.5f, juce::Font::italic));
             f.setExtraKerningFactor (0.25f);
             g.setFont (f);
             for (size_t i = 0; i < rows.size(); ++i)
@@ -138,7 +138,7 @@ namespace aidrum
             }
 
             // Header strip — bar numbers.
-            auto hf = juce::Font (juce::FontOptions (9.0f, juce::Font::bold));
+            auto hf = juce::Font (juce::FontOptions (9.0f, juce::Font::italic));
             hf.setExtraKerningFactor (0.25f);
             g.setFont (hf);
             g.setColour (juce::Colour (GothicPalette::kMuted));
