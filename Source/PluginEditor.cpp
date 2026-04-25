@@ -540,6 +540,11 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         const float cur = processorRef.getUiScale();
         const float next = juce::jlimit (0.7f, 1.6f, cur + dy * 0.05f);
         processorRef.setUiScale (next);
+        // setTransform must accompany setSize, otherwise the editor
+        // resizes but the rendering scale stays at the previous factor
+        // — content gets cropped or letterboxed. Mirrors the UI-SCALE
+        // slider's handler.
+        setTransform (juce::AffineTransform::scale (next));
         setSize ((int) std::round (960.0f * next),
                  (int) std::round (920.0f * next));
     };
