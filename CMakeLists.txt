@@ -80,6 +80,22 @@ else()
     target_compile_definitions(AIDrumVST PRIVATE AIDRUM_HAS_BUNDLED_KIT=0)
 endif()
 
+# v1.6.1-rc.7 — bundle the HumHouse Drums logo + branding artwork so the
+# editor renders the masthead even when the user has no asset folder
+# alongside the plugin.
+file(GLOB AIDRUM_BRANDING_FILES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Branding/*.png")
+if(AIDRUM_BRANDING_FILES)
+    juce_add_binary_data(AIDrumBranding
+        HEADER_NAME BrandingData.h
+        NAMESPACE   BrandingData
+        SOURCES     ${AIDRUM_BRANDING_FILES})
+    target_link_libraries(AIDrumVST PRIVATE AIDrumBranding)
+    target_compile_definitions(AIDrumVST PRIVATE AIDRUM_HAS_BRANDING=1)
+else()
+    target_compile_definitions(AIDrumVST PRIVATE AIDRUM_HAS_BRANDING=0)
+endif()
+
 target_sources(AIDrumVST PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginProcessor.h

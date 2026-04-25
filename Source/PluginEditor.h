@@ -100,6 +100,11 @@ private:
     juce::Label               titleLabel    { {}, "HUMHOUSE  DRUMS" };
     juce::Label               subtitleLabel { {}, "\u2020 hum. house. haunt. \u2020" };
 
+    // v1.6.1-rc.7 — bundled HumHouse logo (greyscale grunge crest). Loaded
+    // once from BinaryData and painted into the masthead. When present we
+    // hide the text title so the artwork carries the brand on its own.
+    juce::Image               logoImage;
+
     aidrum::ArrangementStrip  arrangementStrip;
     aidrum::ManualGrid        manualGrid;
     KitVisualizer             kitVisualizer;

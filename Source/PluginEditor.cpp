@@ -1,5 +1,9 @@
 #include "PluginEditor.h"
 
+#if AIDRUM_HAS_BRANDING
+ #include "BrandingData.h"
+#endif
+
 using Palette = aidrum::GothicPalette;
 
 namespace
@@ -443,14 +447,26 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
              (int) std::round (920.0f * initialScale));
     setTransform (juce::AffineTransform::scale (initialScale));
 
-    // Title
+    // Title — v1.6.1-rc.7 attempt to load the bundled HumHouse crest from
+    // BinaryData; if present, paint it instead of the text title. Falling
+    // back to the kerned text means installs that strip the branding blob
+    // still get a readable masthead.
+   #if AIDRUM_HAS_BRANDING
+    {
+        int dataSize = 0;
+        if (auto* data = BrandingData::getNamedResource ("HumHouseLogo_png", dataSize))
+            logoImage = juce::ImageFileFormat::loadFrom (data, (size_t) dataSize);
+    }
+   #endif
+
     {
         auto f = juce::Font (juce::FontOptions (28.0f, juce::Font::plain));
         f.setExtraKerningFactor (0.35f);
         titleLabel.setFont (f);
         titleLabel.setJustificationType (juce::Justification::centred);
         titleLabel.setColour (juce::Label::textColourId, juce::Colour (Palette::kBone));
-        addAndMakeVisible (titleLabel);
+        if (! logoImage.isValid())
+            addAndMakeVisible (titleLabel);
 
         auto s = juce::Font (juce::FontOptions (11.0f, juce::Font::italic));
         s.setExtraKerningFactor (0.4f);
@@ -1240,6 +1256,21 @@ void AIDrumAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (juce::Colour (Palette::kBone));
     g.fillEllipse (b.getCentreX() - 2.5f, ruleY - 2.5f, 5.0f, 5.0f);
+
+    // v1.6.1-rc.7 — bundled HumHouse crest. Painted centred above the
+    // rule when present. Aspect-locked, ~78px tall so it sits flush in
+    // the existing masthead area without crowding the subtitle.
+    if (logoImage.isValid())
+    {
+        const float maxH    = 76.0f;
+        const float aspect  = (float) logoImage.getWidth() / juce::jmax (1, logoImage.getHeight());
+        const float drawH   = maxH;
+        const float drawW   = drawH * aspect;
+        const float topY    = 6.0f;
+        juce::Rectangle<float> dest (b.getCentreX() - drawW * 0.5f, topY, drawW, drawH);
+        g.setOpacity (1.0f);
+        g.drawImage (logoImage, dest, juce::RectanglePlacement::centred);
+    }
 }
 
 void AIDrumAudioProcessorEditor::resized()
