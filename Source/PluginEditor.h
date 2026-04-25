@@ -118,8 +118,36 @@ private:
     juce::Label               fillsLabel { {}, "FILLS" };
 
     // v1.5.0 — fill complexity (independent of overall COMPLEXITY).
+    // v1.6.1-rc.7 — repurposed as a FILL SELECTOR. The slider is hidden
+    // (it remains in the value tree so save files round-trip) and the
+    // user advances through fills with the prev/next arrow buttons; the
+    // current fill name is displayed in fillSelectorLabel.
     juce::Slider              fillComplexitySlider;
     juce::Label               fillComplexityLabel { {}, "FILL CX" };
+
+    // v1.6.1-rc.7 — FILL SELECTOR cycler controls.
+    juce::TextButton          fillPrevButton  { "<" };
+    juce::TextButton          fillNextButton  { ">" };
+    juce::Label               fillSelectorTitle { {}, "FILL"  };
+    juce::Label               fillSelectorName  { {}, "—" };
+
+    // v1.6.1-rc.7 — INTENSITY (drives base velocity + per-hit
+    // fluctuation). 0..1 stored, displayed as 0..127.
+    juce::Slider              intensitySlider;
+    juce::Label               intensityLabel  { {}, "INTENSITY" };
+
+    // v1.6.1-rc.7 — HALF / NORMAL / DOUBLE transport buttons. Replaces
+    // the timeScaleBox combo so the user can flip playback speed with
+    // a single click instead of a dropdown.
+    juce::TextButton          halfButton    { "HALF" };
+    juce::TextButton          normalButton  { "NORMAL" };
+    juce::TextButton          doubleButton  { "DOUBLE" };
+
+    // v1.6.1-rc.7 — GHOST per-instrument toggle. Click an instrument row
+    // label on the side of the arrangement, then click GHOST to flip
+    // that lane into "ghost-velocity" mode (greyed-out row name +
+    // forced ~0.25 velocity tier on every hit).
+    juce::TextButton          ghostButton   { "GHOST" };
 
     // v1.5.0 — manual grid step division (1/16, 1/32, 1/64).
     juce::ComboBox            stepDivBox;
@@ -202,6 +230,13 @@ private:
     std::unique_ptr<SliderAttachment> roomAmountAttachment;
     std::unique_ptr<ButtonAttachment> halfTimeAttachment;
     std::unique_ptr<ComboAttachment>  timeScaleAttachment;
+    std::unique_ptr<SliderAttachment> intensityAttachment;
+
+    // v1.6.1-rc.7 — selection state for GHOST toggle.
+    // -1 = no instrument selected. 0..5 = kick/snare/hat/tom/ride/crash.
+    // ghostMask: bitmask, bit i set = lane i is ghost-active.
+    int  ghostSelectedLane = -1;
+    int  ghostMask         = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AIDrumAudioProcessorEditor)
 };

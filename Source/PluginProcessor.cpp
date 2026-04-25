@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 #include "StarterGrooves.generated.h"
 #include "StarterGrooveKitFilter.h"
+#include "FillLibrary.generated.h"
 
 namespace
 {
@@ -75,6 +76,11 @@ namespace
     // the user can audition HALF TIME / NORMAL / DOUBLE TIME without
     // changing the host BPM.
     constexpr const char* kParamTimeScale       = "timeScale";
+
+    // v1.6.1-rc.7 — intensity knob (0..1 stored; 0..127 displayed).
+    // Drives the base velocity + per-hit fluctuation curve applied at
+    // MIDI emit time. See shapeVelocity() below.
+    constexpr const char* kParamIntensity       = "intensity";
 
     // v1.6.1-rc.6 — single bundled kit. The plugin now pivots around
     // user-loaded sample packs (LOAD KIT). We only ship one crispy
@@ -247,21 +253,29 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
+    // v1.6.1-rc.7 — all continuous 0..1 knobs get a mild skew (0.55) so
+    // the lower half of the rotary moves slower and the upper half
+    // faster. Combined with the editor-side setMouseDragSensitivity (400
+    // px/rotation) this fixes the "I barely touch it and it moves all
+    // over the place" feel. 0.55 is gentle enough that users still reach
+    // full range in a single rotation.
+    constexpr float kKnobSkew = 0.55f;
+
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamVariation, 1 }, "Variation",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.0001f, kKnobSkew), 0.5f));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamComplexity, 1 }, "Complexity",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.0001f, kKnobSkew), 0.25f));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamVelocity, 1 }, "Velocity",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.9f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.0001f, kKnobSkew), 0.9f));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamHumanize, 1 }, "Humanize",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.0001f, kKnobSkew), 0.25f));
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamPatternLength, 1 }, "Pattern Length",
@@ -278,11 +292,11 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
     // v0.6.0 Logic-Drummer controls
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamSwing, 1 }, "Swing",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.0001f, kKnobSkew), 0.0f));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamFillsProb, 1 }, "Fills",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.0001f, kKnobSkew), 0.0f));
 
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { kParamHalfTime, 1 }, "Half-Time", false));
@@ -309,7 +323,7 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamRoomAmount, 1 }, "Room Amount",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.25f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.0001f, kKnobSkew), 0.25f));
 
     // v1.6.1-rc.6 — single bundled kit (see kBundledKitChoices above).
     // The param is kept as an AudioParameterChoice (rather than deleted
@@ -319,10 +333,29 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
         juce::ParameterID { kParamBundledKit, 1 }, "Bundled Kit",
         kBundledKitChoices, 0));
 
-    // v1.5.0 — Fill complexity knob, independent of overall complexity.
+    // v1.6.1-rc.7 — Fill Complexity knob was replaced with a FILL
+    // SELECTOR cycler that rotates through the 21 user-supplied MIDI
+    // fills. The param ID is preserved (for save-file round-trip) but
+    // its range is now stepped to 21 discrete values: value * (N-1)
+    // yields the fill library index. The param still stores a float
+    // 0..1 so old save files where fillComplexity = 0.35 simply round
+    // to fill #7 instead of being orphaned.
+    {
+        const int numFills = std::max (1, (int) aidrum::fillLibrary().size());
+        const float step   = 1.0f / (float) std::max (1, numFills - 1);
+        params.push_back (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { kParamFillComplexity, 1 }, "Fill Selector",
+            juce::NormalisableRange<float> (0.0f, 1.0f, step), 0.0f));
+    }
+
+    // v1.6.1-rc.7 — INTENSITY knob (0..1 stored; 0..127 displayed). See
+    // shapeVelocity() for the curve: base = 35 + 92*intensity, and each
+    // hit fluctuates ±(7.5..15) with instrument-specific factors so
+    // kick/snare stay stable, hats breathe, and ghosts vary the most.
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { kParamFillComplexity, 1 }, "Fill Complexity",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.35f));
+        juce::ParameterID { kParamIntensity, 1 }, "Intensity",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 1.0f / 127.0f, kKnobSkew),
+        0.70f));
 
     // v1.5.0 — Manual grid step division (Logic-style 1/16, 1/32, 1/64).
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
@@ -403,6 +436,52 @@ void AIDrumAudioProcessor::setUiScale (float s)
     uiScale.store (juce::jlimit (0.75f, 1.5f, s), std::memory_order_relaxed);
 }
 
+// ============================================================================
+// v1.6.1-rc.7 — Fill selector API + Intensity readout
+// ============================================================================
+
+int AIDrumAudioProcessor::getFillLibrarySize() const
+{
+    return (int) aidrum::fillLibrary().size();
+}
+
+int AIDrumAudioProcessor::getCurrentFillIndex() const
+{
+    const int n = getFillLibrarySize();
+    if (n <= 0) return 0;
+    const float v = apvts.getRawParameterValue (kParamFillComplexity)->load();
+    return juce::jlimit (0, n - 1,
+                         (int) std::round (v * (float) (n - 1)));
+}
+
+juce::String AIDrumAudioProcessor::getCurrentFillName() const
+{
+    const auto& lib = aidrum::fillLibrary();
+    if (lib.empty()) return "—";
+    const int idx = getCurrentFillIndex();
+    return juce::String (std::string (lib[(size_t) idx].name));
+}
+
+void AIDrumAudioProcessor::cycleFillSelector (int direction)
+{
+    const int n = getFillLibrarySize();
+    if (n <= 1) return;
+    const int dir = (direction >= 0) ? 1 : -1;
+    const int next = ((getCurrentFillIndex() + dir) % n + n) % n;
+    if (auto* p = apvts.getParameter (kParamFillComplexity))
+    {
+        const float norm = (float) next / (float) (n - 1);
+        p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, norm));
+    }
+}
+
+int AIDrumAudioProcessor::getIntensity127() const
+{
+    return juce::jlimit (0, 127,
+                         (int) std::round (
+                             apvts.getRawParameterValue (kParamIntensity)->load() * 127.0f));
+}
+
 void AIDrumAudioProcessor::releaseResources() {}
 
 bool AIDrumAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -436,7 +515,22 @@ AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
 
     // v1.5.0 — fillComplexity knob is independent of the overall complexity
     // knob; this lets users dial "simple groove + intricate fills" or vice-versa.
-    req.fillComplexity = apvts.getRawParameterValue (kParamFillComplexity)->load();
+    // v1.6.1-rc.7: the knob now cycles the library fill selector. Map the
+    // stored float (0..1) to a fill-library index so makeFill() can emit
+    // that exact MIDI pattern verbatim.
+    const float fcValue = apvts.getRawParameterValue (kParamFillComplexity)->load();
+    req.fillComplexity = fcValue;
+    const int numFills = (int) aidrum::fillLibrary().size();
+    req.fillIndex      = (numFills > 0)
+        ? juce::jlimit (0, numFills - 1,
+                        static_cast<int> (std::round (fcValue * (float) (numFills - 1))))
+        : -1;
+
+    // v1.6.1-rc.7 — Intensity drives velocity base + fluctuation at emit
+    // time. The generator doesn't consume it directly (notes are still
+    // generated with their natural 0..1 velocities); shapeVelocity()
+    // scales + fluctuates when we push notes into the MIDI buffer.
+    req.intensity = apvts.getRawParameterValue (kParamIntensity)->load();
 
     // v1.6.1-rc.6 — single bundled kit. We always request the "Thrash"
     // groove profile (tight quick kick, cracking snare, bright hats;
@@ -447,6 +541,111 @@ AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
     // driving the single "Default" kit.
     req.bundledKit = aidrum::BundledKit::Thrash;
     return req;
+}
+
+// ============================================================================
+// v1.6.1-rc.7 — intensity-driven velocity shaping
+// ============================================================================
+namespace
+{
+    // v1.6.1-rc.7 — map a GM-ish note number to the arrangement strip's
+    // lane index (0=CRASH, 1=RIDE, 2=HI-HAT, 3=TOM, 4=SNARE, 5=KICK).
+    // Mirrors ArrangementStrip::laneFor() — keep them in sync.
+    inline int noteToLane (int n) noexcept
+    {
+        if (n == 35 || n == 36)                                    return 5;
+        if (n == 37 || n == 38 || n == 39 || n == 40)              return 4;
+        if (n == 41 || n == 43 || n == 45 || n == 47
+            || n == 48 || n == 50)                                  return 3;
+        if (n == 42 || n == 44 || n == 46)                          return 2;
+        if (n == 51 || n == 53 || n == 59)                          return 1;
+        return 0; // crashes / china / unknown — treat as lane 0
+    }
+
+    // Instrument-specific fluctuation factors. Kick/snare stay stable
+    // (drummers are consistent on backbeats); hats breathe more; toms
+    // accent; ghost notes (velocity < 0.4) vary the most.
+    inline float fluctuationFactorForNote (int noteNumber, float noteVelocity01) noexcept
+    {
+        // Ghost notes fluctuate most regardless of instrument
+        if (noteVelocity01 < 0.4f) return 1.35f;
+
+        switch (noteNumber)
+        {
+            // Kick
+            case 35: case 36:                                return 0.55f;
+            // Snare / side-stick
+            case 37: case 38: case 39: case 40:              return 0.50f;
+            // Toms
+            case 41: case 43: case 45: case 47: case 48: case 50: return 0.75f;
+            // Hi-hat family (breathes)
+            case 42: case 44: case 46:                       return 0.95f;
+            // Ride
+            case 51: case 53: case 59:                       return 0.80f;
+            // Crashes (hits hard, little variation)
+            case 49: case 52: case 55: case 57:              return 0.45f;
+            default:                                         return 0.70f;
+        }
+    }
+
+    // Applies the INTENSITY curve to a raw note velocity (0..1) and
+    // returns the final MIDI velocity byte (1..127).
+    //
+    // Model (matches the user's rc.7 brief: "60% intensity = velocity
+    // floats between 56% and 61%"):
+    //   centre  = intensity * 127           (the knob IS the velocity)
+    //   jitter  = uniform[-4..+1] %         (asymmetric, slightly biased
+    //             below centre — drummers more often *under*-strike than
+    //             over-strike)
+    //   factor  = fluctuationFactorForNote() (kick/snare ~0.5, hats ~0.95,
+    //             ghosts 1.35) so the kit feels like real human hands
+    //             rather than a uniform wash of jitter
+    //   ghosts  = notes whose stored velocity is < 0.4 are rendered as
+    //             ghost-strength hits (centre * 0.45 + small jitter) so
+    //             the user's authored ghost notes stay quiet even at
+    //             100% intensity
+    //   accents = notes whose stored velocity is > 0.95 punch ~6 above
+    //             centre so backbeat snares + crashes still land hard
+    inline juce::uint8 shapeVelocity (int   noteNumber,
+                                      float noteVelocity01,
+                                      float intensity01,
+                                      juce::Random& rng,
+                                      int   ghostMask = 0) noexcept
+    {
+        const float i        = juce::jlimit (0.0f, 1.0f, intensity01);
+        const float centre   = i * 127.0f;
+        const float factor   = fluctuationFactorForNote (noteNumber, noteVelocity01);
+
+        // Per-hit jitter, in MIDI velocity units, scaled by ~5% of full
+        // range. Asymmetric: -4% to +1% (matches user's 56..61 example
+        // from a 60% knob).
+        const float lowPct   = -4.0f * factor;
+        const float highPct  =  1.0f * factor;
+        const float pctJit   = lowPct + (float) rng.nextDouble() * (highPct - lowPct);
+        const float jitter   = pctJit * 1.27f; // 1% of 127
+
+        // Note-baked dynamics (ghost / accent) shift the centre a bit so
+        // the user's authored phrasing survives the intensity remap.
+        float dynamicAdj = 0.0f;
+        if (noteVelocity01 < 0.4f)        dynamicAdj = -centre * 0.55f; // ghost
+        else if (noteVelocity01 > 0.95f)  dynamicAdj = +6.0f;           // accent
+
+        // v1.6.1-rc.7 — lane-level ghost mask. If the GHOST button has
+        // been armed for this note's lane, the entire hit is rendered
+        // as a ghost (centre × 0.45) so the row "feathers" without the
+        // user having to redraw their pattern. Mapping mirrors the
+        // arrangement strip's lane table.
+        const int lane = noteToLane (noteNumber);
+        if (lane >= 0 && (ghostMask & (1 << lane)) != 0)
+        {
+            const float ghostCentre = centre * 0.45f;
+            const float v = ghostCentre + jitter * 0.5f;
+            return static_cast<juce::uint8> (juce::jlimit (1.0f, 127.0f, v));
+        }
+
+        const float v = centre + dynamicAdj + jitter;
+        return static_cast<juce::uint8> (juce::jlimit (1.0f, 127.0f, v));
+    }
 }
 
 void AIDrumAudioProcessor::appendRegion (aidrum::GenerationMode requestedMode)
@@ -916,6 +1115,12 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
     seq.addEvent (juce::MidiMessage::timeSignatureMetaEvent (4, 4));
     seq.addEvent (juce::MidiMessage::tempoMetaEvent (500000)); // 120 BPM
 
+    // v1.6.1-rc.7 — apply the INTENSITY-driven velocity shaper at MIDI
+    // export time so a saved/dragged-to-DAW MIDI clip carries the same
+    // human-feel velocities the user heard in the plugin.
+    const float intensity01 = apvts.getRawParameterValue (kParamIntensity)->load();
+    juce::Random shapeRng;
+
     double regionOffset = 0.0;
     for (const auto& region : snapshot)
     {
@@ -926,8 +1131,9 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
             const double onTicks  = (regionOffset + note.startBeat) * kPPQ;
             const double offTicks = (regionOffset + note.startBeat
                                      + std::max (0.01, note.lengthBeat)) * kPPQ;
-            const auto vel = static_cast<juce::uint8> (
-                juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f));
+            const auto vel = shapeVelocity (note.noteNumber, note.velocity,
+                                            intensity01, shapeRng,
+                                            ghostMask.load());
 
             auto on  = juce::MidiMessage::noteOn  (10, note.noteNumber, vel);
             auto off = juce::MidiMessage::noteOff (10, note.noteNumber);
@@ -1014,6 +1220,12 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
     const double blockStartBeat = playheadBeats.load (std::memory_order_acquire);
     const double blockEndBeat   = blockStartBeat + blockBeats;
 
+    // v1.6.1-rc.7 — INTENSITY-driven velocity shaping (per emit). Each
+    // call to shapeVelocity rolls fresh jitter so the kit never plays
+    // two identical hits in a row.
+    const float intensity01 = apvts.getRawParameterValue (kParamIntensity)->load();
+    juce::Random shapeRng;
+
     // v1.6.1-rc.3 — NO PLUGIN-SIDE LOOPING EVER. The user was explicit:
     // "DO NOT LOOP … play each region in the arrangement until the end".
     // Regardless of whether there is one region or ten, playback walks
@@ -1038,10 +1250,15 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                 {
                     const int sample = static_cast<int> (
                         (onBeat - blockStartBeat) * secondsPerBeat * sampleRate / timeScale);
+                    // v1.6.1-rc.7 — every emitted note gets fresh per-hit
+                    // velocity jitter from the INTENSITY curve so the kit
+                    // feels like real human strikes (no two snare hits at
+                    // 60% intensity ever land on exactly the same number).
                     midiOut.addEvent (
                         juce::MidiMessage::noteOn (10, note.noteNumber,
-                            static_cast<juce::uint8> (
-                                juce::jlimit (1.0f, 127.0f, note.velocity * 127.0f))),
+                            shapeVelocity (note.noteNumber, note.velocity,
+                                           intensity01, shapeRng,
+                                           ghostMask.load())),
                         juce::jlimit (0, numSamples - 1, sample));
                 }
 

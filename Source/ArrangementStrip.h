@@ -43,6 +43,25 @@ namespace aidrum
         // "selected" as one block before dragging it to the DAW.
         void setHighlightAll (bool on) { highlightAll = on; repaint(); }
 
+        // v1.6.1-rc.7 — bitmask of lanes that are currently in "ghost"
+        // mode. Bit 0 = CRASH, 1 = RIDE, 2 = HI-HAT, 3 = TOM, 4 = SNARE,
+        // 5 = KICK (top → bottom, mirrors the kLanes table). Lanes with
+        // their bit set are drawn with a greyed-out label so the user
+        // can see at a glance which rows the GHOST button has flipped.
+        void setGhostMask (int mask) { ghostMask = mask; repaint(); }
+        int  getGhostMask() const    { return ghostMask; }
+
+        // v1.6.1-rc.7 — fires when the user clicks a row label on the
+        // left edge of the strip. The editor uses this to remember which
+        // lane the GHOST button should target on its next click.
+        // 0..5 in the same top→bottom order as the lane table.
+        std::function<void (int laneIndex)> onLaneSelected;
+        void setSelectedLane (int laneIndex)
+        {
+            selectedLaneIdx = juce::jlimit (-1, 5, laneIndex);
+            repaint();
+        }
+
         // v1.5.0 — right-click (or alt-click) on a region tile calls this with
         // the region's index so the editor can remove it. Empty arrangement is
         // allowed; the `+` button becomes the only interactive element.
@@ -137,12 +156,37 @@ namespace aidrum
                     g.fillRect (juce::Rectangle<float> (inner.getX(), yTop,
                                                         inner.getWidth(), laneH));
                 }
-                // left-side label (outside the note area)
-                g.setColour (juce::Colour (kLanes[i].col).withAlpha (0.95f));
-                g.drawText (kLanes[i].label,
-                            juce::Rectangle<float> (labelArea.getX() + 2.0f, yTop,
-                                                    labelArea.getWidth() - 6.0f, laneH),
+
+                // v1.6.1-rc.7 — cache the label rect so mouseDown can
+                // hit-test it and fire onLaneSelected. The clickable
+                // area covers the whole left label column for that row.
+                const auto labelRect = juce::Rectangle<float> (
+                    labelArea.getX() + 2.0f, yTop,
+                    labelArea.getWidth() - 6.0f, laneH);
+                cachedLabelRects[(size_t) i] = labelRect;
+
+                // v1.6.1-rc.7 — selection ring around whichever lane the
+                // user has armed for the GHOST button. Sits behind the
+                // text so it reads as a soft halo.
+                if (i == selectedLaneIdx)
+                {
+                    g.setColour (juce::Colour (GothicPalette::kBone).withAlpha (0.12f));
+                    g.fillRoundedRectangle (labelRect.reduced (1.0f), 3.0f);
+                    g.setColour (juce::Colour (GothicPalette::kBone).withAlpha (0.6f));
+                    g.drawRoundedRectangle (labelRect.reduced (1.0f), 3.0f, 1.0f);
+                }
+
+                // v1.6.1-rc.7 — when this lane's bit is set in
+                // ghostMask, the row name greys out so the user can see
+                // at a glance which lanes the GHOST button has flipped.
+                const bool isGhost = (ghostMask & (1 << i)) != 0;
+                const auto labelCol = isGhost
+                    ? juce::Colour (GothicPalette::kMuted).withAlpha (0.85f)
+                    : juce::Colour (kLanes[i].col).withAlpha (0.95f);
+                g.setColour (labelCol);
+                g.drawText (kLanes[i].label, labelRect,
                             juce::Justification::centredRight, false);
+
                 // lane divider tick inside the note area
                 g.setColour (juce::Colour (kLanes[i].col).withAlpha (0.10f));
                 g.drawLine (inner.getX(), yTop, inner.getRight(), yTop, 0.6f);
@@ -266,6 +310,21 @@ namespace aidrum
                 }
             }
 
+            // --- v1.6.1-rc.7 hover-drag selection rectangle ----------------
+            // Painted after notes / before the playhead so the rectangle
+            // highlights the underlying notes without obscuring the cursor.
+            if (! selectionRect.isEmpty())
+            {
+                const auto sel = selectionRect.getIntersection (inner);
+                if (sel.getWidth() > 0.5f && sel.getHeight() > 0.5f)
+                {
+                    g.setColour (juce::Colour (GothicPalette::kBone).withAlpha (0.10f));
+                    g.fillRect (sel);
+                    g.setColour (juce::Colour (GothicPalette::kBone).withAlpha (0.55f));
+                    g.drawRect (sel, 1.0f);
+                }
+            }
+
             // --- Playhead ---------------------------------------------------
             if (last.totalBeats > 0.0)
             {
@@ -311,6 +370,34 @@ namespace aidrum
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            // v1.6.1-rc.7 — lane label click: arms a row for the GHOST
+            // button. Hit-tested before notes/grid so labels can never
+            // accidentally drop a kick on bar 1.
+            for (int i = 0; i < (int) cachedLabelRects.size(); ++i)
+            {
+                if (cachedLabelRects[(size_t) i].contains (e.position))
+                {
+                    selectedLaneIdx = i;
+                    if (onLaneSelected != nullptr) onLaneSelected (i);
+                    repaint();
+                    return;
+                }
+            }
+
+            // v1.6.1-rc.7 — shift+drag (or middle button) starts a
+            // rectangular selection across the grid. Used purely
+            // visually for now (matches the rc.7 brief: "HOVER CLICK
+            // AND DRAW A HIGHLIGHTED SECTION ON THE ARRANGEMENT GRID").
+            if ((e.mods.isShiftDown() || e.mods.isMiddleButtonDown())
+                && cachedGridInner.contains (e.position))
+            {
+                selecting = true;
+                selectionAnchor = e.position;
+                selectionRect = juce::Rectangle<float> (e.position, e.position);
+                repaint();
+                return;
+            }
+
             // v1.6.1-rc.5 — step-sequencer toggle. Left-click on a drawn
             // note deletes it; left-click on an empty grid cell drops a
             // new note at that lane / beat. Ctrl+click duplicates.
@@ -356,6 +443,16 @@ namespace aidrum
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
+            // v1.6.1-rc.7 — rectangular hover-drag highlight on the
+            // arrangement grid. Tracks the cursor in either direction
+            // (L→R or R→L) and re-paints a translucent overlay.
+            if (selecting)
+            {
+                selectionRect = juce::Rectangle<float> (selectionAnchor, e.position);
+                repaint();
+                return;
+            }
+
             // v1.6.1-rc.5 — drag to paint or erase across cells. The
             // dragMode latched in mouseDown decides whether we add or
             // delete as the cursor visits new grid cells.
@@ -394,6 +491,18 @@ namespace aidrum
 
         void mouseUp (const juce::MouseEvent& e) override
         {
+            // v1.6.1-rc.7 — finishing a hover-drag selection just clears
+            // the selecting flag (the rectangle stays visible until the
+            // next click). Future versions can hand the rect to a
+            // copy/paste pipeline, but the brief only required the
+            // visible highlight.
+            if (selecting)
+            {
+                selecting = false;
+                repaint();
+                return;
+            }
+
             // v1.6.1-rc.5 — mouseUp only clears drag state and handles the
             // append (+) button. Right/alt-click region delete is handled
             // exclusively in mouseDown via handleRegionDelete so a single
@@ -405,6 +514,25 @@ namespace aidrum
             lastAddedNote = -1;
             if (onAppend != nullptr && getAppendButtonBounds (inner).contains (e.position))
                 onAppend();
+        }
+
+        // v1.6.1-rc.7 — mouseWheel zoom with two-finger trackpad scroll.
+        // Holding Cmd/Ctrl + scrolling vertically grows or shrinks the
+        // visible cell width via the onZoom callback (handled by the
+        // editor). Without modifier, the wheel delegates to default
+        // behaviour so the host can still scroll lists etc.
+        std::function<void (float delta)> onZoom;
+        void mouseWheelMove (const juce::MouseEvent& e,
+                             const juce::MouseWheelDetails& w) override
+        {
+            if (onZoom != nullptr
+                && (e.mods.isCommandDown() || e.mods.isCtrlDown()
+                    || std::abs (w.deltaY) > 0.001f))
+            {
+                onZoom (w.deltaY);
+                return;
+            }
+            juce::Component::mouseWheelMove (e, w);
         }
 
         // v1.6.1-rc.4 — keyboard handler: Delete removes the selected
@@ -576,5 +704,22 @@ namespace aidrum
         int      lastAddedRegion = -1;
         double   lastAddedStepBeat = -1.0;
         int      lastAddedNote   = -1;
+
+        // v1.6.1-rc.7 — ghost mask + lane label geometry. Cached during
+        // paint() so mouseDown can hit-test the row labels on the left
+        // edge of the strip and emit onLaneSelected.
+        int                                ghostMask        = 0;
+        int                                selectedLaneIdx  = -1;
+        std::array<juce::Rectangle<float>, 6> cachedLabelRects {};
+
+        // v1.6.1-rc.7 — rectangular hover-drag selection. The user can
+        // click an empty area, drag to draw a highlight rectangle (left-
+        // to-right or right-to-left), and the strip paints the
+        // selection while it tracks the cursor. mouseUp clears the
+        // selection. Used purely visually right now (no copy/paste yet)
+        // but matches the rc.7 brief.
+        bool                   selecting        = false;
+        juce::Point<float>     selectionAnchor  {};
+        juce::Rectangle<float> selectionRect    {};
     };
 }

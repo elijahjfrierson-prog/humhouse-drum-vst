@@ -1,4 +1,5 @@
 #include "AIBackend.h"
+#include "FillLibrary.generated.h"
 
 #include <algorithm>
 #include <cmath>
@@ -646,6 +647,29 @@ namespace aidrum
 
     MidiPattern AIBackend::makeFill (const GenerationRequest& r, Genre genre) const
     {
+        // v1.6.1-rc.7 — if the user has selected a specific library fill via
+        // the FILL SELECTOR cycler, emit that MIDI pattern verbatim. The 21
+        // user-supplied fill MIDIs (Fill_01..Fill_12 + alt _1 variants) live
+        // in FillLibrary.generated.h and are canonicalised to our 6-lane
+        // GM layout at build time.
+        if (r.fillIndex >= 0)
+        {
+            const auto& lib = fillLibrary();
+            if (! lib.empty())
+            {
+                const size_t idx = static_cast<size_t> (r.fillIndex) % lib.size();
+                MidiPattern p = lib[idx].pattern;
+                // Preserve the requested length — library fills are stored at
+                // 8 beats (2 bars) by default. If the user requests a longer
+                // region we still emit the fill once and leave the tail quiet
+                // (no looping), matching the v1.6.1-rc.3 "no plugin-side loops"
+                // contract.
+                p.lengthInBeats = std::max (p.lengthInBeats, r.lengthInBeats);
+                p.isFill = true;
+                return p;
+            }
+        }
+
         const GenreProfile g = profileFor (genre);
 
         MidiPattern pattern;

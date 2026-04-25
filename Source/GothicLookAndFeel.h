@@ -2,21 +2,42 @@
 
 #include <JuceHeader.h>
 
-// Minimal, self-contained gothic LookAndFeel: black + deep purple + bone white.
+// Minimal, self-contained look-and-feel.
+//
+// v1.6.1-rc.7 — repainted from "gothic purple" to a monochrome sunburst
+// (black → graphite grey → bone white) per the rc.7 brief: "change the
+// color of the OVERALL PROJECT TO black, grey and white in a gradient
+// sunburst like shift from left to right". The class names + symbol
+// names stay (GothicLookAndFeel, GothicPalette) so the editor and other
+// callers don't have to change; only the color values shifted.
+//
 // Thin serif titles, tracked-out labels, thin-arc rotary knobs.
 namespace aidrum
 {
     struct GothicPalette
     {
-        static constexpr juce::uint32 kInk        = 0xff0b0910;  // near-black w/ slight purple
-        static constexpr juce::uint32 kPanel      = 0xff15101f;  // dark purple-black
-        static constexpr juce::uint32 kPanelEdge  = 0xff2a1f3d;
-        static constexpr juce::uint32 kAccent     = 0xff7a3cff;  // vivid purple
-        static constexpr juce::uint32 kAccentSoft = 0xffb388ff;
-        static constexpr juce::uint32 kAccentDeep = 0xff4a1e72;
-        static constexpr juce::uint32 kBone       = 0xffede7f6;
-        static constexpr juce::uint32 kSilver     = 0xffbfb6cc;
-        static constexpr juce::uint32 kMuted      = 0xff6a5f7a;
+        // Background blacks
+        static constexpr juce::uint32 kInk        = 0xff0a0a0c;  // near-black
+        static constexpr juce::uint32 kPanel      = 0xff141416;  // panel base
+        static constexpr juce::uint32 kPanelEdge  = 0xff2a2a2e;
+
+        // "Accent" is now a high-contrast bone-white so the active arc on
+        // every knob and the on-state of every button reads against the
+        // black/grey background.
+        static constexpr juce::uint32 kAccent     = 0xfff5f5f5;  // bone white
+        static constexpr juce::uint32 kAccentSoft = 0xffd6d6d6;  // light grey
+        static constexpr juce::uint32 kAccentDeep = 0xff3c3c40;  // graphite
+
+        // Foreground / labels
+        static constexpr juce::uint32 kBone       = 0xfff3f3f3;
+        static constexpr juce::uint32 kSilver     = 0xffb8b8bc;
+        static constexpr juce::uint32 kMuted      = 0xff7a7a82;
+
+        // v1.6.1-rc.7 — explicit sunburst stops (left → right).
+        // Used by PluginEditor::paint() for the background gradient.
+        static constexpr juce::uint32 kSunLeft    = 0xff050507;  // jet black
+        static constexpr juce::uint32 kSunMid     = 0xff2d2d31;  // mid graphite
+        static constexpr juce::uint32 kSunRight   = 0xffe6e6e8;  // bone glow
     };
 
     class GothicLookAndFeel : public juce::LookAndFeel_V4

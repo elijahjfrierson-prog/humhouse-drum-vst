@@ -84,7 +84,25 @@ namespace aidrum
         // v1.5.0 — fill intricacy, independent of overall complexity. Drives the
         // density of a Fill pattern (number of stick hits, ghost notes, tom rolls,
         // grace-note rudiments). Groove patterns ignore this value.
+        //
+        // v1.6.1-rc.7 — superseded by fillIndex when fillIndex >= 0. The Fill
+        // Complexity knob in the UI was replaced with a "FILL SELECTOR" cycler
+        // that rotates through the 20+ user-supplied MIDI fills. When a specific
+        // library fill is selected, we bypass the deterministic rudiment
+        // generator and emit that fill verbatim.
         float          fillComplexity = 0.5f; // 0..1
+
+        // v1.6.1-rc.7 — index into fillLibrary() (FillLibrary.generated.h).
+        // When >= 0 and < library size, makeFill() returns that exact MIDI
+        // pattern (velocity-scaled per the intensity knob). When -1 the old
+        // procedural rudiment generator is used.
+        int            fillIndex = -1;
+
+        // v1.6.1-rc.7 — intensity knob (0..1, displayed as 0..127 / 0..100%).
+        // Drives base velocity + per-hit fluctuation. Applied at MIDI emit
+        // time so user-drawn note velocities remain editable while the
+        // overall dynamic feel follows the knob.
+        float          intensity      = 0.70f; // 0..1
 
         // Drumkit voicing (v0.7.0): remaps GM notes + velocity/ghost curves.
         DrumKit        kit           = DrumKit::LudwigSupraphonicClassicRock;

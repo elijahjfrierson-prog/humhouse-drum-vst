@@ -504,6 +504,30 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         processorRef.addNoteToRegion (region, noteNumber, startBeat, 0.25, velocity);
         arrangementStrip.repaint();
     };
+
+    // v1.6.1-rc.7 — clicking a row label arms that lane for the GHOST
+    // button. The bitmask + greyed-out label re-paint happens when
+    // GHOST is then clicked (see ghostButton.onClick further down).
+    arrangementStrip.onLaneSelected = [this] (int laneIdx)
+    {
+        ghostSelectedLane = laneIdx;
+        arrangementStrip.setSelectedLane (laneIdx);
+    };
+
+    // v1.6.1-rc.7 — Cmd/Ctrl + two-finger trackpad scroll on the strip
+    // grows or shrinks the visible cell width. Implemented at the
+    // editor layer because the strip doesn't own its bounds — we
+    // resize the editor's overall scale via setUiScale() so the rest
+    // of the UI tracks. ±0.05 per scroll tick, clamped 0.7..1.6.
+    arrangementStrip.onZoom = [this] (float dy)
+    {
+        const float cur = processorRef.getUiScale();
+        const float next = juce::jlimit (0.7f, 1.6f, cur + dy * 0.05f);
+        processorRef.setUiScale (next);
+        setSize ((int) std::round (960.0f * next),
+                 (int) std::round (920.0f * next));
+    };
+
     arrangementStrip.setWantsKeyboardFocus (true);
     addAndMakeVisible (arrangementStrip);
 
@@ -537,9 +561,20 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     velocityLabel   .setVisible (false);
 
     // Rotary knobs
+    //
+    // v1.6.1-rc.7 — mouse-drag sensitivity tuned so a full rotation of
+    // the knob = a full rotation of the parameter, not "barely touch and
+    // it skids to the end". 480 px per full sweep + skewed value range
+    // (kKnobSkew = 0.55 in the processor) gives the slow-glide-on-the-
+    // bottom / fast-glide-on-the-top feel the user asked for. Velocity-
+    // based dragging is also disabled so flicks don't overshoot.
     auto addRotary = [this] (juce::Slider& s, juce::Label& l)
     {
         s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        s.setMouseDragSensitivity (480);
+        s.setVelocityBasedMode (false);
+        s.setRotaryParameters (juce::MathConstants<float>::pi * 1.2f,
+                               juce::MathConstants<float>::pi * 2.8f, true);
         s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 18);
         s.setColour (juce::Slider::textBoxTextColourId, juce::Colour (Palette::kBone));
         addAndMakeVisible (s);
@@ -561,6 +596,26 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addRotary (fillsSlider,          fillsLabel);
     addRotary (fillComplexitySlider, fillComplexityLabel);
     addRotary (roomAmountSlider,     roomAmountLabel);
+    addRotary (intensitySlider,      intensityLabel);
+
+    // v1.6.1-rc.7 — INTENSITY displayed as 0..127 (the MIDI velocity it
+    // maps to). The underlying parameter stays 0..1 in APVTS so save
+    // files survive parameter-range changes. Tooltip explains the
+    // ±1..4% per-hit fluctuation behaviour.
+    intensitySlider.textFromValueFunction = [] (double v)
+        { return juce::String (juce::roundToInt (v * 127.0)); };
+    intensitySlider.setTooltip (
+        "INTENSITY (0..127) \u2014 base MIDI velocity for every emitted hit. "
+        "Each hit fluctuates \u00b11..4% around this value (kick/snare stay "
+        "stable, hats breathe, ghosts vary the most) so the kit feels human.");
+
+    // v1.6.1-rc.7 — fillComplexitySlider is repurposed as the storage
+    // backing for the FILL SELECTOR cycler. Hide the rotary control,
+    // keep the slider alive (so its APVTS attachment still updates the
+    // param), and the cycler buttons + name label become the visible
+    // UI for the user.
+    fillComplexitySlider.setVisible (false);
+    fillComplexityLabel.setVisible (false);
     roomAmountSlider.setRange (0.0, 1.0, 0.001);
     roomAmountSlider.setValue (0.25);
     roomAmountSlider.textFromValueFunction = [] (double v)
@@ -613,8 +668,12 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // sounding drumkit instead of 5". The combo still exists (so state
     // round-trips), but only holds the single default; the real kit
     // variety comes from LOAD KIT.
+    // v1.6.1-rc.7 — single shipped kit re-labelled "Nu Rock Kit" per
+    // the rc.7 brief ("in the active kit replace the name with Nu Rock
+    // Kit instead of ludwig jazz"). Internally the bundled kit is still
+    // the rc.6 Thrash profile, just rebranded for the user-facing UI.
     drumKitBox.addItemList (
-        juce::StringArray { "Default" }, 1);
+        juce::StringArray { "Nu Rock Kit" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
     drumKitBox.onChange = [this]
     {
@@ -667,12 +726,120 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (halfTimeButton);
 
     // v1.6.1-rc.4 — TIME SCALE: HALF / NORMAL / DOUBLE playback speed.
+    // v1.6.1-rc.7 — combo hidden; three dedicated buttons drive the
+    // same APVTS param so the user can flip speed with a single click.
     timeScaleBox.addItem ("HALF",   1);
     timeScaleBox.addItem ("NORMAL", 2);
     timeScaleBox.addItem ("DOUBLE", 3);
     timeScaleBox.setSelectedId (2, juce::dontSendNotification);
     timeScaleBox.setTooltip ("TIME — playback speed of the arrangement. HALF = half-time, NORMAL = 1×, DOUBLE = double-time.");
     styleCombo (timeScaleBox, timeScaleLabel);
+    timeScaleBox.setVisible (false);
+    timeScaleLabel.setVisible (false);
+
+    // v1.6.1-rc.7 — HALF / NORMAL / DOUBLE three-button group above the
+    // arrangement grid. Click flips the combo + lights up the active
+    // button so the user always sees what speed the arrangement is
+    // playing at.
+    auto styleTransportToggle = [] (juce::TextButton& b)
+    {
+        b.setClickingTogglesState (false);
+        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
+        b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
+        b.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kBone));
+        b.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
+    };
+    styleTransportToggle (halfButton);
+    styleTransportToggle (normalButton);
+    styleTransportToggle (doubleButton);
+    halfButton  .setTooltip ("HALF-TIME — pattern plays at half speed (each beat lasts twice as long).");
+    normalButton.setTooltip ("NORMAL — pattern plays at the host BPM.");
+    doubleButton.setTooltip ("DOUBLE-TIME — pattern plays at twice the host BPM (good for double-time choruses).");
+
+    auto setTimeScale = [this] (int id)
+    {
+        timeScaleBox.setSelectedId (id, juce::sendNotificationSync);
+        halfButton  .setToggleState (id == 1, juce::dontSendNotification);
+        normalButton.setToggleState (id == 2, juce::dontSendNotification);
+        doubleButton.setToggleState (id == 3, juce::dontSendNotification);
+    };
+    halfButton  .onClick = [setTimeScale] { setTimeScale (1); };
+    normalButton.onClick = [setTimeScale] { setTimeScale (2); };
+    doubleButton.onClick = [setTimeScale] { setTimeScale (3); };
+    setTimeScale (timeScaleBox.getSelectedId() > 0 ? timeScaleBox.getSelectedId() : 2);
+
+    addAndMakeVisible (halfButton);
+    addAndMakeVisible (normalButton);
+    addAndMakeVisible (doubleButton);
+
+    // v1.6.1-rc.7 — FILL SELECTOR cycler. Prev / next arrows step
+    // through the 21 user-supplied fill MIDIs (Fill_01..Fill_12 + the
+    // _1 alts). The current fill name is displayed between the arrows
+    // so the user can find one they like by tapping through.
+    auto styleCyclerBtn = [] (juce::TextButton& b)
+    {
+        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
+        b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
+        b.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kBone));
+        b.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
+    };
+    styleCyclerBtn (fillPrevButton);
+    styleCyclerBtn (fillNextButton);
+    fillPrevButton.setTooltip ("FILL \u2190 \u2014 step to the previous fill in the library.");
+    fillNextButton.setTooltip ("FILL \u2192 \u2014 step to the next fill in the library.");
+
+    auto refreshFillName = [this]
+    {
+        fillSelectorName.setText (processorRef.getCurrentFillName(),
+                                  juce::dontSendNotification);
+    };
+    fillPrevButton.onClick = [this, refreshFillName]
+        { processorRef.cycleFillSelector (-1); refreshFillName(); };
+    fillNextButton.onClick = [this, refreshFillName]
+        { processorRef.cycleFillSelector (+1); refreshFillName(); };
+
+    {
+        auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::bold));
+        f.setExtraKerningFactor (0.45f);
+        fillSelectorTitle.setFont (f);
+        fillSelectorTitle.setColour (juce::Label::textColourId,
+                                     juce::Colour (Palette::kMuted));
+        fillSelectorTitle.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (fillSelectorTitle);
+
+        auto f2 = juce::Font (juce::FontOptions (12.0f));
+        fillSelectorName.setFont (f2);
+        fillSelectorName.setColour (juce::Label::textColourId,
+                                    juce::Colour (Palette::kBone));
+        fillSelectorName.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (fillSelectorName);
+    }
+    addAndMakeVisible (fillPrevButton);
+    addAndMakeVisible (fillNextButton);
+    refreshFillName();
+
+    // v1.6.1-rc.7 — GHOST button. Workflow: user clicks a row label on
+    // the arrangement strip (sets ghostSelectedLane via the strip's
+    // onLaneSelected callback), then clicks GHOST. The selected lane's
+    // bit in ghostMask flips; the strip greys-out the row name; new
+    // hits in that lane are emitted at ghost-velocity (~0.25). Click
+    // GHOST again on the same lane to turn it off.
+    ghostButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
+    ghostButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
+    ghostButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kBone));
+    ghostButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
+    ghostButton.setTooltip (
+        "GHOST \u2014 click an instrument row label on the arrangement "
+        "(left side), then click GHOST. The row name greys out and new "
+        "hits in that lane are emitted at ghost-velocity (~25% of full).");
+    ghostButton.onClick = [this]
+    {
+        if (ghostSelectedLane < 0 || ghostSelectedLane > 5) return;
+        ghostMask ^= (1 << ghostSelectedLane);
+        processorRef.setGhostMask (ghostMask);
+        arrangementStrip.setGhostMask (ghostMask);
+    };
+    addAndMakeVisible (ghostButton);
 
 
     // v1.6.1-rc.3 — APPEND (+) button now picks a random groove from
@@ -993,6 +1160,18 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     roomAmountAttachment    = std::make_unique<SliderAttachment> (apvts, "roomAmount",    roomAmountSlider);
     halfTimeAttachment      = std::make_unique<ButtonAttachment> (apvts, "halfTime",      halfTimeButton);
     timeScaleAttachment     = std::make_unique<ComboAttachment>   (apvts, "timeScale",     timeScaleBox);
+    intensityAttachment     = std::make_unique<SliderAttachment>  (apvts, "intensity",     intensitySlider);
+
+    // v1.6.1-rc.7 — when the timeScale combo changes from anywhere
+    // (e.g. APVTS state restore), keep the HALF / NORMAL / DOUBLE
+    // button group's lit-state in sync.
+    timeScaleBox.onChange = [this]
+    {
+        const int id = timeScaleBox.getSelectedId();
+        halfButton  .setToggleState (id == 1, juce::dontSendNotification);
+        normalButton.setToggleState (id == 2, juce::dontSendNotification);
+        doubleButton.setToggleState (id == 3, juce::dontSendNotification);
+    };
 
     startTimerHz (30);
 }
@@ -1027,22 +1206,39 @@ void AIDrumAudioProcessorEditor::paint (juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
 
-    juce::ColourGradient bg (juce::Colour (Palette::kPanel),
-                             b.getCentreX(), b.getY() + 60.0f,
-                             juce::Colour (Palette::kInk),
-                             b.getX(), b.getBottom(), true);
-    g.setGradientFill (bg);
+    // v1.6.1-rc.7 — black → graphite → bone sunburst gradient, left to
+    // right. Three colour stops (kSunLeft / kSunMid / kSunRight) so the
+    // mid grey sits at ~62% across, leaving a longer dark left side and
+    // a softer bone glow on the right (matches a sunset-from-the-east
+    // shading). Background is filled with a horizontal linear gradient
+    // first, then a subtle radial vignette in the bottom-left corner
+    // adds depth without polluting the sunburst.
+    juce::ColourGradient sun (juce::Colour (Palette::kSunLeft),
+                              b.getX(), b.getCentreY(),
+                              juce::Colour (Palette::kSunRight),
+                              b.getRight(), b.getCentreY(), false);
+    sun.addColour (0.62, juce::Colour (Palette::kSunMid));
+    g.setGradientFill (sun);
     g.fillRect (b);
 
-    // Thin horizontal rule under the title (purple gradient)
+    // Soft vignette anchored bottom-left so the title area on the left
+    // stays inky and the controls on the right glow.
+    juce::ColourGradient vignette (juce::Colour (Palette::kSunLeft).withAlpha (0.55f),
+                                   b.getX(), b.getBottom(),
+                                   juce::Colours::transparentBlack,
+                                   b.getCentreX(), b.getCentreY(), true);
+    g.setGradientFill (vignette);
+    g.fillRect (b);
+
+    // Thin horizontal rule under the title (silver gradient).
     const float ruleY = 92.0f;
     juce::ColourGradient rule (juce::Colours::transparentBlack, b.getX(), ruleY,
                                juce::Colours::transparentBlack, b.getRight(), ruleY, false);
-    rule.addColour (0.5, juce::Colour (Palette::kAccent).withAlpha (0.85f));
+    rule.addColour (0.5, juce::Colour (Palette::kSilver).withAlpha (0.85f));
     g.setGradientFill (rule);
     g.fillRect (juce::Rectangle<float> (b.getX() + 40.0f, ruleY, b.getWidth() - 80.0f, 1.0f));
 
-    g.setColour (juce::Colour (Palette::kAccent));
+    g.setColour (juce::Colour (Palette::kBone));
     g.fillEllipse (b.getCentreX() - 2.5f, ruleY - 2.5f, 5.0f, 5.0f);
 }
 
@@ -1099,8 +1295,16 @@ void AIDrumAudioProcessorEditor::resized()
     placeKnob (humanizeSlider);
     placeKnob (swingSlider);
     placeKnob (fillsSlider);
-    placeKnob (fillComplexitySlider);
+    // v1.6.1-rc.7 — fillComplexitySlider is hidden; the slot is now
+    // owned by INTENSITY (0..127 displayed). The fill selector lives
+    // in its own bar above the arrangement grid (see below).
+    placeKnob (intensitySlider);
     placeKnob (roomAmountSlider);
+
+    // Hidden controls still need bounds so attachment writes don't
+    // touch unrealised peers.
+    fillComplexitySlider.setBounds (0, 0, 0, 0);
+    fillComplexityLabel .setBounds (0, 0, 0, 0);
 
     area.removeFromTop (8);
 
@@ -1170,6 +1374,40 @@ void AIDrumAudioProcessorEditor::resized()
 
     // Kit path readout fills whatever horizontal space is left in the middle.
     kitPathLabel.setBounds (manualBar.reduced (4, 0));
+
+    area.removeFromTop (4);
+
+    // v1.6.1-rc.7 — bar above the arrangement grid: FILL ‹ name › on
+    // the left, HALF / NORMAL / DOUBLE in the centre, GHOST on the
+    // right. Replaces the old fill-complexity knob behaviour and
+    // surfaces the time-scale toggle the user asked for.
+    auto rc7Bar = area.removeFromTop (32);
+    {
+        // Fill selector cluster — prev arrow | name label | next arrow.
+        auto fillCluster = rc7Bar.removeFromLeft (240).reduced (2);
+        fillSelectorTitle.setBounds (fillCluster.removeFromLeft (40));
+        fillPrevButton.setBounds (fillCluster.removeFromLeft (28));
+        fillCluster.removeFromLeft (4);
+        fillNextButton.setBounds (fillCluster.removeFromRight (28));
+        fillCluster.removeFromRight (4);
+        fillSelectorName.setBounds (fillCluster);
+
+        rc7Bar.removeFromLeft (12);
+
+        // Time-scale cluster — HALF / NORMAL / DOUBLE.
+        auto timeCluster = rc7Bar.removeFromLeft (300).reduced (2);
+        const int btnW = (timeCluster.getWidth() - 12) / 3;
+        halfButton  .setBounds (timeCluster.removeFromLeft (btnW));
+        timeCluster.removeFromLeft (6);
+        normalButton.setBounds (timeCluster.removeFromLeft (btnW));
+        timeCluster.removeFromLeft (6);
+        doubleButton.setBounds (timeCluster);
+
+        rc7Bar.removeFromLeft (12);
+
+        // Ghost button on the far right of the bar.
+        ghostButton.setBounds (rc7Bar.removeFromRight (96).reduced (2));
+    }
 
     area.removeFromTop (4);
 

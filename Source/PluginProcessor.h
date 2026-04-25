@@ -200,6 +200,39 @@ public:
     float getUiScale() const;
     void  setUiScale (float scale);
 
+    // --- v1.6.1-rc.7 FILL SELECTOR ---------------------------------------
+    // The Fill Complexity knob was replaced with a cycler that rotates
+    // through the 21 user-supplied library fills (Fill_01..Fill_12 + alt
+    // variants). Each press of the cycler button advances to the next
+    // fill. The selected index is stored in APVTS via kParamFillComplexity
+    // (stepped to discrete fill indices) so it round-trips cleanly with
+    // host save files. Returns:
+    //   getFillLibrarySize()   — number of library fills (21)
+    //   getCurrentFillIndex()  — 0-based index of the currently selected fill
+    //   getCurrentFillName()   — human-readable label for the UI
+    //   cycleFillSelector(dir) — advance by ±1 with wraparound
+    int          getFillLibrarySize()  const;
+    int          getCurrentFillIndex() const;
+    juce::String getCurrentFillName()  const;
+    void         cycleFillSelector (int direction);
+
+    // --- v1.6.1-rc.7 INTENSITY --------------------------------------------
+    // Intensity knob (0..127 UI, stored as 0..1 float). Drives the base
+    // velocity + per-hit fluctuation curve applied at MIDI emit time.
+    // Returns the raw 0..127 value for display.
+    int getIntensity127() const;
+
+    // --- v1.6.1-rc.7 GHOST MASK -------------------------------------------
+    // Bitmask of arrangement-strip lanes that are currently in "ghost"
+    // mode (bit 0 = CRASH, 1 = RIDE, 2 = HI-HAT, 3 = TOM, 4 = SNARE,
+    // 5 = KICK — same order as the strip's lane table). Hits in those
+    // lanes are emitted with their velocity scaled by kGhostVelocity
+    // (~0.45) so the lane sounds "feathered" without the user having
+    // to redraw the pattern. Atomic so the editor + audio thread can
+    // both read it without locking.
+    int  getGhostMask() const            { return ghostMask.load(); }
+    void setGhostMask (int mask)         { ghostMask.store (mask & 0x3F); }
+
     // Backwards-compat alias — also dumps the full arrangement.
     bool writeCurrentPatternAsMidiFile (const juce::File& dest) const
     {
@@ -262,6 +295,11 @@ private:
     // kit folder is loaded.
     aidrum::SampleKit        sampleKit;
     std::atomic<float>       uiScale { 1.0f };
+
+    // v1.6.1-rc.7 — bitmask of lanes in "ghost" mode (see header doc).
+    // Atomic so the editor + audio thread can both touch it without
+    // grabbing a lock.
+    std::atomic<int>         ghostMask { 0 };
     juce::String             loadedKitPath;
     mutable std::mutex       loadedKitPathMutex;
 
