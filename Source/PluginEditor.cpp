@@ -691,27 +691,16 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     drumKitBox.addItemList (
         juce::StringArray { "Nu Rock Kit" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
-    drumKitBox.onChange = [this]
-    {
-        kitVisualizer.setSelectedKit (drumKitBox.getSelectedItemIndex());
-        // v1.6.1-rc.3 — kit changed: repopulate STARTER dropdown with
-        // just this kit's grooves, and re-map the current arrangement
-        // region (if any) to a groove from the new kit's bucket so the
-        // user immediately hears a groove that matches the kit.
-        rebuildStarterBox();
-        processorRef.remapLastRegionToKit (drumKitBox.getSelectedItemIndex());
-        arrangementStrip.repaint();
-    };
+    // NB: drumKitBox.onChange is wired up further down, AFTER the APVTS
+    // ComboBoxAttachment is created — the attachment ctor steals
+    // onChange, so chaining must happen post-attachment. See the
+    // "chain custom onChange handlers" block at the bottom of this ctor.
 
     // v1.5.0 — step-division combo (for the manual grid).
     stepDivBox.addItemList (juce::StringArray { "1/16", "1/32", "1/64" }, 1);
     styleCombo (stepDivBox, stepDivLabel);
-    stepDivBox.onChange = [this]
-    {
-        const int idx = stepDivBox.getSelectedItemIndex();
-        const int spb = (idx == 2 ? 64 : idx == 1 ? 32 : 16);
-        manualGrid.setStepsPerBar (spb);
-    };
+    // NB: stepDivBox.onChange is wired up post-attachment for the same
+    // reason as drumKitBox above.
     stepDivBox.setTooltip ("STEP DIV — manual grid draw resolution. 1/16 = Logic default, 1/64 = 4x denser for tight ghost-note work.");
 
     roomBox.addItem ("Dry / Studio",  1);
@@ -1178,16 +1167,47 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     timeScaleAttachment     = std::make_unique<ComboAttachment>   (apvts, "timeScale",     timeScaleBox);
     intensityAttachment     = std::make_unique<SliderAttachment>  (apvts, "intensity",     intensitySlider);
 
-    // v1.6.1-rc.7 — when the timeScale combo changes from anywhere
-    // (e.g. APVTS state restore), keep the HALF / NORMAL / DOUBLE
-    // button group's lit-state in sync.
-    timeScaleBox.onChange = [this]
+    // v1.6.1-rc.7 — chain custom onChange handlers AFTER the APVTS
+    // ComboBoxAttachment ctors. Each ctor steals onChange to sync its
+    // parameter, so we capture the attachment-installed lambda and
+    // assign a new lambda that calls the attachment first (so the
+    // APVTS param updates) and our UI side-effect second. Without
+    // this, HALF/NORMAL/DOUBLE were visually responsive but the
+    // timeScale param never moved (playback speed never changed),
+    // and similarly drumKit / stepDiv changes never refreshed the
+    // visualizer or manual grid.
     {
-        const int id = timeScaleBox.getSelectedId();
-        halfButton  .setToggleState (id == 1, juce::dontSendNotification);
-        normalButton.setToggleState (id == 2, juce::dontSendNotification);
-        doubleButton.setToggleState (id == 3, juce::dontSendNotification);
-    };
+        auto attached = std::move (stepDivBox.onChange);
+        stepDivBox.onChange = [this, attached = std::move (attached)]
+        {
+            if (attached) attached();
+            const int idx = stepDivBox.getSelectedItemIndex();
+            const int spb = (idx == 2 ? 64 : idx == 1 ? 32 : 16);
+            manualGrid.setStepsPerBar (spb);
+        };
+    }
+    {
+        auto attached = std::move (drumKitBox.onChange);
+        drumKitBox.onChange = [this, attached = std::move (attached)]
+        {
+            if (attached) attached();
+            kitVisualizer.setSelectedKit (drumKitBox.getSelectedItemIndex());
+            rebuildStarterBox();
+            processorRef.remapLastRegionToKit (drumKitBox.getSelectedItemIndex());
+            arrangementStrip.repaint();
+        };
+    }
+    {
+        auto attached = std::move (timeScaleBox.onChange);
+        timeScaleBox.onChange = [this, attached = std::move (attached)]
+        {
+            if (attached) attached();
+            const int id = timeScaleBox.getSelectedId();
+            halfButton  .setToggleState (id == 1, juce::dontSendNotification);
+            normalButton.setToggleState (id == 2, juce::dontSendNotification);
+            doubleButton.setToggleState (id == 3, juce::dontSendNotification);
+        };
+    }
 
     startTimerHz (30);
 }
