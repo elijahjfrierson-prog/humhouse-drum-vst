@@ -70,6 +70,13 @@ public:
     // empty (no-op).
     void regenerateCurrentRegion();
 
+    // v1.6.1-rc.12 — push the current Room dropdown + Room Amount knob
+    // values into the master reverb engine. Called from the parameter
+    // listener on Room/RoomAmount change and once after construction so
+    // the mixer panel knobs become the live source of truth (rather than
+    // being clobbered every audio block by the room preset).
+    void applyRoomPresetToMaster();
+
     // Wipes the arrangement. v1.5.0: leaves it truly empty so the + sign
     // (Logic-style) re-appears and the user picks their starting pattern.
     void clearArrangement();

@@ -82,22 +82,18 @@ namespace
     // MIDI emit time. See shapeVelocity() below.
     constexpr const char* kParamIntensity       = "intensity";
 
-    // v1.6.1-rc.6 — single bundled kit. The plugin now pivots around
-    // user-loaded sample packs (LOAD KIT). We only ship one crispy
-    // default kit so there's no "which built-in sounds the most like my
-    // track" friction; if the user wants a different character they
-    // drop in their own folder. Internally the kit is still named
-    // "Thrash" so all sample-loading / kitProfileFor() paths keep
-    // working unchanged.
-    // v1.6.1-rc.11 — two bundled kits ship now: (Nu Rock) 70's Yamaha
-    // and (Bay Grunge) Yamaha Maple. The internal names below are also
-    // the WAV-bundle prefixes scanned by SampleKit::loadBundled().
-    // Display strings live separately (see kBundledKitDisplayNames).
+    // v1.6.1-rc.12 — single bundled kit again. The (Bay Grunge) Yamaha
+    // Maple kit was pulled in rc.12 (user: "take out the second drum
+    // kit it is a liability and not routed correctly all together i do
+    // not want to see it in the new update"). The plugin now ships one
+    // crispy default kit — (Nu Rock) 70's Yamaha — and the LOAD KIT
+    // path is how users bring in their own samples. The internal name
+    // below is the WAV-bundle prefix scanned by SampleKit::loadBundled().
     const juce::StringArray kBundledKitChoices {
-        "NuRockYamaha", "BayGrungeMaple"
+        "NuRockYamaha"
     };
     const juce::StringArray kBundledKitDisplayNames {
-        "(Nu Rock) 70's Yamaha", "(Bay Grunge) Yamaha Maple"
+        "(Nu Rock) 70's Yamaha"
     };
 
     const juce::StringArray kStepDivChoices {
@@ -195,6 +191,27 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
     busMixer.params_ref ((int) aidrum::Bus::China)    .gainDb.store (-6.0f);
     busMixer.params_ref ((int) aidrum::Bus::Toms)     .gainDb.store (-1.5f);
 
+    // v1.6.1-rc.12 — non-zero per-bus reverb sends so the master reverb
+    // tail carries audible signal at default mixer settings. Without
+    // these the mixer's REV knobs felt "dead" because the master mix
+    // (set by the Room Amount knob) had nothing to wet at default.
+    // Cymbals lean wettest (they're what the ear identifies as "in a
+    // room"), kick stays driest so the low end doesn't smear.
+    busMixer.params_ref ((int) aidrum::Bus::Kick)     .reverbSend.store (0.05f);
+    busMixer.params_ref ((int) aidrum::Bus::Snare)    .reverbSend.store (0.18f);
+    busMixer.params_ref ((int) aidrum::Bus::ClosedHat).reverbSend.store (0.15f);
+    busMixer.params_ref ((int) aidrum::Bus::OpenHat)  .reverbSend.store (0.20f);
+    busMixer.params_ref ((int) aidrum::Bus::Ride)     .reverbSend.store (0.22f);
+    busMixer.params_ref ((int) aidrum::Bus::Crash)    .reverbSend.store (0.25f);
+    busMixer.params_ref ((int) aidrum::Bus::China)    .reverbSend.store (0.25f);
+    busMixer.params_ref ((int) aidrum::Bus::Toms)     .reverbSend.store (0.18f);
+
+    // v1.6.1-rc.12 — push the current Room preset values into the master
+    // reverb once on construction so default sessions hear reverb
+    // immediately. Subsequent Room/RoomAmount changes go through
+    // parameterChanged → applyRoomPresetToMaster.
+    applyRoomPresetToMaster();
+
     // v1.5.0 — Live-knob regeneration. Every APVTS parameter (variation,
     // velocity, complexity, fill complexity, humanize, swing, etc.) hot-
     // mutates the last arrangement region the moment the knob moves,
@@ -243,13 +260,36 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
     // from the 22-fill library. Cycling the FILL selector must NEVER
     // regenerate the live region — the user reported the cycler was
     // "garbage and changing the whole arrangement". Skip regen here.
-    if (id == kParamRoom || id == kParamRoomAmount
-     || id == kParamStepDiv || id == kParamTimeScale
+    // v1.6.1-rc.12 — Room dropdown + Room Amount knob now push their
+    // values into the master reverb engine ONCE on change (not every
+    // audio block). The mixer panel's REV / DEPTH knobs are then the
+    // live source of truth for the running reverb tail — dragging them
+    // is audible immediately because they aren't being clobbered every
+    // block by the room preset.
+    if (id == kParamRoom || id == kParamRoomAmount)
+    {
+        applyRoomPresetToMaster();
+        return;
+    }
+
+    if (id == kParamStepDiv || id == kParamTimeScale
      || id == kParamIntensity
      || id == kParamFillComplexity)
         return;
 
     regenerateCurrentRegion();
+}
+
+void AIDrumAudioProcessor::applyRoomPresetToMaster()
+{
+    const int   roomIdx = (int) apvts.getRawParameterValue (kParamRoom)->load();
+    const float amt     = juce::jlimit (0.0f, 1.0f,
+                              apvts.getRawParameterValue (kParamRoomAmount)->load());
+    const auto preset = aidrum::roomPresetFor (roomIdx);
+    auto& m = busMixer.master_ref();
+    m.reverbSize.store (preset.size, std::memory_order_relaxed);
+    m.reverbDamp.store (preset.damp, std::memory_order_relaxed);
+    m.reverbMix .store (preset.mix * amt, std::memory_order_relaxed);
 }
 
 void AIDrumAudioProcessor::regenerateCurrentRegion()
@@ -1112,33 +1152,32 @@ aidrum::MidiPattern AIDrumAudioProcessor::makeAutoFillForKit (int /*kitIndex*/,
     return p;
 }
 
-// v1.6.1-rc.11 — guarantees every COMPOSE / RANDOMIZE result carries a
-// fill that starts on bar-8 BEAT 1 of every 8-bar block (was bar-8 beat 2
-// in rc.10 — user changed the spec, with the annotated screenshot showing
-// the fill landing on the very downbeat of bar 8).
+// v1.6.1-rc.12 — auto-fill is now mandatory on EVERY region, not just
+// every 8-bar block (user: "adjust fills to auto load ontop of every
+// pattern and choose 1-22 based on density and intensity"). The fill
+// is always spliced into the LAST bar of the region so it resolves
+// musically into whatever follows.
 //
-// rc.11 also:
-//   * Cycles through the 22-fill library by index (FILL selector +
-//     per-block stride). The user's "Cycle between 2 of the 22 Fills
-//     Every Bar" — we lay down the FILL-selector fill at every boundary,
-//     and on multi-block regions we advance one slot per block so the
-//     library walks instead of repeating.
-//   * If a fill pattern is shorter than the bar (the fill's
-//     lengthInBeats < 4.0), the fill is *tiled* (looped end-to-end)
-//     until it reaches beat 4 of bar 8 — fulfilling "IF THE PATTERN IS
-//     INCOMPLETE REPEAT THE FILL TILL THE FULL GROOVE IS DONE".
-//   * NEVER stretches the region past its existing length. The rc.10
-//     auto-stretch to multiples of 32 was the source of "the arrangement
-//     randomly shapes out too far when clicking the FILL dial". Now if
-//     the region is shorter than 8 bars we just splice into whatever
-//     bar-8 window we *do* have (region.lengthInBeats - 4 .. end) and
-//     skip the splice entirely if the region is < 4 beats.
+// Behaviour:
+//   * Every region with lengthInBeats >= 4 (one bar) gets a fill on
+//     its last bar. Regions shorter than a bar are left alone.
+//   * Fill index (0..N-1) is chosen by DENSITY × INTENSITY (the user
+//     spec said "choose 1-22 based on density and intensity"). The
+//     COMPLEXITY knob is the density axis — light grooves draw from
+//     the low end of the fill library (gentle ghost rolls), hectic
+//     grooves draw from the top end (sludge tom flares).
+//   * The user's FILL-cycler selection still nudges the index so they
+//     can taste-test individual fills, but density × intensity is the
+//     primary driver.
+//   * If a fill pattern is shorter than a bar, the fill is tiled
+//     end-to-end until it covers the full bar window — fulfilling
+//     "IF THE PATTERN IS INCOMPLETE REPEAT THE FILL TILL THE FULL
+//     GROOVE IS DONE".
+//   * NEVER stretches the region past its existing length.
 void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     aidrum::MidiPattern& region, int seed) const
 {
-    constexpr double kBarsPerBlock = 8.0;
-    constexpr double kBeatsPerBar  = 4.0;
-    constexpr double kBlockBeats   = kBarsPerBlock * kBeatsPerBar; // 32
+    constexpr double kBeatsPerBar = 4.0;
 
     if (region.lengthInBeats < kBeatsPerBar - 1e-6)
         return; // region too short to host a 1-bar fill — skip silently
@@ -1147,101 +1186,66 @@ void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     if (fillLib.empty())
         return;
 
-    // FILL-selector index (0..21). Auto-fill picks the SAME fill the
-    // user's FILL cycler is currently on, then advances one library slot
-    // per 8-bar block so 16-bar / 24-bar regions walk through the
-    // library instead of looping the same pattern.
-    // NB: kParamFillComplexity is a normalised 0..1 parameter — multiply
-    // by (N-1) and round before casting, otherwise every value < 1.0
-    // truncates to 0 and the cycler is silently pinned to fill #0
-    // (caught by Devin Review in rc.11).
     const int numFills = static_cast<int> (fillLib.size());
-    const float fcRaw  = apvts.getRawParameterValue (kParamFillComplexity)->load();
-    const int selector = juce::jlimit (0, numFills - 1,
-                                       static_cast<int> (std::round (fcRaw * (float) (numFills - 1))));
 
-    // Compute how many full 8-bar blocks fit in this region. Every full
-    // block gets a fill anchored at bar-8 beat 1 of that block. Anything
-    // less than a full block (e.g. a 6-bar region) gets its fill
-    // anchored on the LAST bar's beat 1 — so the user always hears a
-    // fill on the closing bar of whatever they laid down.
-    const int fullBlocks = static_cast<int> (region.lengthInBeats / kBlockBeats);
-    const bool partialTail = (region.lengthInBeats - fullBlocks * kBlockBeats) > 1e-6;
+    // Density × intensity → fill index mapping. Multiplied product is
+    // 0..1 (density 0.5, intensity 0.5 → product 0.25 → fill ~1/4 of the
+    // way through the library). The FILL-cycler selection adds a small
+    // offset so the user's hand-pick still has a perceptible influence
+    // when they cycle, but the dominant axis is density × intensity.
+    const float density   = juce::jlimit (0.0f, 1.0f,
+                                apvts.getRawParameterValue (kParamComplexity)->load());
+    const float intensity = juce::jlimit (0.0f, 1.0f,
+                                apvts.getRawParameterValue (kParamIntensity)->load());
+    const float fcRaw     = juce::jlimit (0.0f, 1.0f,
+                                apvts.getRawParameterValue (kParamFillComplexity)->load());
 
-    auto fillAnchorForBlock = [&] (int b) -> double
-    {
-        if (b < fullBlocks)
-            return b * kBlockBeats + (kBarsPerBlock - 1.0) * kBeatsPerBar; // bar 8 beat 1
-        // partial tail: anchor on the LAST full bar of the region
-        const double lastBarStart = std::floor ((region.lengthInBeats - 1e-6) / kBeatsPerBar) * kBeatsPerBar;
-        return juce::jmax (0.0, lastBarStart);
-    };
+    const float densityIntensity = density * intensity;
+    const int   primaryIdx       = juce::jlimit (0, numFills - 1,
+                                       static_cast<int> (std::round (densityIntensity * (float) (numFills - 1))));
+    // FILL cycler offset (-2..+2 slots) so the selector still feels
+    // useful without overriding the density × intensity choice.
+    const int   selectorBias     = juce::jlimit (-2, 2,
+                                       static_cast<int> (std::round ((fcRaw - 0.5f) * 4.0f)));
+    const int   fillIdx          = ((primaryIdx + selectorBias) % numFills + numFills) % numFills;
 
-    // v1.6.1-rc.11 — Devin Review 🔴: a 1-bar (4-beat) region would
-    // collapse the partial-tail anchor to beat 0, meaning the fill
-    // window [0, 4) covered the *entire* user pattern and every note
-    // in their groove was wiped + replaced by the fill. Guard against
-    // that: if there are no full 8-bar blocks and the partial-tail
-    // anchor lands at beat 0 (i.e. the region is shorter than 2 bars),
-    // skip the splice entirely so the user's pattern survives. Fills
-    // are auto-generated on the bar-8 beat 1 of each *block*; a region
-    // shorter than 2 bars simply has nowhere to host one.
-    const bool partialTailFitsBar =
-        (! partialTail) || (fullBlocks > 0)
-                        || (fillAnchorForBlock (fullBlocks) >= kBeatsPerBar - 1e-6);
-    const int  effectivePartial   = (partialTail && partialTailFitsBar) ? 1 : 0;
-    const int  totalAnchors       = fullBlocks + effectivePartial;
-    if (totalAnchors == 0)
-        return;
+    // Anchor: the LAST full bar of the region. This is the universal
+    // "fill on the closing bar" placement — works for 1-bar regions
+    // (anchor = 0), 4-bar regions (anchor = 12 beats), 8-bar regions
+    // (anchor = 28 beats), etc.
+    const double lastBarStart = std::floor ((region.lengthInBeats - 1e-6) / kBeatsPerBar) * kBeatsPerBar;
+    const double anchor       = juce::jmax (0.0, lastBarStart);
+    const double windowEnd    = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
 
-    // Wipe existing notes inside every fill window so the fill reads
-    // clean. Window = [anchor, min(anchor+4, region.lengthInBeats)).
-    auto inFillWindow = [&] (double beat) noexcept
-    {
-        for (int b = 0; b < totalAnchors; ++b)
-        {
-            const double anchor = fillAnchorForBlock (b);
-            const double end    = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
-            if (beat >= anchor - 1e-6 && beat < end - 1e-6)
-                return true;
-        }
-        return false;
-    };
+    if (windowEnd - anchor < kBeatsPerBar - 1e-6)
+        return; // last bar is partial — skip rather than truncate the fill
 
+    // Wipe existing notes inside the fill window so the fill reads clean.
     region.notes.erase (
         std::remove_if (region.notes.begin(), region.notes.end(),
                         [&] (const aidrum::MidiNote& n)
-                        { return inFillWindow (n.startBeat); }),
+                        { return n.startBeat >= anchor - 1e-6 && n.startBeat < windowEnd - 1e-6; }),
         region.notes.end());
 
-    // Splice fills.
-    for (int b = 0; b < totalAnchors; ++b)
-    {
-        const int           fillIdx = (selector + b) % static_cast<int> (fillLib.size());
-        const auto&         fill    = fillLib[(size_t) fillIdx].pattern;
-        const double        anchor  = fillAnchorForBlock (b);
-        const double        windowEnd = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
-        const double        fillLen = (fill.lengthInBeats > 1e-6 ? fill.lengthInBeats : kBeatsPerBar);
+    const auto&  fill    = fillLib[(size_t) fillIdx].pattern;
+    const double fillLen = (fill.lengthInBeats > 1e-6 ? fill.lengthInBeats : kBeatsPerBar);
 
-        // Tile/loop the fill until it covers the full window.
-        // "IF THE PATTERN IS INCOMPLETE REPEAT THE FILL TILL THE FULL
-        // GROOVE IS DONE" — repeat the fill end-to-end inside the bar.
-        for (double tileOffset = 0.0;
-             tileOffset < (windowEnd - anchor) - 1e-6;
-             tileOffset += fillLen)
+    // Tile/loop the fill until it covers the full window.
+    for (double tileOffset = 0.0;
+         tileOffset < (windowEnd - anchor) - 1e-6;
+         tileOffset += fillLen)
+    {
+        for (const auto& src : fill.notes)
         {
-            for (const auto& src : fill.notes)
-            {
-                const double absBeat = anchor + tileOffset + src.startBeat;
-                if (absBeat < anchor - 1e-6) continue;
-                if (absBeat >= windowEnd - 1e-6) continue;
-                aidrum::MidiNote shifted = src;
-                shifted.startBeat = absBeat;
-                region.notes.push_back (shifted);
-            }
+            const double absBeat = anchor + tileOffset + src.startBeat;
+            if (absBeat < anchor - 1e-6) continue;
+            if (absBeat >= windowEnd - 1e-6) continue;
+            aidrum::MidiNote shifted = src;
+            shifted.startBeat = absBeat;
+            region.notes.push_back (shifted);
         }
-        juce::ignoreUnused (seed);
     }
+    juce::ignoreUnused (seed);
 
     std::sort (region.notes.begin(), region.notes.end(),
                [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
@@ -1994,18 +1998,12 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     hostTransportSeen.store (hostDrivesPlayhead, std::memory_order_relaxed);
     lastBpm.store (bpm, std::memory_order_relaxed);
 
-    // v1.3.0 Apply the ROOM preset + ROOM AMT knob to the master reverb
-    // so every block stays in sync with whatever the user has dialed in.
-    {
-        const int roomIdx = (int) apvts.getRawParameterValue (kParamRoom)->load();
-        const float amt   = apvts.getRawParameterValue (kParamRoomAmount)->load();
-        const auto preset = aidrum::roomPresetFor (roomIdx);
-        auto& m = busMixer.master_ref();
-        m.reverbSize.store (preset.size, std::memory_order_relaxed);
-        m.reverbDamp.store (preset.damp, std::memory_order_relaxed);
-        m.reverbMix .store (preset.mix * juce::jlimit (0.0f, 1.0f, amt),
-                            std::memory_order_relaxed);
-    }
+    // v1.6.1-rc.12 — Room preset / Room Amount values are now pushed into
+    // the master reverb only on change (see parameterChanged →
+    // applyRoomPresetToMaster), NOT every audio block. The mixer panel's
+    // per-bus REV + DEPTH knobs and the master REV MIX/SIZE/DAMP atomics
+    // are now the live source of truth so dragging them is audible
+    // immediately instead of being clobbered every block.
 
     // Decide whether to advance / emit this block.
     const auto state = (TransportState) transportState.load (std::memory_order_acquire);

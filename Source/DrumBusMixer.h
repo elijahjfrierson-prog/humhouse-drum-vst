@@ -249,11 +249,15 @@ namespace aidrum
                 // --- Depth (front/back 3-D positioning) --------------------
                 // depthPos > 0 = pushed back: air-LP + gain cut.
                 // depthPos < 0 = in-your-face: gentle HP to clear mud.
+                // v1.6.1-rc.12 — pulled the LP cutoff down to 1500 Hz at
+                // full back so the user actually hears the drum getting
+                // pushed into the room, and the HP up to 380 Hz at full
+                // forward so close-mic'd hits feel snappier.
                 const float depthPos = juce::jlimit (-1.0f, 1.0f,
                                            p.depth.load (std::memory_order_relaxed));
                 if (depthPos > 0.01f)
                 {
-                    const float airCutoff = juce::jmap (depthPos, 0.0f, 1.0f, 18000.0f, 2800.0f);
+                    const float airCutoff = juce::jmap (depthPos, 0.0f, 1.0f, 18000.0f, 1500.0f);
                     const float a = std::exp (-juce::MathConstants<float>::twoPi
                                             * airCutoff / (float) sr);
                     for (int c = 0; c < buf.getNumChannels(); ++c)
@@ -269,7 +273,7 @@ namespace aidrum
                 }
                 else if (depthPos < -0.01f)
                 {
-                    const float hpCutoff = juce::jmap (-depthPos, 0.0f, 1.0f, 30.0f, 260.0f);
+                    const float hpCutoff = juce::jmap (-depthPos, 0.0f, 1.0f, 30.0f, 380.0f);
                     const float a = std::exp (-juce::MathConstants<float>::twoPi
                                             * hpCutoff / (float) sr);
                     for (int c = 0; c < buf.getNumChannels(); ++c)
@@ -296,9 +300,12 @@ namespace aidrum
                     }
                 }
 
-                // --- Gain + pan (depth adds gain trim: back = -4 dB, fwd = +2 dB) -
-                const float depthTrimDb = (depthPos > 0.0f ? -depthPos * 4.0f
-                                                           :  -depthPos * 2.0f);
+                // --- Gain + pan (depth adds gain trim) ---------------------
+                // v1.6.1-rc.12 — bumped trims so depth is audible: back =
+                // up to -9 dB (drum sits in the room), forward = up to
+                // +4 dB (drum jumps to the front of the speaker).
+                const float depthTrimDb = (depthPos > 0.0f ? -depthPos * 9.0f
+                                                           :  -depthPos * 4.0f);
                 const float lin = juce::Decibels::decibelsToGain (
                                       p.gainDb.load (std::memory_order_relaxed) + depthTrimDb,
                                       -60.0f);
@@ -334,8 +341,11 @@ namespace aidrum
                 }
 
                 // --- Reverb send (depth augments: back = more, fwd = less) -
+                // v1.6.1-rc.12 — pushed the back-side bump to +0.6 so a
+                // bus dialed all the way back genuinely sounds wet, not
+                // just "barely-louder reverb tail".
                 float send = p.reverbSend.load (std::memory_order_relaxed);
-                if (depthPos > 0.0f)      send = juce::jlimit (0.0f, 1.0f, send + depthPos * 0.35f);
+                if (depthPos > 0.0f)      send = juce::jlimit (0.0f, 1.0f, send + depthPos * 0.6f);
                 else if (depthPos < 0.0f) send = juce::jlimit (0.0f, 1.0f, send * (1.0f + depthPos * 0.7f));
                 if (send > 0.001f)
                 {

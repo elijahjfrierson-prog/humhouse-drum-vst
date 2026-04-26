@@ -160,20 +160,18 @@ AIDrumAudioProcessorEditor::KitVisualizer::KitVisualizer()
     // kit render from BinaryData. If the asset is missing for any
     // reason we silently fall back to the original vector silhouette
     // in paint() so the editor still shows *something*.
+    // v1.6.1-rc.12 — (Bay Grunge) Yamaha Maple kit photo removed; the
+    // second bundled kit was pulled at the user's request.
     int sz = 0;
     if (auto* d = BrandingData::getNamedResource ("NuRockYamahaKit_png", sz))
         kitPhotoNuRock = juce::ImageFileFormat::loadFrom (d, (size_t) sz);
-    sz = 0;
-    if (auto* d = BrandingData::getNamedResource ("BayGrungeMapleKit_png", sz))
-        kitPhotoBayGrunge = juce::ImageFileFormat::loadFrom (d, (size_t) sz);
 }
 
 void AIDrumAudioProcessorEditor::KitVisualizer::setActiveBundledKit (int kitIndex)
 {
-    const int idx = juce::jlimit (0, 1, kitIndex);
-    if (idx == activeBundledKit) return;
-    activeBundledKit = idx;
-    repaint();
+    // v1.6.1-rc.12 — only one bundled kit ships now. Method retained
+    // so legacy callers compile, but kitIndex is ignored.
+    juce::ignoreUnused (kitIndex);
 }
 
 void AIDrumAudioProcessorEditor::KitVisualizer::setSelectedKit (int index)
@@ -216,12 +214,9 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
     // kit being struck. Bus index → drum mapping mirrors
     // DrumBusMixer / DrumSynth::kNumBuses (0=KICK, 1=SNARE, 2=HAT,
     // 3=SMALL TOM, 4=FLOOR TOM, 5=RIDE, 6=L CRASH, 7=R CRASH).
-    // v1.6.1-rc.11 — pick the active bundled kit's render. Falls back to
-    // the (Nu Rock) 70's Yamaha photo if the (Bay Grunge) Yamaha Maple
-    // image is missing for any reason (e.g. branding folder partial).
-    const juce::Image& kitPhoto = (activeBundledKit == 1 && kitPhotoBayGrunge.isValid())
-                                    ? kitPhotoBayGrunge
-                                    : kitPhotoNuRock;
+    // v1.6.1-rc.12 — single bundled kit again; (Bay Grunge) Yamaha Maple
+    // pulled at user request.
+    const juce::Image& kitPhoto = kitPhotoNuRock;
     if (kitPhoto.isValid())
     {
         auto inner = r.reduced (6.0f);
@@ -250,10 +245,8 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         g.drawText ("ACTIVE KIT",
                     r.toNearestInt().reduced (14, 10),
                     juce::Justification::topLeft, false);
-        // v1.6.1-rc.11 — caption follows the active bundled kit selection.
-        const juce::String kitName = (activeBundledKit == 1)
-                                       ? juce::String ("(Bay Grunge) Yamaha Maple")
-                                       : juce::String ("(Nu Rock) 70's Yamaha");
+        // v1.6.1-rc.12 — single bundled kit caption.
+        const juce::String kitName = juce::String ("(Nu Rock) 70's Yamaha");
         g.setColour (juce::Colour (Palette::kBone));
         g.drawFittedText (kitName,
                           r.toNearestInt().withTrimmedTop (22).reduced (14, 0),
@@ -709,11 +702,9 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (xyPad);
     addAndMakeVisible (kitVisualizer);
     kitVisualizer.setSelectedKit (0);
-    // v1.6.1-rc.11 — sync displayed kit render with saved bundledKit param
-    // value so a session restored with (Bay Grunge) Yamaha Maple opens on
-    // the right photo + caption instead of flashing NuRock for one frame.
-    kitVisualizer.setActiveBundledKit (
-        (int) processorRef.getAPVTS().getRawParameterValue ("bundledKit")->load());
+    // v1.6.1-rc.12 — only one bundled kit; setActiveBundledKit() is now
+    // a no-op but the call is left in place for legacy state restore.
+    kitVisualizer.setActiveBundledKit (0);
 
     complexitySlider.setVisible (false);
     velocitySlider  .setVisible (false);
@@ -840,12 +831,12 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // Kit instead of ludwig jazz"). Internally the bundled kit is still
     // the rc.6 Thrash profile, just rebranded for the user-facing UI.
     // v1.6.1-rc.8 — user requested rename: "name the kit (Nu Rock) 70's Yamaha".
-    // v1.6.1-rc.11 — second bundled kit ships now: "(Bay Grunge) Yamaha Maple".
-    // Order MUST match kBundledKitChoices in PluginProcessor.cpp so the
-    // ComboBoxAttachment to "bundledKit" hits the right WAV-prefix bucket.
+    // v1.6.1-rc.12 — single bundled kit; (Bay Grunge) Yamaha Maple was
+    // pulled at the user's request. Order MUST match kBundledKitChoices
+    // in PluginProcessor.cpp so the ComboBoxAttachment to "bundledKit"
+    // hits the right WAV-prefix bucket.
     drumKitBox.addItemList (
-        juce::StringArray { "(Nu Rock) 70's Yamaha",
-                            "(Bay Grunge) Yamaha Maple" }, 1);
+        juce::StringArray { "(Nu Rock) 70's Yamaha" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
     // NB: drumKitBox.onChange is wired up further down, AFTER the APVTS
     // ComboBoxAttachment is created — the attachment ctor steals
@@ -1398,9 +1389,8 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
             if (attached) attached();
             const int kitIdx = drumKitBox.getSelectedItemIndex();
             kitVisualizer.setSelectedKit (kitIdx);
-            // v1.6.1-rc.11 — swap the displayed 3D kit render + caption
-            // between (Nu Rock) 70's Yamaha (idx 0) and (Bay Grunge)
-            // Yamaha Maple (idx 1). Order matches kBundledKitChoices.
+            // v1.6.1-rc.12 — single bundled kit; setActiveBundledKit is a
+            // no-op but kept so legacy onChange chains still build.
             kitVisualizer.setActiveBundledKit (kitIdx);
             rebuildStarterBox();
             processorRef.remapLastRegionToKit (kitIdx);
