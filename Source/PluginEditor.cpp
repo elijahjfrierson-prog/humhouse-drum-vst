@@ -1208,11 +1208,16 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     {
         // v1.6.1-rc.10 — initial-stop heuristic shifted down a notch so
         // a first-load (scale 0.85) lands on the 75 % stop instead of
-        // bouncing between 50 % and 75 %.
+        // bouncing between 50 % and 75 %. Boundaries are the midpoints
+        // between adjacent stop scales {0.55, 0.70, 0.85, 1.00}:
+        // 0.625, 0.775, 0.925 — so cur=0.85 lands exactly on stop 3
+        // (75 %) instead of getting bucketed into stop 2 (50 %) by an
+        // off-by-one ceiling. Devin Review caught the original
+        // 0.725 / 0.975 / 1.225 thresholds bucketing 0.85 → stop 2.
         const float cur = processorRef.getUiScale();
-        const double initStop = (cur < 0.725f) ? 1.0
-                              : (cur < 0.975f) ? 2.0
-                              : (cur < 1.225f) ? 3.0
+        const double initStop = (cur < 0.625f) ? 1.0
+                              : (cur < 0.775f) ? 2.0
+                              : (cur < 0.925f) ? 3.0
                                                 : 4.0;
         uiScaleSlider.setValue (initStop, juce::dontSendNotification);
     }
