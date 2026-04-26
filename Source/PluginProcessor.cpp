@@ -90,7 +90,7 @@ namespace
     // "Thrash" so all sample-loading / kitProfileFor() paths keep
     // working unchanged.
     const juce::StringArray kBundledKitChoices {
-        "Thrash"
+        "NuRockYamaha"
     };
 
     const juce::StringArray kStepDivChoices {
@@ -169,7 +169,10 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
     // re-baking would mean every drum hit plays ~8.8% slow / 1.4 semi-
     // tones flat on a 44.1 kHz Logic Pro project.
     sampleKit.prepare (48000.0, 0);
-    currentBundledKitName = "Thrash";
+    // v1.6.1-rc.8 — bundled kit re-baked from the user's 21 light/medium/
+    // heavy/heaviest one-shots (kick x3, snare x5, floor tom x2, small tom
+    // x2, left crash x3, right crash x3, ride x3 + carried-over hats).
+    currentBundledKitName = "NuRockYamaha";
     {
         std::lock_guard<std::mutex> lock (loadedKitPathMutex);
         loadedKitPath = "Built-in Default";
@@ -560,6 +563,15 @@ AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
     // NuRock / AltRock / IndieLofi / HardRock placement profiles
     // driving the single "Default" kit.
     req.bundledKit = aidrum::BundledKit::Thrash;
+
+    // v1.6.1-rc.8 — pass the manual-grid step division through to the
+    // intelligence pad so 1/32 / 1/64 unlock musically-placed
+    // ostinatos and grace-note rolls (never random spam — see
+    // applyDrummerPost in AIBackend.cpp).
+    {
+        const int stepDivIdx = (int) apvts.getRawParameterValue (kParamStepDiv)->load();
+        req.stepsPerBar = (stepDivIdx == 2 ? 64 : stepDivIdx == 1 ? 32 : 16);
+    }
     return req;
 }
 
@@ -568,18 +580,20 @@ AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
 // ============================================================================
 namespace
 {
-    // v1.6.1-rc.7 — map a GM-ish note number to the arrangement strip's
-    // lane index (0=CRASH, 1=RIDE, 2=HI-HAT, 3=TOM, 4=SNARE, 5=KICK).
-    // Mirrors ArrangementStrip::laneFor() — keep them in sync.
+    // v1.6.1-rc.8 — map a GM-ish note number to the arrangement strip's
+    // 8-lane index (0=R CRASH, 1=L CRASH, 2=RIDE, 3=HI-HAT,
+    // 4=SMALL TOM, 5=FLOOR TOM, 6=SNARE, 7=KICK). Mirrors
+    // ArrangementStrip::laneFor() — keep them in sync.
     inline int noteToLane (int n) noexcept
     {
-        if (n == 35 || n == 36)                                    return 5;
-        if (n == 37 || n == 38 || n == 39 || n == 40)              return 4;
-        if (n == 41 || n == 43 || n == 45 || n == 47
-            || n == 48 || n == 50)                                  return 3;
-        if (n == 42 || n == 44 || n == 46)                          return 2;
-        if (n == 51 || n == 53 || n == 59)                          return 1;
-        return 0; // crashes / china / unknown — treat as lane 0
+        if (n == 35 || n == 36)                                    return 7;
+        if (n == 37 || n == 38 || n == 39 || n == 40)              return 6;
+        if (n == 41 || n == 43 || n == 45)                         return 5; // FLOOR
+        if (n == 47 || n == 48 || n == 50)                         return 4; // SMALL
+        if (n == 42 || n == 44 || n == 46)                         return 3;
+        if (n == 51 || n == 53 || n == 59)                         return 2;
+        if (n == 49)                                               return 1; // L CRASH
+        return 0; // 52 / 55 / 57 — china / right crash
     }
 
     // Instrument-specific fluctuation factors. Kick/snare stay stable

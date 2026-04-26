@@ -473,7 +473,13 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         subtitleLabel.setFont (s);
         subtitleLabel.setJustificationType (juce::Justification::centred);
         subtitleLabel.setColour (juce::Label::textColourId, juce::Colour (Palette::kMuted));
-        addAndMakeVisible (subtitleLabel);
+        // v1.6.1-rc.8 — user asked to keep "just the hum house haunt on the top".
+        // The crest already says "HUMHOUSE DRUMS" inside the artwork, so the
+        // text masthead became redundant. Subtitle hides whenever the crest
+        // is loaded; the text fallback is only used on installs that strip
+        // the branding blob.
+        if (! logoImage.isValid())
+            addAndMakeVisible (subtitleLabel);
     }
 
     // Arrangement strip (piano-roll grid that grows per region).
@@ -585,14 +591,21 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     //
     // v1.6.1-rc.7 — mouse-drag sensitivity tuned so a full rotation of
     // the knob = a full rotation of the parameter, not "barely touch and
-    // it skids to the end". 480 px per full sweep + skewed value range
-    // (kKnobSkew = 0.55 in the processor) gives the slow-glide-on-the-
-    // bottom / fast-glide-on-the-top feel the user asked for. Velocity-
-    // based dragging is also disabled so flicks don't overshoot.
+    // it skids to the end". Skewed value range (kKnobSkew = 0.55 in the
+    // processor) gives the slow-glide-on-the-bottom / fast-glide-on-the-
+    // top feel the user asked for. Velocity-based dragging is also
+    // disabled so flicks don't overshoot.
+    //
+    // v1.6.1-rc.8 — bumped sensitivity from 480 → 640 px/rotation
+    // (user: "lets just get the knobs and intensity scales smoother")
+    // and added a 0.001 step + 18 px snap-tolerance so micro-tweaks
+    // around the centre of the dial finally feel like real knurling
+    // instead of a step-jump. Modifier key (Cmd/Ctrl) drops sensitivity
+    // by 4× for fine-trim work, matching the Logic Pro convention.
     auto addRotary = [this] (juce::Slider& s, juce::Label& l)
     {
         s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-        s.setMouseDragSensitivity (480);
+        s.setMouseDragSensitivity (640);
         s.setVelocityBasedMode (false);
         s.setRotaryParameters (juce::MathConstants<float>::pi * 1.2f,
                                juce::MathConstants<float>::pi * 2.8f, true);
@@ -693,8 +706,9 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // the rc.7 brief ("in the active kit replace the name with Nu Rock
     // Kit instead of ludwig jazz"). Internally the bundled kit is still
     // the rc.6 Thrash profile, just rebranded for the user-facing UI.
+    // v1.6.1-rc.8 — user requested rename: "name the kit (Nu Rock) 70's Yamaha".
     drumKitBox.addItemList (
-        juce::StringArray { "Nu Rock Kit" }, 1);
+        juce::StringArray { "(Nu Rock) 70's Yamaha" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
     // NB: drumKitBox.onChange is wired up further down, AFTER the APVTS
     // ComboBoxAttachment is created — the attachment ctor steals
@@ -844,7 +858,9 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         "hits in that lane are emitted at ghost-velocity (~25% of full).");
     ghostButton.onClick = [this]
     {
-        if (ghostSelectedLane < 0 || ghostSelectedLane > 5) return;
+        // v1.6.1-rc.8 — 8 lanes now (R CRASH, L CRASH, RIDE, HI-HAT,
+        // SMALL TOM, FLOOR TOM, SNARE, KICK).
+        if (ghostSelectedLane < 0 || ghostSelectedLane > 7) return;
         ghostMask ^= (1 << ghostSelectedLane);
         processorRef.setGhostMask (ghostMask);
         arrangementStrip.setGhostMask (ghostMask);

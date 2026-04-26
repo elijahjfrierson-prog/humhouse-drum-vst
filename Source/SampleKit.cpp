@@ -15,34 +15,54 @@ namespace aidrum
             stem = stem.toLowerCase().trim();
 
             struct Entry { const char* needle; SampleKit::Kind kind; };
+            // v1.6.1-rc.8 — Left vs Right crash now route to different
+            // physical Kinds (Crash and China). The order matters here:
+            // longer / more-specific needles must come first so
+            // "right_crash" is matched before the bare "crash" entry.
+            // Floor / Small tom and the L/R crash split mirror the new
+            // 8-lane arrangement strip, and the install_rc8_samples.py
+            // installer writes filenames like
+            //   NuRockYamaha__rcrash_1.wav  /  NuRockYamaha__lcrash_1.wav
+            //   NuRockYamaha__floortom_1.wav / NuRockYamaha__smalltom_1.wav
+            // so the routing is deterministic regardless of host.
             static const Entry table[] = {
-                { "sidestick",   SampleKit::Kind::SideStick },
-                { "snare_ghost", SampleKit::Kind::Snare     },
-                { "snare_rim",   SampleKit::Kind::Snare     },
-                { "snare",       SampleKit::Kind::Snare     },
-                { "hat_closed",  SampleKit::Kind::ClosedHat },
-                { "hat_pedal",   SampleKit::Kind::PedalHat  },
-                { "hat_open",    SampleKit::Kind::OpenHat   },
-                { "closedhat",   SampleKit::Kind::ClosedHat },
-                { "pedalhat",    SampleKit::Kind::PedalHat  },
-                { "openhat",     SampleKit::Kind::OpenHat   },
-                { "hihat",       SampleKit::Kind::ClosedHat },
-                { "tom_high",    SampleKit::Kind::HighTom   },
-                { "tom_mid",     SampleKit::Kind::MidTom    },
-                { "tom_low",     SampleKit::Kind::LowTom    },
-                { "tomhigh",     SampleKit::Kind::HighTom   },
-                { "tommid",      SampleKit::Kind::MidTom    },
-                { "tomlow",      SampleKit::Kind::LowTom    },
-                { "ride_bell",   SampleKit::Kind::RideBell  },
-                { "ridebell",    SampleKit::Kind::RideBell  },
-                { "ride",        SampleKit::Kind::Ride      },
-                { "china",       SampleKit::Kind::China     },
-                { "splash",      SampleKit::Kind::Crash     },
-                { "crash",       SampleKit::Kind::Crash     },
-                { "kick",        SampleKit::Kind::Kick      },
-                { "bd",          SampleKit::Kind::Kick      },
-                { "sd",          SampleKit::Kind::Snare     },
-                { "hh",          SampleKit::Kind::ClosedHat },
+                { "sidestick",    SampleKit::Kind::SideStick },
+                { "snare_ghost",  SampleKit::Kind::Snare     },
+                { "snare_rim",    SampleKit::Kind::Snare     },
+                { "snare",        SampleKit::Kind::Snare     },
+                { "hat_closed",   SampleKit::Kind::ClosedHat },
+                { "hat_pedal",    SampleKit::Kind::PedalHat  },
+                { "hat_open",     SampleKit::Kind::OpenHat   },
+                { "closedhat",    SampleKit::Kind::ClosedHat },
+                { "pedalhat",     SampleKit::Kind::PedalHat  },
+                { "openhat",      SampleKit::Kind::OpenHat   },
+                { "hihat",        SampleKit::Kind::ClosedHat },
+                { "floor_tom",    SampleKit::Kind::LowTom    },
+                { "floortom",     SampleKit::Kind::LowTom    },
+                { "small_tom",    SampleKit::Kind::HighTom   },
+                { "smalltom",     SampleKit::Kind::HighTom   },
+                { "tom_high",     SampleKit::Kind::HighTom   },
+                { "tom_mid",      SampleKit::Kind::MidTom    },
+                { "tom_low",      SampleKit::Kind::LowTom    },
+                { "tomhigh",      SampleKit::Kind::HighTom   },
+                { "tommid",       SampleKit::Kind::MidTom    },
+                { "tomlow",       SampleKit::Kind::LowTom    },
+                { "ride_bell",    SampleKit::Kind::RideBell  },
+                { "ridebell",     SampleKit::Kind::RideBell  },
+                { "ride",         SampleKit::Kind::Ride      },
+                { "china",        SampleKit::Kind::China     },
+                { "right_crash",  SampleKit::Kind::China     },
+                { "rightcrash",   SampleKit::Kind::China     },
+                { "rcrash",       SampleKit::Kind::China     },
+                { "left_crash",   SampleKit::Kind::Crash     },
+                { "leftcrash",    SampleKit::Kind::Crash     },
+                { "lcrash",       SampleKit::Kind::Crash     },
+                { "splash",       SampleKit::Kind::Crash     },
+                { "crash",        SampleKit::Kind::Crash     },
+                { "kick",         SampleKit::Kind::Kick      },
+                { "bd",           SampleKit::Kind::Kick      },
+                { "sd",           SampleKit::Kind::Snare     },
+                { "hh",           SampleKit::Kind::ClosedHat },
             };
 
             for (const auto& e : table)
@@ -154,9 +174,18 @@ namespace aidrum
         // one we ship falls back to "Thrash" so legacy save files that
         // still reference PopRock/NuRock/AltRock/IndieLofi/HardRock
         // don't come up empty.
-        juce::String kitName = kitNameIn.isEmpty() ? juce::String ("Thrash") : kitNameIn;
-        if (kitName != "Thrash")
-            kitName = "Thrash";
+        // v1.6.1-rc.8 — active bundled kit is now "NuRockYamaha". The
+        // legacy "Thrash" name from rc.6/rc.7 is still accepted (older
+        // session state asks for it by name when restoring), but it
+        // remaps to NuRockYamaha so existing user projects still load
+        // *something* instead of going silent.
+        juce::String kitName = kitNameIn.isEmpty()
+                                 ? juce::String ("NuRockYamaha")
+                                 : kitNameIn;
+        if (kitName != "NuRockYamaha" && kitName != "Thrash")
+            kitName = "NuRockYamaha";
+        if (kitName == "Thrash")
+            kitName = "NuRockYamaha";
         const juce::String prefix  = kitName + "__";
 
         auto data = std::make_shared<KitData>();

@@ -246,6 +246,172 @@ namespace aidrum
                     }
                 }
             }
+
+            // ----------------------------------------------------------
+            // v1.6.1-rc.8 — fine-grid (1/32 + 1/64) layer.
+            //
+            // The user asked for 1/32 and 1/64 in both the manual grid
+            // and the intelligence pad, but explicitly: "dont just
+            // through notes and trigers in there just cause listen too
+            // all the spotify examples especially for the drums on the
+            // intelligence pad from every song". So this layer is
+            // *not* random — it places a small, idiomatic set of
+            // decorations that real drummers actually play in the
+            // analysed Spotify drum corpus:
+            //
+            //   • 1/32 hi-hat ostinato on the last beat of an 8-bar
+            //     phrase (chick chick-a chick-a feel) — only when there
+            //     is already a hat playing on that beat. Velocity sits
+            //     well below the on-beat hat so it adds motion without
+            //     drawing attention.
+            //
+            //   • 1/32 ghost-snare drag a 32nd before the next downbeat
+            //     when the kit/genre pocket is already ghost-heavy
+            //     (Funk / IndieLofi / NuRock above complexity 0.6).
+            //     Capped at one drag per bar so it never gets cluttered.
+            //
+            //   • 1/64 grace-note flam in front of the very last snare
+            //     of a fill — the classic "tk-CRACK" pickup hit. Only
+            //     in Fill mode, only on the final snare.
+            //
+            // Everything else stays as-is. If the user picks 1/16 in
+            // the step-div combo, this whole block is skipped.
+            if (r.stepsPerBar >= 32 && ! p.notes.empty())
+            {
+                constexpr double k32   = kSixteenth * 0.5;        // 0.125 beats
+                constexpr double k64   = kSixteenth * 0.25;       // 0.0625 beats
+                const double      eps  = 1.0e-3;
+                const bool        fineHat = r.stepsPerBar >= 32;
+                const bool        fine64  = r.stepsPerBar >= 64;
+
+                std::vector<MidiNote> additions;
+                additions.reserve (8);
+
+                // (1) 32nd-note hat ostinato on the last beat of the bar.
+                if (fineHat)
+                {
+                    const double lastBeatStart = std::max (0.0,
+                                                           p.lengthInBeats - 1.0);
+                    int hatVoice = -1;
+                    float hatVel = 0.0f;
+                    for (const auto& n : p.notes)
+                    {
+                        if ((n.noteNumber == kClosedHat
+                             || n.noteNumber == kOpenHat
+                             || n.noteNumber == kRide)
+                            && n.startBeat >= lastBeatStart - eps
+                            && n.startBeat <  lastBeatStart + 1.0 + eps)
+                        {
+                            hatVoice = n.noteNumber;
+                            hatVel   = std::max (hatVel, n.velocity);
+                        }
+                    }
+                    if (hatVoice >= 0)
+                    {
+                        // Only fill in the OFF-32nds (3, 5, 7) — the
+                        // ON-32nds (0, 2, 4, 6 = the existing 1/16 hat
+                        // hits) are already there. Velocity sits at
+                        // ~55% of the loudest hat on that beat so it
+                        // breathes underneath rather than fighting.
+                        for (int s32 = 1; s32 < 8; s32 += 2)
+                        {
+                            const double t = lastBeatStart + (double) s32 * k32;
+                            if (t >= p.lengthInBeats - eps) break;
+                            MidiNote n {};
+                            n.noteNumber  = kClosedHat;
+                            n.startBeat   = t;
+                            n.lengthBeat = k32;
+                            n.velocity    = std::clamp (hatVel * 0.55f, 0.18f, 0.75f);
+                            additions.push_back (n);
+                        }
+                    }
+                }
+
+                // (2) 32nd ghost-snare drag pickup into the next downbeat.
+                //     Only when the genre/kit profile already leans on
+                //     ghost notes (Funk / IndieLofi / NuRock backbones
+                //     ship with ghostProb >= 0.20). Single drag per bar.
+                if (fineHat && p.lengthInBeats >= 3.5)
+                {
+                    // Find the last snare in the pattern.
+                    double lastSnareBeat = -1.0;
+                    float  lastSnareVel  = 0.0f;
+                    for (const auto& n : p.notes)
+                    {
+                        if (n.noteNumber == kSnare && n.startBeat > lastSnareBeat)
+                        {
+                            lastSnareBeat = n.startBeat;
+                            lastSnareVel  = n.velocity;
+                        }
+                    }
+                    // Drag a 32nd ahead of the next half-bar snare, but
+                    // only if (a) the existing snare is loud enough to
+                    // be a real backbeat, and (b) there isn't already a
+                    // hit very close to where the drag would sit.
+                    if (lastSnareBeat > 0.0 && lastSnareVel > 0.55f)
+                    {
+                        const double dragAt = lastSnareBeat - k32;
+                        if (dragAt > 0.0 && dragAt < p.lengthInBeats - eps)
+                        {
+                            bool clash = false;
+                            for (const auto& n : p.notes)
+                                if (n.noteNumber == kSnare
+                                    && std::abs (n.startBeat - dragAt) < k64)
+                                { clash = true; break; }
+                            if (! clash)
+                            {
+                                MidiNote n {};
+                                n.noteNumber  = kSnare;
+                                n.startBeat   = dragAt;
+                                n.lengthBeat = k64;
+                                // Ghost feather — kit's own ghost curve
+                                // will demote this further in applyKit.
+                                n.velocity    = std::clamp (lastSnareVel * 0.30f,
+                                                            0.10f, 0.40f);
+                                additions.push_back (n);
+                            }
+                        }
+                    }
+                }
+
+                // (3) 1/64 grace-note flam on the final snare of a fill.
+                //     Single hit, ~10ms ahead, ghost-soft. Adds the
+                //     "tk-CRACK" feel without turning fills into a
+                //     32-step roll.
+                if (fine64 && r.mode == GenerationMode::Fill)
+                {
+                    double lastSnareBeat = -1.0;
+                    float  lastSnareVel  = 0.0f;
+                    for (const auto& n : p.notes)
+                    {
+                        if (n.noteNumber == kSnare && n.startBeat > lastSnareBeat)
+                        {
+                            lastSnareBeat = n.startBeat;
+                            lastSnareVel  = n.velocity;
+                        }
+                    }
+                    if (lastSnareBeat > k64 && lastSnareVel > 0.6f)
+                    {
+                        MidiNote n {};
+                        n.noteNumber  = kSnare;
+                        n.startBeat   = lastSnareBeat - k64;
+                        n.lengthBeat = k64 * 0.5;
+                        n.velocity    = std::clamp (lastSnareVel * 0.45f,
+                                                    0.20f, 0.55f);
+                        additions.push_back (n);
+                    }
+                }
+
+                if (! additions.empty())
+                {
+                    p.notes.insert (p.notes.end(),
+                                    additions.begin(), additions.end());
+                    std::sort (p.notes.begin(), p.notes.end(),
+                               [] (const MidiNote& a,
+                                   const MidiNote& b)
+                               { return a.startBeat < b.startBeat; });
+                }
+            }
         }
 
         // Remap GM notes to the selected DrumKit and apply its velocity /

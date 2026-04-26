@@ -43,22 +43,25 @@ namespace aidrum
         // "selected" as one block before dragging it to the DAW.
         void setHighlightAll (bool on) { highlightAll = on; repaint(); }
 
-        // v1.6.1-rc.7 — bitmask of lanes that are currently in "ghost"
-        // mode. Bit 0 = CRASH, 1 = RIDE, 2 = HI-HAT, 3 = TOM, 4 = SNARE,
-        // 5 = KICK (top → bottom, mirrors the kLanes table). Lanes with
-        // their bit set are drawn with a greyed-out label so the user
-        // can see at a glance which rows the GHOST button has flipped.
+        // v1.6.1-rc.8 — bitmask of lanes that are currently in "ghost"
+        // mode. Bit 0 = R CRASH, 1 = L CRASH, 2 = RIDE, 3 = HI-HAT,
+        // 4 = SMALL TOM, 5 = FLOOR TOM, 6 = SNARE, 7 = KICK
+        // (top → bottom, mirrors the kLanes table). Lanes with their bit
+        // set are drawn with a greyed-out label so the user can see at a
+        // glance which rows the GHOST button has flipped.
         void setGhostMask (int mask) { ghostMask = mask; repaint(); }
         int  getGhostMask() const    { return ghostMask; }
 
         // v1.6.1-rc.7 — fires when the user clicks a row label on the
         // left edge of the strip. The editor uses this to remember which
         // lane the GHOST button should target on its next click.
-        // 0..5 in the same top→bottom order as the lane table.
+        // v1.6.1-rc.8 — 0..7 in the same top→bottom order as the lane
+        // table (R CRASH / L CRASH / RIDE / HI-HAT / SMALL TOM / FLOOR
+        // TOM / SNARE / KICK).
         std::function<void (int laneIndex)> onLaneSelected;
         void setSelectedLane (int laneIndex)
         {
-            selectedLaneIdx = juce::jlimit (-1, 5, laneIndex);
+            selectedLaneIdx = juce::jlimit (-1, 7, laneIndex);
             repaint();
         }
 
@@ -115,32 +118,42 @@ namespace aidrum
             cachedGridInner = inner;
             cachedPxPerBeat = pxPerBeat;
 
-            // --- v1.6.1-rc.2 lane definitions — 6 fixed rows, each a distinct
-            // colour. Top → bottom: CRASH, RIDE, HI-HAT, TOM, SNARE, KICK.
-            // Order mirrors the manual grid so the editor is consistent.
+            // --- v1.6.1-rc.8 lane definitions — 8 fixed rows, each a distinct
+            // colour. Top → bottom: R CRASH, L CRASH, RIDE, HI-HAT,
+            // SMALL TOM, FLOOR TOM, SNARE, KICK. Splits the rc.7 single
+            // CRASH lane into L+R and the single TOM lane into Small+Floor
+            // so the new (Nu Rock) 70's Yamaha kit's distinct one-shots get
+            // their own dedicated lane.
             struct Lane { const char* label; juce::uint32 col; };
-            static const Lane kLanes[6] = {
-                { "CRASH",  0xffff6f9c },  // pink rose
-                { "RIDE",   0xff6ec6ff },  // sky blue (new in rc.2)
-                { "HI-HAT", 0xffffc857 },  // amber
-                { "TOM",    0xff9d7dff },  // lilac
-                { "SNARE",  0xffede7f6 },  // bone white
-                { "KICK",   0xff3ee0c1 },  // teal
+            static const Lane kLanes[8] = {
+                { "R CRASH",   0xfff04f7e },  // deep rose (right-side)
+                { "L CRASH",   0xffff8fa9 },  // pink rose  (left-side)
+                { "RIDE",      0xff6ec6ff },  // sky blue
+                { "HI-HAT",    0xffffc857 },  // amber
+                { "SMALL TOM", 0xff9d7dff },  // lilac
+                { "FLOOR TOM", 0xff7558d4 },  // purple
+                { "SNARE",     0xffede7f6 },  // bone white
+                { "KICK",      0xff3ee0c1 },  // teal
             };
-            const int   kNumLanes = 6;
+            const int   kNumLanes = 8;
             const float laneH     = inner.getHeight() / (float) kNumLanes;
 
             auto laneFor = [] (int n) -> int
             {
-                // 0=CRASH (49/55/57/52/china), 1=RIDE (51/53/59), 2=HI-HAT,
-                // 3=TOM, 4=SNARE (+ clap / rimshot), 5=KICK
-                if (n == 35 || n == 36)                                      return 5;
-                if (n == 37 || n == 38 || n == 39 || n == 40)                return 4;
-                if (n == 41 || n == 43 || n == 45 || n == 47
-                    || n == 48 || n == 50)                                   return 3;
-                if (n == 42 || n == 44 || n == 46)                           return 2;
-                if (n == 51 || n == 53 || n == 59)                           return 1;
-                return 0;  // 49/52/55/57 etc — crashes/china
+                // GM-style mapping. Right Crash sits on note 57 (Crash 2)
+                // plus China (52/55) since the new kit routes the right
+                // crash sample into Kind::China; Left Crash on 49.
+                // Floor Tom = LowTom (41/43/45); Small Tom = MidTom/HighTom
+                // (47/48/50). Snare-family (37–40) and Kick (35/36) are
+                // unchanged.
+                if (n == 35 || n == 36)                                      return 7;
+                if (n == 37 || n == 38 || n == 39 || n == 40)                return 6;
+                if (n == 41 || n == 43 || n == 45)                           return 5; // FLOOR
+                if (n == 47 || n == 48 || n == 50)                           return 4; // SMALL
+                if (n == 42 || n == 44 || n == 46)                           return 3;
+                if (n == 51 || n == 53 || n == 59)                           return 2;
+                if (n == 49)                                                 return 1; // L CRASH
+                return 0;  // 52/55/57 — china / right crash
             };
 
             // --- Lane labels + alternating lane bands ---------------------
@@ -590,13 +603,13 @@ namespace aidrum
             if (! cachedGridInner.contains (p)) return false;
 
             // Lane → midi note. Order must mirror laneFor() in paint().
-            //  0=CRASH(49), 1=RIDE(51), 2=HI-HAT(42), 3=TOM(45),
-            //  4=SNARE(38), 5=KICK(36)
-            static constexpr int kLaneNote[6] = { 49, 51, 42, 45, 38, 36 };
+            //  0=R CRASH(57), 1=L CRASH(49), 2=RIDE(51), 3=HI-HAT(42),
+            //  4=SMALL TOM(48), 5=FLOOR TOM(43), 6=SNARE(38), 7=KICK(36)
+            static constexpr int kLaneNote[8] = { 57, 49, 51, 42, 48, 43, 38, 36 };
 
-            const float laneH = cachedGridInner.getHeight() / 6.0f;
+            const float laneH = cachedGridInner.getHeight() / 8.0f;
             int lane = (int) ((p.y - cachedGridInner.getY()) / laneH);
-            lane = juce::jlimit (0, 5, lane);
+            lane = juce::jlimit (0, 7, lane);
 
             const double totalBeats = std::max (1.0, last.totalBeats);
             const double absBeat = juce::jlimit (
@@ -720,7 +733,7 @@ namespace aidrum
         // edge of the strip and emit onLaneSelected.
         int                                ghostMask        = 0;
         int                                selectedLaneIdx  = -1;
-        std::array<juce::Rectangle<float>, 6> cachedLabelRects {};
+        std::array<juce::Rectangle<float>, 8> cachedLabelRects {};
 
         // v1.6.1-rc.7 — rectangular hover-drag selection. The user can
         // click an empty area, drag to draw a highlight rectangle (left-

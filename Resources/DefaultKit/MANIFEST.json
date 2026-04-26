@@ -1,0 +1,32 @@
+{
+  "kit": "NuRockYamaha",
+  "files": [
+    "NuRockYamaha__china_1.wav",
+    "NuRockYamaha__china_2.wav",
+    "NuRockYamaha__china_3.wav",
+    "NuRockYamaha__crash_1.wav",
+    "NuRockYamaha__crash_2.wav",
+    "NuRockYamaha__crash_3.wav",
+    "NuRockYamaha__hat_closed_1.wav",
+    "NuRockYamaha__hat_open_1.wav",
+    "NuRockYamaha__hat_pedal_1.wav",
+    "NuRockYamaha__kick_1.wav",
+    "NuRockYamaha__kick_2.wav",
+    "NuRockYamaha__kick_3.wav",
+    "NuRockYamaha__ride_1.wav",
+    "NuRockYamaha__ride_2.wav",
+    "NuRockYamaha__ride_3.wav",
+    "NuRockYamaha__ride_bell_1.wav",
+    "NuRockYamaha__snare_1.wav",
+    "NuRockYamaha__snare_2.wav",
+    "NuRockYamaha__snare_3.wav",
+    "NuRockYamaha__snare_4.wav",
+    "NuRockYamaha__snare_5.wav",
+    "NuRockYamaha__tom_high_1.wav",
+    "NuRockYamaha__tom_high_2.wav",
+    "NuRockYamaha__tom_low_1.wav",
+    "NuRockYamaha__tom_low_2.wav",
+    "NuRockYamaha__tom_mid_1.wav",
+    "NuRockYamaha__tom_mid_2.wav"
+  ]
+}

@@ -580,10 +580,17 @@ namespace aidrum
                     case 41: case 43: return Kind::LowTom;
                     case 45: case 47: return Kind::MidTom;
                     case 48: case 50: return Kind::HighTom;
-                    case 49: case 57: case 55: return Kind::Crash;
+                    // v1.6.1-rc.8 — Left Crash on note 49 routes to
+                    // Kind::Crash (the new "Left+Crash+*" oneshots);
+                    // Right Crash on 57/55/52 routes to Kind::China so
+                    // it loads the distinct "Right+Crash+*" oneshots.
+                    // Lets the arrangement strip's L/R lanes play the
+                    // correct physical cymbal even though both share the
+                    // GM crash family.
+                    case 49:                   return Kind::Crash;
                     case 51: case 59:          return Kind::Ride;
                     case 53:                   return Kind::RideBell;
-                    case 52:                   return Kind::China;
+                    case 52: case 55: case 57: return Kind::China;
                     default:
                         if (n < 45)        return Kind::LowTom;
                         if (n < 50)        return Kind::MidTom;

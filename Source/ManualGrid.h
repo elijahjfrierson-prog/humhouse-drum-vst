@@ -29,18 +29,21 @@ namespace aidrum
 
         ManualGrid()
         {
-            // v1.6.1-rc.2 — 6-row step sequencer. RIDE is now its own row
-            // between CRASH and HI-HAT so ride patterns and crash accents
-            // can be programmed independently. Ordered top → bottom:
-            // cymbals at the top, kick at the bottom — mirrors how drummers
-            // notate kits and matches the arrangement grid lane order.
+            // v1.6.1-rc.8 — 8-row step sequencer. CRASH split into L+R
+            // (Left Crash on note 49, Right Crash on note 57) and TOM
+            // split into Small Tom (note 48) + Floor Tom (note 43) so
+            // the new (Nu Rock) 70's Yamaha kit's distinct one-shots can
+            // each be programmed on their own row. Order matches the
+            // arrangement strip lane table.
             rows = {
-                { "CRASH",  49, juce::Colour (0xffff6f9c) },  // pink rose
-                { "RIDE",   51, juce::Colour (0xff6ec6ff) },  // sky blue
-                { "HI-HAT", 42, juce::Colour (0xffffc857) },  // amber
-                { "TOM",    45, juce::Colour (0xff9d7dff) },  // lilac
-                { "SNARE",  38, juce::Colour (0xffede7f6) },  // bone
-                { "KICK",   36, juce::Colour (0xff3ee0c1) },  // teal
+                { "R CRASH",   57, juce::Colour (0xfff04f7e) },  // deep rose
+                { "L CRASH",   49, juce::Colour (0xffff8fa9) },  // pink rose
+                { "RIDE",      51, juce::Colour (0xff6ec6ff) },  // sky blue
+                { "HI-HAT",    42, juce::Colour (0xffffc857) },  // amber
+                { "SMALL TOM", 48, juce::Colour (0xff9d7dff) },  // lilac
+                { "FLOOR TOM", 43, juce::Colour (0xff7558d4) },  // purple
+                { "SNARE",     38, juce::Colour (0xffede7f6) },  // bone
+                { "KICK",      36, juce::Colour (0xff3ee0c1) },  // teal
             };
             setInterceptsMouseClicks (true, false);
         }

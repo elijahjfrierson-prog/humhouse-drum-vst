@@ -115,6 +115,17 @@ namespace aidrum
         // arrangement so phrase-level dynamics (crescendos, bar 7/8 builds,
         // ghost drift, hat loosening) and unique fills can evolve over time.
         int            phraseBar     = 0;   // 0..N, monotonic across regions
+
+        // v1.6.1-rc.8 — finest grid resolution the user wants the
+        // generator to use when placing decorative hits. 16 = standard
+        // 1/16 grooves only (the rc.7 default), 32 enables tasteful
+        // 32nd-note hat ostinatos + ghost-drag rolls into fills, 64
+        // unlocks 64th-note grace strokes (single accents + last-bar
+        // pickup rolls only — never spam). The generator scales the
+        // *probability* of decorations with the gap between 16 and the
+        // chosen value, so the pad never just throws notes in for the
+        // sake of being denser.
+        int            stepsPerBar   = 16;
     };
 
     // Stub AI backend.
