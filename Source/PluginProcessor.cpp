@@ -1152,7 +1152,20 @@ void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
         return juce::jmax (0.0, lastBarStart);
     };
 
-    const int totalAnchors = fullBlocks + (partialTail ? 1 : 0);
+    // v1.6.1-rc.11 — Devin Review 🔴: a 1-bar (4-beat) region would
+    // collapse the partial-tail anchor to beat 0, meaning the fill
+    // window [0, 4) covered the *entire* user pattern and every note
+    // in their groove was wiped + replaced by the fill. Guard against
+    // that: if there are no full 8-bar blocks and the partial-tail
+    // anchor lands at beat 0 (i.e. the region is shorter than 2 bars),
+    // skip the splice entirely so the user's pattern survives. Fills
+    // are auto-generated on the bar-8 beat 1 of each *block*; a region
+    // shorter than 2 bars simply has nowhere to host one.
+    const bool partialTailFitsBar =
+        (! partialTail) || (fullBlocks > 0)
+                        || (fillAnchorForBlock (fullBlocks) >= kBeatsPerBar - 1e-6);
+    const int  effectivePartial   = (partialTail && partialTailFitsBar) ? 1 : 0;
+    const int  totalAnchors       = fullBlocks + effectivePartial;
     if (totalAnchors == 0)
         return;
 
@@ -1319,8 +1332,15 @@ void AIDrumAudioProcessor::applyIntensityCrashHatBalance (
             }
             else if (intensity >= 0.95f && (bar & 1))
             {
-                // and on every other bar at the top
-                place ((bar % 2) ? kCrashL : kCrashR, anchor, vel * 0.92f);
+                // and on every other bar at the top, alternating
+                // L↔R as the bar index advances. NB: the outer
+                // `(bar & 1)` already guarantees `bar` is odd, so
+                // `bar % 2` would always be 1 — Devin Review caught
+                // that the original code pinned every off-bar crash
+                // to L. `(bar / 2) & 1` walks 0,1,0,1,… across the
+                // odd bar series (1,3,5,7,…) so L and R actually
+                // alternate as intended.
+                place (((bar / 2) & 1) ? kCrashL : kCrashR, anchor, vel * 0.92f);
             }
         }
         else
