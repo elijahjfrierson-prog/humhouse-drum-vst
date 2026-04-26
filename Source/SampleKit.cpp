@@ -111,21 +111,35 @@ namespace aidrum
             float gateMs = 0.0f, gateFadeMs = 30.0f;
             switch (kind)
             {
-                case K::Kick:      hpHz =  30.0f;                    gateMs = 400.0f; break;
-                case K::Snare:     hpHz = 120.0f;                    gateMs = 250.0f; break;
-                case K::SideStick: hpHz = 200.0f;                    gateMs = 120.0f; break;
+                // v1.6.1-rc.12 — gates LOOSENED dramatically (user: "the
+                // decay is cut off and sound like a 'oneshot' which is
+                // SHOULD NOT — focus on a more ring out time and a
+                // natural decay"). Each Kind now lets the WAV decay
+                // for nearly its full natural length before the fade
+                // window kicks in; cymbals/toms ring out, snare lets
+                // its body breathe, and the high-shelf cut on cymbals
+                // is much gentler so they don't sound choked.
+                // gateFadeMs (below) also bumped to 250ms so the fade
+                // is a long taper instead of a perceptible cut.
+                case K::Kick:      hpHz =  30.0f;                                  gateMs = 1200.0f; break;
+                case K::Snare:     hpHz = 100.0f;                                  gateMs = 1500.0f; break;
+                case K::SideStick: hpHz = 200.0f;                                  gateMs =  600.0f; break;
                 case K::HighTom:
                 case K::MidTom:
-                case K::LowTom:    hpHz =  60.0f;                    gateMs = 600.0f; break;
-                case K::ClosedHat: hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.45f; gateMs = 200.0f; break;
-                case K::PedalHat:  hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.45f; gateMs = 220.0f; break;
-                case K::OpenHat:   hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.45f; gateMs = 350.0f; break;
-                case K::Ride:      hpHz = 150.0f; hsHz = 13000.0f; hsCut = 0.50f; gateMs = 700.0f; break;
-                case K::RideBell:  hpHz = 150.0f; hsHz = 13000.0f; hsCut = 0.50f; gateMs = 500.0f; break;
+                case K::LowTom:    hpHz =  60.0f;                                  gateMs = 2500.0f; break;
+                case K::ClosedHat: hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.20f;  gateMs =  600.0f; break;
+                case K::PedalHat:  hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.20f;  gateMs =  650.0f; break;
+                case K::OpenHat:   hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.20f;  gateMs = 1500.0f; break;
+                case K::Ride:      hpHz = 150.0f; hsHz = 13000.0f; hsCut = 0.25f;  gateMs = 3500.0f; break;
+                case K::RideBell:  hpHz = 150.0f; hsHz = 13000.0f; hsCut = 0.25f;  gateMs = 2500.0f; break;
                 case K::Crash:
-                case K::China:     hpHz = 120.0f; hsHz = 12000.0f; hsCut = 0.55f; gateMs = 600.0f; break;
+                case K::China:     hpHz = 120.0f; hsHz = 12000.0f; hsCut = 0.25f;  gateMs = 3500.0f; break;
                 default: break;
             }
+            // v1.6.1-rc.12 — long taper. The 30ms fade in rc.11 read as
+            // a hard cut on cymbals; 250ms taper hides the gate edge so
+            // the natural decay rolls smoothly into silence.
+            gateFadeMs = 250.0f;
 
             const int   ch  = buf.getNumChannels();
             const int   len = buf.getNumSamples();
@@ -309,18 +323,16 @@ namespace aidrum
         // session state asks for it by name when restoring), but it
         // remaps to NuRockYamaha so existing user projects still load
         // *something* instead of going silent.
-        // v1.6.1-rc.11 — two bundled kits ship now: "NuRockYamaha"
-        // (Nu Rock 70's Yamaha — rc.8 oneshots) and "BayGrungeMaple"
-        // (Bay Grunge Yamaha Maple — rc.11 oneshots). Anything else
-        // remaps to NuRockYamaha so legacy save files don't go silent.
+        // v1.6.1-rc.12 — single bundled kit again: "NuRockYamaha".
+        // The (Bay Grunge) Yamaha Maple kit was pulled in rc.12 (user:
+        // "take out the second drum kit it is a liability and not
+        // routed correctly"). Any legacy save-state asking for it (or
+        // for older Thrash) remaps to NuRockYamaha so projects still
+        // load *something* instead of going silent.
         juce::String kitName = kitNameIn.isEmpty()
                                  ? juce::String ("NuRockYamaha")
                                  : kitNameIn;
-        if (kitName != "NuRockYamaha"
-         && kitName != "BayGrungeMaple"
-         && kitName != "Thrash")
-            kitName = "NuRockYamaha";
-        if (kitName == "Thrash")
+        if (kitName != "NuRockYamaha")
             kitName = "NuRockYamaha";
         const juce::String prefix  = kitName + "__";
 

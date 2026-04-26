@@ -80,12 +80,28 @@ else
 fi
 
 rm -f "$DMG_OUT"
-hdiutil create \
-  -volname "HumHouse Drums" \
-  -srcfolder "$STAGING" \
-  -fs HFS+ \
-  -format UDZO \
-  -imagekey zlib-level=9 \
-  "$DMG_OUT"
+# v1.6.1-rc.12 — `hdiutil create` flakes with "Resource busy" on macOS
+# CI runners every few builds (the runner's diskimages-helper is mid-
+# cleanup of a previous job). Retry up to 5 times with a 10s backoff
+# before giving up so a flaky helper doesn't tank the release build.
+attempt=1
+max_attempts=5
+while (( attempt <= max_attempts )); do
+  if hdiutil create \
+        -volname "HumHouse Drums" \
+        -srcfolder "$STAGING" \
+        -fs HFS+ \
+        -format UDZO \
+        -imagekey zlib-level=9 \
+        "$DMG_OUT"; then
+    echo "Created: $DMG_OUT (attempt $attempt)"
+    exit 0
+  fi
+  echo "hdiutil create failed (attempt $attempt/$max_attempts); retrying after 10s..."
+  rm -f "$DMG_OUT"
+  sleep 10
+  attempt=$(( attempt + 1 ))
+done
 
-echo "Created: $DMG_OUT"
+echo "error: hdiutil create failed after $max_attempts attempts" >&2
+exit 1

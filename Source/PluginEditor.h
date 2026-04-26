@@ -78,25 +78,22 @@ private:
 
         KitVisualizer();
         void setSelectedKit (int index);
-        // v1.6.1-rc.11 — two bundled kits ship now. setActiveBundledKit()
-        // swaps the displayed render + caption between
-        // 0 = (Nu Rock) 70's Yamaha and 1 = (Bay Grunge) Yamaha Maple.
+        // v1.6.1-rc.12 — single bundled kit again; setActiveBundledKit()
+        // is now a no-op but kept so legacy callers compile.
         void setActiveBundledKit (int kitIndex);
         void pulseBus (int bus, float velocity);
         void decayFlashes (float k);
         void paint (juce::Graphics&) override;
     private:
         int          selectedKit       = 0;
-        int          activeBundledKit  = 0; // 0=NuRockYamaha, 1=BayGrungeMaple
         float        flash[kNumFlashes] {};
         // v1.6.1-rc.9 — bundled 3D Yamaha kit render. Loaded once from
         // BinaryData; when present we paint the photo as the kit
         // visual and overlay small yellow flash dots at each drum's
         // approximate position so hits read as a real kit being
         // played instead of the abstract circle/silhouette.
-        // v1.6.1-rc.11 — second kit photo for (Bay Grunge) Yamaha Maple.
+        // v1.6.1-rc.12 — second-kit (Bay Grunge) photo removed.
         juce::Image  kitPhotoNuRock;
-        juce::Image  kitPhotoBayGrunge;
     };
 
     void timerCallback() override;
