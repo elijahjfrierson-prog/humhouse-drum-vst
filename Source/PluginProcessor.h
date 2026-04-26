@@ -232,7 +232,11 @@ public:
     // to redraw the pattern. Atomic so the editor + audio thread can
     // both read it without locking.
     int  getGhostMask() const            { return ghostMask.load(); }
-    void setGhostMask (int mask)         { ghostMask.store (mask & 0x3F); }
+    // v1.6.1-rc.8 — widened from 0x3F (6 lanes) to 0xFF so the new
+    // SNARE (bit 6) and KICK (bit 7) lanes can be ghosted too. Without
+    // this the UI greys out the row label but the audio engine still
+    // hears full velocity hits on those lanes.
+    void setGhostMask (int mask)         { ghostMask.store (mask & 0xFF); }
 
     // Backwards-compat alias — also dumps the full arrangement.
     bool writeCurrentPatternAsMidiFile (const juce::File& dest) const
