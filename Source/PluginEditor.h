@@ -217,7 +217,6 @@ private:
 
     // v1.4.0 Sampler loader + UI scale
     juce::TextButton          loadKitButton    { "LOAD KIT" };
-    juce::TextButton          unloadKitButton  { "UNLOAD" };
     juce::Label               kitPathLabel;
     juce::Slider              uiScaleSlider;
     juce::Label               uiScaleLabel     { {}, "UI SCALE" };

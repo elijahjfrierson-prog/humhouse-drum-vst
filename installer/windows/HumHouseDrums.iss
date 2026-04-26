@@ -6,9 +6,9 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\HumHouseDrums.iss
 
 #define MyAppName "HumHouse Drums"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.6.1"
 #define MyAppPublisher "HumHouse"
-#define MyAppURL "https://github.com/elijahjfrierson-prog/ai-drum-vst"
+#define MyAppURL "https://github.com/elijahjfrierson-prog/humhouse-drum-vst"
 #define MyAppExeName "HumHouse Drums.exe"
 
 [Setup]
@@ -34,8 +34,12 @@ ArchitecturesAllowed=x64compatible
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName} {#MyAppVersion}
-WizardSmallImageFile=
-SetupIconFile=
+; v1.6.1-rc.10 — HumHouse crest in the installer wizard. Sidebar image
+; shows on the welcome / finish pages, small image sits top-right of the
+; remaining wizard pages, .ico drives the installer + uninstaller icon.
+WizardImageFile=..\..\Resources\Icons\InstallerSidebar.bmp
+WizardSmallImageFile=..\..\Resources\Icons\InstallerSmall.bmp
+SetupIconFile=..\..\Resources\Icons\HumHouseAppIcon.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

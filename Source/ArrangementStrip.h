@@ -65,6 +65,18 @@ namespace aidrum
             repaint();
         }
 
+        // v1.6.1-rc.10 — sub-beat click resolution. 16 = 1/16, 32 = 1/32,
+        // 64 = 1/64. Drives the snap step inside handleAddNote so a
+        // 1/64 step-div in the editor actually lets the user place a
+        // note on every 1/64 cell instead of being floored to the
+        // nearest quarter beat (rc.9 regression).
+        void setStepsPerBar (int spb)
+        {
+            stepsPerBar = juce::jlimit (4, 64, spb);
+            repaint();
+        }
+        int getStepsPerBar() const { return stepsPerBar; }
+
         // v1.5.0 — right-click (or alt-click) on a region tile calls this with
         // the region's index so the editor can remove it. Empty arrangement is
         // allowed; the `+` button becomes the only interactive element.
@@ -619,8 +631,13 @@ namespace aidrum
                 totalBeats - 1e-4,
                 (p.x - cachedGridInner.getX()) / (double) cachedPxPerBeat);
 
-            // Snap to quarter notes (Logic-style beat cells).
-            const double snapped = std::floor (absBeat);
+            // v1.6.1-rc.10 — snap to the current step-div from the editor
+            // (1/16, 1/32, or 1/64). beats-per-step = 4.0 / stepsPerBar
+            // because one beat == one quarter note. Falls back to 1/16
+            // if setStepsPerBar() was never called.
+            const int    spb = juce::jlimit (4, 64, stepsPerBar);
+            const double stepBeats = 4.0 / (double) spb;
+            const double snapped = std::floor (absBeat / stepBeats) * stepBeats;
 
             // Figure out which region this beat lives in. The cached
             // offsets are only rebuilt during paint(); a click that lands
@@ -739,6 +756,7 @@ namespace aidrum
         // edge of the strip and emit onLaneSelected.
         int                                ghostMask        = 0;
         int                                selectedLaneIdx  = -1;
+        int                                stepsPerBar      = 16;
         std::array<juce::Rectangle<float>, 8> cachedLabelRects {};
 
         // v1.6.1-rc.7 — rectangular hover-drag selection. The user can

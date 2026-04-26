@@ -61,6 +61,11 @@ juce_add_plugin(AIDrumVST
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD   FALSE
     VST3_CATEGORIES           "Instrument" "Drum"
+    # v1.6.1-rc.10 — HumHouse crest as the plugin / .vst3 / .component
+    # bundle icon. JUCE rewrites this to .icns on macOS and embeds it as
+    # the resource icon group on Windows VST3 builds.
+    ICON_BIG                  "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Icons/HumHouseAppIcon-1024.png"
+    ICON_SMALL                "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Icons/HumHouseAppIcon-1024.png"
 )
 
 juce_generate_juce_header(AIDrumVST)

@@ -99,19 +99,29 @@ namespace aidrum
         float mix;    // max wet mix at amount=1.0
     };
 
+    // v1.6.1-rc.10 — bone-dry at index 0 (true 0% wet so the user's
+    // unprocessed source signal is what plays out the bus), then a
+    // wider gap between Small Room (tight, dark, short tail) and
+    // Big Hall (lush, bright, long tail) so the user can actually
+    // hear the difference between Room and Hall when toggling.
+    //   * Dry / Studio: zero wet — exactly as the WAVs were sampled.
+    //   * Small Room  : small, heavily damped, short obvious slap.
+    //   * Big Hall    : near-max size, almost no damping, long
+    //                   bright tail; mix bumped so it reads as
+    //                   "lush and wide" against the dry/room kit.
     inline RoomPreset roomPresetFor (int index) noexcept
     {
         switch (index)
         {
-            case 1: return { 0.35f, 0.55f, 0.22f }; // Small Room — close, tight
-            case 2: return { 0.48f, 0.48f, 0.30f }; // Garage — boxy mids
-            case 3: return { 0.55f, 0.42f, 0.34f }; // Live Bar — roomy, slappy
-            case 4: return { 0.72f, 0.34f, 0.42f }; // Hallway — long tail
-            case 5: return { 0.88f, 0.28f, 0.55f }; // Big Hall — lush, wide
-            case 6: return { 0.98f, 0.18f, 0.65f }; // Stadium — enormous wash
+            case 1: return { 0.28f, 0.70f, 0.30f }; // Small Room — close, dark, short slap
+            case 2: return { 0.45f, 0.55f, 0.36f }; // Garage — boxy mids
+            case 3: return { 0.55f, 0.42f, 0.42f }; // Live Bar — roomy, slappy
+            case 4: return { 0.72f, 0.30f, 0.50f }; // Hallway — long tail
+            case 5: return { 0.95f, 0.18f, 0.62f }; // Big Hall — lush, wide, bright
+            case 6: return { 0.99f, 0.10f, 0.72f }; // Stadium — enormous wash
             case 0:
             default:
-                return { 0.20f, 0.85f, 0.05f };     // Dry / Studio — close-miked
+                return { 0.05f, 0.99f, 0.00f };     // Dry / Studio — bone-dry, 0% wet
         }
     }
 

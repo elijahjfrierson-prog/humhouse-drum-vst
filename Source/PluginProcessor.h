@@ -115,6 +115,17 @@ public:
     // engine reaching that bar.
     aidrum::MidiPattern makeAutoFillForKit (int kitIndex, int seed) const;
 
+    // v1.6.1-rc.10 — guarantees a fill at bar-8 beat 2 of every
+    // 8-bar block in the supplied region. Stretches the region to
+    // a multiple of 32 beats (8 bars at 4/4) if it's shorter, then
+    // for each 8-bar boundary clears the last 3 beats of bar 8 and
+    // splices in makeAutoFillForKit() shifted to start there. The
+    // user has been emphatic across rc.7 → rc.10 that COMPOSE and
+    // RANDOMIZE *must always* end on a fill — never a stale loop.
+    // Caller must already hold arrangementMutex.
+    void spliceMandatoryFillIntoRegion (aidrum::MidiPattern& region,
+                                        int seed) const;
+
     // v1.6.1-rc.3 — when the user changes kits, swap the last-appended
     // arrangement region for a groove from the new kit's bucket so the
     // user immediately hears a pattern that matches the kit's feel.
@@ -323,7 +334,11 @@ private:
     // v1.4.0 — real-audio sampler that takes over from DrumSynth when a
     // kit folder is loaded.
     aidrum::SampleKit        sampleKit;
-    std::atomic<float>       uiScale { 1.0f };
+    // v1.6.1-rc.10 — default scale toned down from 1.00 → 0.85 so the
+    // editor opens at a sane size in Logic instead of "crazy big" on
+    // first instantiate. The slider's "75 %" stop also maps here so
+    // legacy projects that saved scale=1.0 still come back larger.
+    std::atomic<float>       uiScale { 0.85f };
 
     // v1.6.1-rc.7 — bitmask of lanes in "ghost" mode (see header doc).
     // Atomic so the editor + audio thread can both touch it without

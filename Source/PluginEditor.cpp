@@ -233,9 +233,12 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         g.drawText ("ACTIVE KIT",
                     r.toNearestInt().reduced (14, 10),
                     juce::Justification::topLeft, false);
-        const auto& names = aidrum::drumKitDisplayNames();
-        const juce::String kitName = juce::String (
-            names[(size_t) juce::jlimit (0, (int) names.size() - 1, selectedKit)]);
+        // v1.6.1-rc.10 \u2014 the bundled kit is fixed at "(Nu Rock) 70's Yamaha"
+        // (drumKitBox only has the one entry). The drumKitDisplayNames()
+        // array still holds the full GM-genre roster used elsewhere, so we
+        // hardcode the active label here instead of indexing into it and
+        // accidentally showing "Jazz \u2014 Ludwig Bebop".
+        const juce::String kitName = "(Nu Rock) 70's Yamaha";
         g.setColour (juce::Colour (Palette::kBone));
         g.drawFittedText (kitName,
                           r.toNearestInt().withTrimmedTop (22).reduced (14, 0),
@@ -307,8 +310,7 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
     g.setColour (juce::Colour (Palette::kMuted));
     g.drawText ("ACTIVE KIT", r.toNearestInt().reduced (14, 10), juce::Justification::topLeft, false);
 
-    const auto& names = aidrum::drumKitDisplayNames();
-    const juce::String kitName = juce::String (names[(size_t) juce::jlimit (0, (int) names.size() - 1, selectedKit)]);
+    const juce::String kitName = "(Nu Rock) 70's Yamaha";
     g.setColour (juce::Colour (Palette::kBone));
     g.drawFittedText (kitName, r.toNearestInt().withTrimmedTop (22).reduced (14, 0), juce::Justification::topLeft, 2);
 
@@ -539,8 +541,10 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // AffineTransform around setSize() so the DAW reports the correct
     // outer size to the host window manager.
     setResizable (true, true);
-    setResizeLimits (720, 690, 1600, 1400);
-    const float initialScale = juce::jlimit (0.75f, 1.5f, processorRef.getUiScale());
+    // v1.6.1-rc.10 — minimum drops from 720 × 690 to 560 × 540 so the
+    // 55 % stop is reachable; max stays sane for the new 1.00 ceiling.
+    setResizeLimits (528, 506, 1100, 1050);
+    const float initialScale = juce::jlimit (0.55f, 1.10f, processorRef.getUiScale());
     setSize ((int) std::round (960.0f * initialScale),
              (int) std::round (920.0f * initialScale));
     setTransform (juce::AffineTransform::scale (initialScale));
@@ -642,7 +646,9 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     arrangementStrip.onZoom = [this] (float dy)
     {
         const float cur = processorRef.getUiScale();
-        const float next = juce::jlimit (0.7f, 1.6f, cur + dy * 0.05f);
+        // v1.6.1-rc.10 — Cmd-scroll zoom range matches the new clamp
+        // so trackpad zoom can't push the editor past 1.00 either.
+        const float next = juce::jlimit (0.55f, 1.10f, cur + dy * 0.05f);
         processorRef.setUiScale (next);
         // setTransform must accompany setSize, otherwise the editor
         // resizes but the rendering scale stays at the previous factor
@@ -1179,15 +1185,6 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     };
     addAndMakeVisible (loadKitButton);
 
-    styleSmallBtn (unloadKitButton);
-    unloadKitButton.setTooltip ("UNLOAD — drop the loaded sample kit and fall back to the physical-model synth.");
-    unloadKitButton.onClick = [this]
-    {
-        processorRef.unloadSampleKit();
-        kitPathLabel.setText ("Physical-model synth", juce::dontSendNotification);
-    };
-    addAndMakeVisible (unloadKitButton);
-
     kitPathLabel.setJustificationType (juce::Justification::centredLeft);
     kitPathLabel.setColour (juce::Label::textColourId, juce::Colour (Palette::kMuted));
     {
@@ -1209,6 +1206,9 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     uiScaleSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     uiScaleSlider.setRange (1.0, 4.0, 1.0);
     {
+        // v1.6.1-rc.10 — initial-stop heuristic shifted down a notch so
+        // a first-load (scale 0.85) lands on the 75 % stop instead of
+        // bouncing between 50 % and 75 %.
         const float cur = processorRef.getUiScale();
         const double initStop = (cur < 0.725f) ? 1.0
                               : (cur < 0.975f) ? 2.0
@@ -1226,11 +1226,16 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
                               "Snaps so the editor never lands at an awkward in-between size.");
     uiScaleSlider.onValueChange = [this]
     {
+        // v1.6.1-rc.10 — stops compressed from {0.60, 0.85, 1.10, 1.35}
+        // down to {0.55, 0.70, 0.85, 1.00}. The user said the previous
+        // 100 % stop was "crazy big" on first load — at 1.35 the editor
+        // ballooned to 1296 × 1242 px which overran most laptop hosts.
+        // 1.00 stop now gives a native 960 × 920 — generous but sane.
         const int   stop = juce::jlimit (1, 4, (int) std::round (uiScaleSlider.getValue()));
-        const float s    = (stop == 1) ? 0.60f
-                          : (stop == 2) ? 0.85f
-                          : (stop == 3) ? 1.10f
-                                          : 1.35f;
+        const float s    = (stop == 1) ? 0.55f
+                          : (stop == 2) ? 0.70f
+                          : (stop == 3) ? 0.85f
+                                          : 1.00f;
         processorRef.setUiScale (s);
         setTransform (juce::AffineTransform::scale (s));
         setSize ((int) std::round (960.0f * s), (int) std::round (920.0f * s));
@@ -1345,6 +1350,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
             const int idx = stepDivBox.getSelectedItemIndex();
             const int spb = (idx == 2 ? 64 : idx == 1 ? 32 : 16);
             manualGrid.setStepsPerBar (spb);
+            arrangementStrip.setStepsPerBar (spb);
         };
     }
     {
@@ -1575,15 +1581,13 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (4);
 
-    // MANUAL / MIXER / LOAD KIT / UNLOAD / UI SCALE toggle bar.
+    // MANUAL / MIXER / LOAD KIT / UI SCALE toggle bar.
     auto manualBar = area.removeFromTop (30);
     manualButton   .setBounds (manualBar.removeFromLeft (120).reduced (2));
     manualBar.removeFromLeft (4);
     mixerButton    .setBounds (manualBar.removeFromLeft (90) .reduced (2));
     manualBar.removeFromLeft (4);
     loadKitButton  .setBounds (manualBar.removeFromLeft (90) .reduced (2));
-    manualBar.removeFromLeft (4);
-    unloadKitButton.setBounds (manualBar.removeFromLeft (80) .reduced (2));
     manualBar.removeFromLeft (6);
 
     // UI scale cluster on the right side of the bar.

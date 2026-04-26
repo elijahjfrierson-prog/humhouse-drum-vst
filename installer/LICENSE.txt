@@ -1,5 +1,15 @@
+                          ▲▲▲
+                       ▲▲     ▲▲
+                    ▲▲           ▲▲
+                 ▲▲    HUMHOUSE     ▲▲
+              ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
 HumHouse Drums — End User License Agreement
 =============================================
+
+The HumHouse crest appears on the installer welcome / finish pages and on
+the sidebar of every wizard step. By proceeding past this screen you accept
+the terms below.
 
 Copyright (c) 2026 HumHouse. All rights reserved.
 

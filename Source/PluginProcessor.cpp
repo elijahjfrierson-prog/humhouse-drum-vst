@@ -456,7 +456,11 @@ float AIDrumAudioProcessor::getUiScale() const
 
 void AIDrumAudioProcessor::setUiScale (float s)
 {
-    uiScale.store (juce::jlimit (0.75f, 1.5f, s), std::memory_order_relaxed);
+    // v1.6.1-rc.10 — clamp range tightened to match the new compressed
+    // stops (0.55 / 0.70 / 0.85 / 1.00). Previous 0.75 → 1.5 range left
+    // legacy projects loading at 1.5 (gigantic) which the user flagged
+    // as "crazy big".
+    uiScale.store (juce::jlimit (0.55f, 1.10f, s), std::memory_order_relaxed);
 }
 
 // ============================================================================
@@ -880,6 +884,9 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
         // a fresh region so the user gets sound, then subsequent COMPOSE
         // clicks will mold around it.
         arrangement.push_back (lib[(size_t) libIdx].pattern);
+        // v1.6.1-rc.10 — every COMPOSE result carries a fill at
+        // bar-8 beat 2, even on first click.
+        spliceMandatoryFillIntoRegion (arrangement.back(), (int) counter);
         return;
     }
 
@@ -922,6 +929,13 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
     std::sort (last.notes.begin(), last.notes.end(),
                [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
                { return a.startBeat < b.startBeat; });
+
+    // v1.6.1-rc.10 — mold-around result must always end on a fill at
+    // bar-8 beat 2 (the user has been emphatic across rc.7 → rc.10:
+    // "no matter what groove or compose is generated it should always
+    // have a fill, fills fills fills"). Re-runs after every COMPOSE
+    // click to keep the mandatory cadence intact.
+    spliceMandatoryFillIntoRegion (last, (int) counter);
 }
 
 // v1.6.1-rc.9 — RANDOMIZE: full pattern replace, the original COMPOSE
@@ -945,6 +959,10 @@ void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
         arrangement.push_back (lib[(size_t) libIdx].pattern);
     else
         arrangement.back() = lib[(size_t) libIdx].pattern;
+
+    // v1.6.1-rc.10 — RANDOMIZE result must also always end on a fill
+    // at bar-8 beat 2 (mandatory, not occasional).
+    spliceMandatoryFillIntoRegion (arrangement.back(), libIdx);
 }
 
 // v1.6.1-rc.9 — Auto-fill helper. Returns a one-bar fill that the
@@ -1011,6 +1029,85 @@ aidrum::MidiPattern AIDrumAudioProcessor::makeAutoFillForKit (int /*kitIndex*/,
     }
 
     return p;
+}
+
+// v1.6.1-rc.10 — guarantees every COMPOSE / RANDOMIZE result carries a
+// fill at bar-8 beat 2 of every 8-bar block. Stretches the region to a
+// multiple of 32 beats (8 bars at 4/4), then for each 8-bar boundary
+// clears the last 3 beats of bar 8 (preserving the bar-1 kick anchor
+// the user / corpus already laid down) and splices in
+// makeAutoFillForKit() shifted to start on bar-8 beat 2. The fill
+// chosen is seed-rotated per boundary so 16-bar / 24-bar regions
+// don't repeat the exact same fill twice in a row.
+void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
+    aidrum::MidiPattern& region, int seed) const
+{
+    constexpr double kBarsPerBlock      = 8.0;
+    constexpr double kBeatsPerBar       = 4.0;
+    constexpr double kBlockBeats        = kBarsPerBlock * kBeatsPerBar; // 32
+    constexpr double kFillStartInBlock  = (kBarsPerBlock - 1.0) * kBeatsPerBar
+                                        + 1.0; // bar 8 beat 2 == 29.0
+
+    if (region.lengthInBeats < kBlockBeats - 1e-6)
+        region.lengthInBeats = kBlockBeats;
+    else
+    {
+        const double remainder = std::fmod (region.lengthInBeats, kBlockBeats);
+        if (remainder > 1e-6)
+            region.lengthInBeats += (kBlockBeats - remainder);
+    }
+
+    const int blocks = juce::jmax (1, (int) std::round (region.lengthInBeats / kBlockBeats));
+
+    auto inFillWindow = [&] (double beat) noexcept
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            const double blockBase  = b * kBlockBeats;
+            const double fillStart  = blockBase + kFillStartInBlock;
+            const double fillEnd    = blockBase + kBlockBeats;
+            if (beat >= fillStart - 1e-6 && beat < fillEnd - 1e-6)
+                return true;
+        }
+        return false;
+    };
+
+    // Wipe any existing notes that land in a fill window so the
+    // fill reads cleanly instead of dog-piling on the original
+    // pattern's snare/hat hits.
+    region.notes.erase (
+        std::remove_if (region.notes.begin(), region.notes.end(),
+                        [&] (const aidrum::MidiNote& n)
+                        { return inFillWindow (n.startBeat); }),
+        region.notes.end());
+
+    for (int b = 0; b < blocks; ++b)
+    {
+        const aidrum::MidiPattern fill = makeAutoFillForKit (0, seed + b);
+        const double blockBase   = b * kBlockBeats;
+        const double anchorBeat  = blockBase + (kBarsPerBlock - 1.0) * kBeatsPerBar; // bar 8 beat 1
+        for (const auto& src : fill.notes)
+        {
+            // makeAutoFillForKit anchors a kick at beat 0.0 and runs
+            // its action from beat 2.0 onward. We want the *fill
+            // action* to start at bar-8 beat 2, so shift by
+            // (anchorBeat - 1.0) — a 1-beat lead-in lets bar-8
+            // beat 1 still carry whatever downbeat the corpus
+            // pattern brought (we keep it because the wipe above
+            // skipped beat 28).
+            aidrum::MidiNote shifted = src;
+            shifted.startBeat = src.startBeat + anchorBeat - 1.0;
+            if (shifted.startBeat < blockBase + kFillStartInBlock - 1e-6)
+                continue; // skip the helper's beat-1 kick anchor; user's pattern owns it
+            if (shifted.startBeat >= blockBase + kBlockBeats - 1e-6)
+                shifted.startBeat = blockBase + kBlockBeats - 0.01;
+            region.notes.push_back (shifted);
+        }
+    }
+
+    std::sort (region.notes.begin(), region.notes.end(),
+               [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
+               { return a.startBeat < b.startBeat; });
 }
 
 void AIDrumAudioProcessor::remapLastRegionToKit (int kitIndex)
