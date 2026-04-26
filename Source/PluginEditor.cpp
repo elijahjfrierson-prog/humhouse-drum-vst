@@ -704,7 +704,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // value so a session restored with (Bay Grunge) Yamaha Maple opens on
     // the right photo + caption instead of flashing NuRock for one frame.
     kitVisualizer.setActiveBundledKit (
-        (int) processorRef.apvts.getRawParameterValue ("bundledKit")->load());
+        (int) processorRef.getAPVTS().getRawParameterValue ("bundledKit")->load());
 
     complexitySlider.setVisible (false);
     velocitySlider  .setVisible (false);
