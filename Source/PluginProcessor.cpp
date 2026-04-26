@@ -1182,6 +1182,15 @@ void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     if (region.lengthInBeats < kBeatsPerBar - 1e-6)
         return; // region too short to host a 1-bar fill — skip silently
 
+    // v1.6.1-rc.12 — Devin Review 🔴 (regression of rc.11 fix): a 1-bar
+    // region's "last bar" IS the entire region, so splicing a fill into
+    // it would wipe the user's groove notes wholesale. The default
+    // appendRegion length is 1 bar, so a fresh COMPOSE would erase the
+    // mold-around groove every time. Require at least two full bars
+    // (one bar of groove + one bar of fill) before auto-splicing.
+    if (region.lengthInBeats < 2.0 * kBeatsPerBar - 1e-6)
+        return;
+
     const auto& fillLib = aidrum::fillLibrary();
     if (fillLib.empty())
         return;
