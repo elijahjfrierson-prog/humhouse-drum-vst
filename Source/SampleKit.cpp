@@ -293,10 +293,16 @@ namespace aidrum
         // session state asks for it by name when restoring), but it
         // remaps to NuRockYamaha so existing user projects still load
         // *something* instead of going silent.
+        // v1.6.1-rc.11 — two bundled kits ship now: "NuRockYamaha"
+        // (Nu Rock 70's Yamaha — rc.8 oneshots) and "BayGrungeMaple"
+        // (Bay Grunge Yamaha Maple — rc.11 oneshots). Anything else
+        // remaps to NuRockYamaha so legacy save files don't go silent.
         juce::String kitName = kitNameIn.isEmpty()
                                  ? juce::String ("NuRockYamaha")
                                  : kitNameIn;
-        if (kitName != "NuRockYamaha" && kitName != "Thrash")
+        if (kitName != "NuRockYamaha"
+         && kitName != "BayGrungeMaple"
+         && kitName != "Thrash")
             kitName = "NuRockYamaha";
         if (kitName == "Thrash")
             kitName = "NuRockYamaha";

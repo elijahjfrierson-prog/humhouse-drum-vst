@@ -89,8 +89,15 @@ namespace
     // drop in their own folder. Internally the kit is still named
     // "Thrash" so all sample-loading / kitProfileFor() paths keep
     // working unchanged.
+    // v1.6.1-rc.11 — two bundled kits ship now: (Nu Rock) 70's Yamaha
+    // and (Bay Grunge) Yamaha Maple. The internal names below are also
+    // the WAV-bundle prefixes scanned by SampleKit::loadBundled().
+    // Display strings live separately (see kBundledKitDisplayNames).
     const juce::StringArray kBundledKitChoices {
-        "NuRockYamaha"
+        "NuRockYamaha", "BayGrungeMaple"
+    };
+    const juce::StringArray kBundledKitDisplayNames {
+        "(Nu Rock) 70's Yamaha", "(Bay Grunge) Yamaha Maple"
     };
 
     const juce::StringArray kStepDivChoices {
@@ -1089,9 +1096,14 @@ void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     // user's FILL cycler is currently on, then advances one library slot
     // per 8-bar block so 16-bar / 24-bar regions walk through the
     // library instead of looping the same pattern.
-    const int selector = juce::jlimit (0,
-                                       static_cast<int> (fillLib.size()) - 1,
-                                       static_cast<int> (apvts.getRawParameterValue (kParamFillComplexity)->load()));
+    // NB: kParamFillComplexity is a normalised 0..1 parameter — multiply
+    // by (N-1) and round before casting, otherwise every value < 1.0
+    // truncates to 0 and the cycler is silently pinned to fill #0
+    // (caught by Devin Review in rc.11).
+    const int numFills = static_cast<int> (fillLib.size());
+    const float fcRaw  = apvts.getRawParameterValue (kParamFillComplexity)->load();
+    const int selector = juce::jlimit (0, numFills - 1,
+                                       static_cast<int> (std::round (fcRaw * (float) (numFills - 1))));
 
     // Compute how many full 8-bar blocks fit in this region. Every full
     // block gets a fill anchored at bar-8 beat 1 of that block. Anything
