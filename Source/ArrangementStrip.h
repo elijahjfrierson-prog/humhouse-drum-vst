@@ -290,7 +290,11 @@ namespace aidrum
                                                            std::max (8.0f, w + 4.0f),
                                                            h + 4.0f);
                     const int  noteIdx      = (int) (&note - region.notes.data());
-                    const bool isSelected   = (selectedRegion == (int) i && selectedNote == noteIdx);
+                    const bool isSingleSel  = (selectedRegion == (int) i && selectedNote == noteIdx);
+                    bool       isMultiSel   = false;
+                    for (const auto& [rs, ns] : selectedNotes)
+                        if (rs == (int) i && ns == noteIdx) { isMultiSel = true; break; }
+                    const bool isSelected   = isSingleSel || isMultiSel;
                     noteHits.push_back ({ (int) i, noteIdx, hitRect });
 
                     // soft outer glow
@@ -411,18 +415,34 @@ namespace aidrum
                 }
             }
 
-            // v1.6.1-rc.7 — shift+drag (or middle button) starts a
-            // rectangular selection across the grid. Used purely
-            // visually for now (matches the rc.7 brief: "HOVER CLICK
-            // AND DRAW A HIGHLIGHTED SECTION ON THE ARRANGEMENT GRID").
+            // v1.6.1-rc.7 / rc.11 — Shift+drag (or middle button) starts
+            // a rectangular selection across the grid. rc.11 brief asked
+            // for "click-and-drag highlighting to target one note OR a
+            // whole arrangement". Selection now captures every note
+            // whose hit-rect intersects the rectangle, and Delete /
+            // Backspace removes them all.
             if ((e.mods.isShiftDown() || e.mods.isMiddleButtonDown())
                 && cachedGridInner.contains (e.position))
             {
-                selecting = true;
+                selecting       = true;
                 selectionAnchor = e.position;
-                selectionRect = juce::Rectangle<float> (e.position, e.position);
+                selectionRect   = juce::Rectangle<float> (e.position, e.position);
+                selectedNotes.clear();
                 repaint();
                 return;
+            }
+            // Plain click outside any note clears any prior selection.
+            if (! selectedNotes.empty())
+            {
+                bool overNote = false;
+                for (const auto& nh : noteHits)
+                    if (nh.rect.contains (e.position)) { overNote = true; break; }
+                if (! overNote)
+                {
+                    selectedNotes.clear();
+                    selectionRect = {};
+                    repaint();
+                }
             }
 
             // v1.6.1-rc.5 — step-sequencer toggle. Left-click on a drawn
@@ -470,12 +490,19 @@ namespace aidrum
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
-            // v1.6.1-rc.7 — rectangular hover-drag highlight on the
+            // v1.6.1-rc.7 / rc.11 — rectangular drag-highlight on the
             // arrangement grid. Tracks the cursor in either direction
-            // (L→R or R→L) and re-paints a translucent overlay.
+            // (L→R or R→L), re-paints a translucent overlay, AND
+            // captures every note whose hit-rect intersects the
+            // rectangle. Captured notes are highlighted (paint()) and
+            // can be deleted as a group via Delete/Backspace.
             if (selecting)
             {
                 selectionRect = juce::Rectangle<float> (selectionAnchor, e.position);
+                selectedNotes.clear();
+                for (const auto& nh : noteHits)
+                    if (selectionRect.intersects (nh.rect))
+                        selectedNotes.emplace_back (nh.regionIdx, nh.noteIdx);
                 repaint();
                 return;
             }
@@ -518,14 +545,21 @@ namespace aidrum
 
         void mouseUp (const juce::MouseEvent& e) override
         {
-            // v1.6.1-rc.7 — finishing a hover-drag selection just clears
-            // the selecting flag (the rectangle stays visible until the
-            // next click). Future versions can hand the rect to a
-            // copy/paste pipeline, but the brief only required the
-            // visible highlight.
+            // v1.6.1-rc.7 / rc.11 — finishing a drag selection: the
+            // selecting flag clears, but the rectangle + captured note
+            // list stay live so Delete/Backspace can act on them. Plain
+            // click outside any note clears the selection (handled in
+            // mouseDown).
             if (selecting)
             {
                 selecting = false;
+                if (selectionRect.getWidth() < 2.0f
+                    && selectionRect.getHeight() < 2.0f)
+                {
+                    // Treat tiny rect as a click — discard.
+                    selectionRect = {};
+                    selectedNotes.clear();
+                }
                 repaint();
                 return;
             }
@@ -572,6 +606,30 @@ namespace aidrum
         // arrangement is showing.
         bool keyPressed (const juce::KeyPress& key) override
         {
+            // v1.6.1-rc.11 — multi-select delete first. If a drag-select
+            // captured one or more notes, Delete/Backspace removes them
+            // all in one shot. Sort by (regionIdx desc, noteIdx desc) so
+            // index shifts inside a region don't wreck the deletes.
+            if ((key == juce::KeyPress::deleteKey
+                 || key == juce::KeyPress::backspaceKey)
+                && ! selectedNotes.empty()
+                && onDeleteNote != nullptr)
+            {
+                auto victims = selectedNotes;
+                std::sort (victims.begin(), victims.end(),
+                           [] (const auto& a, const auto& b)
+                           {
+                               if (a.first != b.first) return a.first > b.first;
+                               return a.second > b.second;
+                           });
+                for (const auto& [r, n] : victims)
+                    onDeleteNote (r, n);
+                selectedNotes.clear();
+                selectionRect = {};
+                repaint();
+                return true;
+            }
+
             if (selectedRegion < 0 || selectedNote < 0)
                 return false;
 
@@ -762,11 +820,15 @@ namespace aidrum
         // v1.6.1-rc.7 — rectangular hover-drag selection. The user can
         // click an empty area, drag to draw a highlight rectangle (left-
         // to-right or right-to-left), and the strip paints the
-        // selection while it tracks the cursor. mouseUp clears the
-        // selection. Used purely visually right now (no copy/paste yet)
-        // but matches the rc.7 brief.
-        bool                   selecting        = false;
-        juce::Point<float>     selectionAnchor  {};
-        juce::Rectangle<float> selectionRect    {};
+        // selection while it tracks the cursor.
+        // v1.6.1-rc.11 — drag-select now stays after mouseUp, captures
+        // every note whose hit-rect intersects the selection rectangle,
+        // and Delete/Backspace removes all of them. Empty-area click
+        // clears the selection. Plain LMB on empty space starts the
+        // selection (no Shift modifier required).
+        bool                            selecting        = false;
+        juce::Point<float>              selectionAnchor  {};
+        juce::Rectangle<float>          selectionRect    {};
+        std::vector<std::pair<int,int>> selectedNotes    {}; // (regionIdx, noteIdx)
     };
 }

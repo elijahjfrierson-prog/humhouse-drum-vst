@@ -88,6 +88,115 @@ namespace aidrum
             stem = stem.substring (0, us);
             return layer;
         }
+
+        // v1.6.1-rc.11 — per-Kind DSP applied at WAV load time. The user
+        // asked for "less reverb baked into the drums" + "fine-tune all
+        // timber for all instruments" + "make it real, not tacky/wet".
+        // Each Kind gets:
+        //   * a one-pole high-pass at the Kind's natural fundamental
+        //     to strip rumble / mud
+        //   * a one-pole high-shelf cut for cymbals / hats so the
+        //     baked-in brittleness goes away
+        //   * a tail-gate envelope that linearly fades the sample to
+        //     silence over a Kind-specific window so no reverb wash
+        //     hangs past the natural transient
+        // Result: the bundled WAVs play bone-dry and punchy. The Room
+        // Amount knob is the *only* reverb in the chain.
+        static void bakeRealnessDSP (juce::AudioBuffer<float>& buf,
+                                     SampleKit::Kind kind,
+                                     double sampleRate)
+        {
+            using K = SampleKit::Kind;
+            float hpHz = 0.0f, hsHz = 0.0f, hsCut = 0.0f;
+            float gateMs = 0.0f, gateFadeMs = 30.0f;
+            switch (kind)
+            {
+                case K::Kick:      hpHz =  30.0f;                    gateMs = 400.0f; break;
+                case K::Snare:     hpHz = 120.0f;                    gateMs = 250.0f; break;
+                case K::SideStick: hpHz = 200.0f;                    gateMs = 120.0f; break;
+                case K::HighTom:
+                case K::MidTom:
+                case K::LowTom:    hpHz =  60.0f;                    gateMs = 600.0f; break;
+                case K::ClosedHat: hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.45f; gateMs = 200.0f; break;
+                case K::PedalHat:  hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.45f; gateMs = 220.0f; break;
+                case K::OpenHat:   hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.45f; gateMs = 350.0f; break;
+                case K::Ride:      hpHz = 150.0f; hsHz = 13000.0f; hsCut = 0.50f; gateMs = 700.0f; break;
+                case K::RideBell:  hpHz = 150.0f; hsHz = 13000.0f; hsCut = 0.50f; gateMs = 500.0f; break;
+                case K::Crash:
+                case K::China:     hpHz = 120.0f; hsHz = 12000.0f; hsCut = 0.55f; gateMs = 600.0f; break;
+                default: break;
+            }
+
+            const int   ch  = buf.getNumChannels();
+            const int   len = buf.getNumSamples();
+            if (ch <= 0 || len <= 0) return;
+
+            // One-pole high-pass: y[n] = a*(y[n-1] + x[n] - x[n-1]).
+            if (hpHz > 0.0f)
+            {
+                const float dt = 1.0f / (float) sampleRate;
+                const float rc = 1.0f / (2.0f * juce::MathConstants<float>::pi * hpHz);
+                const float a  = rc / (rc + dt);
+                for (int c = 0; c < ch; ++c)
+                {
+                    float* d = buf.getWritePointer (c);
+                    float prevX = d[0], prevY = d[0];
+                    for (int i = 1; i < len; ++i)
+                    {
+                        const float y = a * (prevY + d[i] - prevX);
+                        prevX = d[i];
+                        d[i]  = y;
+                        prevY = y;
+                    }
+                }
+            }
+
+            // One-pole high-shelf cut for cymbals / hats (cut by `hsCut`
+            // above hsHz). Implemented as: y = x - cut * (x - lp(x))
+            // i.e. subtract the high-frequency component scaled by cut.
+            if (hsHz > 0.0f && hsCut > 0.0f)
+            {
+                const float dt = 1.0f / (float) sampleRate;
+                const float rc = 1.0f / (2.0f * juce::MathConstants<float>::pi * hsHz);
+                const float a  = dt / (rc + dt); // LP coeff
+                for (int c = 0; c < ch; ++c)
+                {
+                    float* d = buf.getWritePointer (c);
+                    float lp = d[0];
+                    for (int i = 0; i < len; ++i)
+                    {
+                        lp += a * (d[i] - lp);
+                        const float hi = d[i] - lp;
+                        d[i] = lp + (1.0f - hsCut) * hi;
+                    }
+                }
+            }
+
+            // Tail-gate: linear ramp from full to silence between
+            // gateMs and (gateMs + gateFadeMs). Anything past the fade
+            // window is muted. Skips gating if the WAV is shorter than
+            // gateMs (oneshot already short enough).
+            if (gateMs > 0.0f)
+            {
+                const int gateStart = (int) (gateMs       * 1e-3 * sampleRate);
+                const int gateEnd   = (int) ((gateMs + gateFadeMs) * 1e-3 * sampleRate);
+                if (len > gateStart)
+                {
+                    for (int c = 0; c < ch; ++c)
+                    {
+                        float* d = buf.getWritePointer (c);
+                        for (int i = gateStart; i < len; ++i)
+                        {
+                            float gain = 1.0f;
+                            if (i >= gateEnd) gain = 0.0f;
+                            else if (i > gateStart)
+                                gain = 1.0f - (float) (i - gateStart) / (float) (gateEnd - gateStart);
+                            d[i] *= gain;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     int SampleKit::load (const juce::File& folder)
@@ -154,6 +263,11 @@ namespace aidrum
                 }
                 layer.buffer = std::move (out);
             }
+
+            // v1.6.1-rc.11 — bake realness DSP (HP, hi-shelf cut, tail
+            // gate) per Kind so loaded oneshots play dry / punchy and
+            // the Room Amount knob is the sole reverb source.
+            bakeRealnessDSP (layer.buffer, p.kind, sr);
 
             auto& slot = data->slots[(size_t) p.kind];
             slot.layers.push_back (std::move (layer));
@@ -250,6 +364,9 @@ namespace aidrum
                 }
                 layer.buffer = std::move (out);
             }
+
+            // v1.6.1-rc.11 — bake realness DSP per Kind (see helper).
+            bakeRealnessDSP (layer.buffer, k, sr);
 
             auto& slot = data->slots[(size_t) k];
             slot.layers.push_back (std::move (layer));

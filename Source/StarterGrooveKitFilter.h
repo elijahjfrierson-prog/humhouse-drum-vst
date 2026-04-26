@@ -1,10 +1,13 @@
-// v1.6.1-rc.7 — starter grooves now include user-supplied BFD3 palettes.
-// Merged library = analyzer-generated StarterGrooves (119) + BFD palette
-// extracts (~55). Kit filter is still a pass-through (single bundled kit
-// world), but indices now span the merged list.
+// v1.6.1-rc.11 — starter grooves now include user-supplied SoCal centerstones
+// + BFD3 palettes + analyzer-generated starters. Order is intentional:
+// SoCal entries land FIRST so they sit at the top of the dropdown as the
+// featured "centerstone" grooves, then the analyzer library, then the BFD
+// palettes. Indices are stable because the three sections never reorder at
+// runtime.
 #pragma once
 
 #include "StarterGrooves.generated.h"
+#include "SoCalGrooves.generated.h"
 #include "BfdPaletteGrooves.generated.h"
 
 #include <string_view>
@@ -12,18 +15,19 @@
 
 namespace aidrum
 {
-    // v1.6.1-rc.7 — concatenation of the analyzer-generated STARTER library
-    // and the BFD palette extracts. This is the canonical list used by
-    // every UI + processor callsite; indices are stable because the two
-    // halves never reorder at runtime.
+    // v1.6.1-rc.11 — canonical concatenation of (SoCal centerstones |
+    // analyzer STARTERS | BFD palettes). Used by every UI + processor
+    // callsite.
     inline const std::vector<StarterGroove>& allStarterGrooves()
     {
         static const std::vector<StarterGroove> kAll = []
         {
+            const auto& s = socalGrooveLibrary();
             const auto& a = starterGrooveLibrary();
             const auto& b = bfdPaletteGrooveLibrary();
             std::vector<StarterGroove> v;
-            v.reserve (a.size() + b.size());
+            v.reserve (s.size() + a.size() + b.size());
+            for (const auto& x : s) v.push_back (x);
             for (const auto& x : a) v.push_back (x);
             for (const auto& x : b) v.push_back (x);
             return v;

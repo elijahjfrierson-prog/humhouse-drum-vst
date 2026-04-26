@@ -126,6 +126,15 @@ public:
     void spliceMandatoryFillIntoRegion (aidrum::MidiPattern& region,
                                         int seed) const;
 
+    // v1.6.1-rc.11 — INTENSITY-driven hat thinning + crash density. The
+    // user wants higher INTENSITY to read as "more crash, less hat" in
+    // generator output (sludge-metal feel as the knob climbs). Above 92%
+    // intensity the generator places NO hi-hats at all. Manual notes are
+    // never touched — this is only invoked by COMPOSE / RANDOMIZE.
+    // Caller must already hold arrangementMutex.
+    void applyIntensityCrashHatBalance (aidrum::MidiPattern& region,
+                                        std::uint64_t       seed) const;
+
     // v1.6.1-rc.3 — when the user changes kits, swap the last-appended
     // arrangement region for a groove from the new kit's bucket so the
     // user immediately hears a pattern that matches the kit's feel.

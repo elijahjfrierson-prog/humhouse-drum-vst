@@ -231,9 +231,15 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
     // by shapeVelocity(), never by the generation pipeline. Regenerating
     // on every intensity tweak would silently overwrite hand-picked
     // STARTER grooves with random ones for zero audible benefit.
+    // v1.6.1-rc.11 — kParamFillComplexity is consumed at auto-fill splice
+    // time by spliceMandatoryFillIntoRegion() to pick the starting fill
+    // from the 22-fill library. Cycling the FILL selector must NEVER
+    // regenerate the live region — the user reported the cycler was
+    // "garbage and changing the whole arrangement". Skip regen here.
     if (id == kParamRoom || id == kParamRoomAmount
      || id == kParamStepDiv || id == kParamTimeScale
-     || id == kParamIntensity)
+     || id == kParamIntensity
+     || id == kParamFillComplexity)
         return;
 
     regenerateCurrentRegion();
@@ -884,8 +890,14 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
         // a fresh region so the user gets sound, then subsequent COMPOSE
         // clicks will mold around it.
         arrangement.push_back (lib[(size_t) libIdx].pattern);
-        // v1.6.1-rc.10 — every COMPOSE result carries a fill at
-        // bar-8 beat 2, even on first click.
+        // v1.6.1-rc.11 — apply intensity-driven crash/hat balance
+        // BEFORE the fill splice so the fill bar gets the freshest
+        // hits laid by the splicer (otherwise crash placement could
+        // dog-pile inside the fill window).
+        applyIntensityCrashHatBalance (arrangement.back(),
+                                       static_cast<std::uint64_t> (counter) ^ 0x5151ULL);
+        // v1.6.1-rc.11 — every COMPOSE result carries a fill at
+        // bar-8 beat 1 (was beat 2 in rc.10), even on first click.
         spliceMandatoryFillIntoRegion (arrangement.back(), (int) counter);
         return;
     }
@@ -930,11 +942,13 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
                [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
                { return a.startBeat < b.startBeat; });
 
-    // v1.6.1-rc.10 — mold-around result must always end on a fill at
-    // bar-8 beat 2 (the user has been emphatic across rc.7 → rc.10:
-    // "no matter what groove or compose is generated it should always
-    // have a fill, fills fills fills"). Re-runs after every COMPOSE
-    // click to keep the mandatory cadence intact.
+    // v1.6.1-rc.11 — apply intensity-driven crash/hat balance to the
+    // molded result before the fill splice (so high INTENSITY thins
+    // hats / lays alternating L↔R crashes / no hats above 0.92).
+    applyIntensityCrashHatBalance (last,
+                                   static_cast<std::uint64_t> (counter) ^ 0xC0DEULL);
+    // v1.6.1-rc.11 — mold-around result must always end on a fill at
+    // bar-8 BEAT 1 (was beat 2 in rc.10) — user changed the spec.
     spliceMandatoryFillIntoRegion (last, (int) counter);
 }
 
@@ -960,8 +974,13 @@ void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
     else
         arrangement.back() = lib[(size_t) libIdx].pattern;
 
-    // v1.6.1-rc.10 — RANDOMIZE result must also always end on a fill
-    // at bar-8 beat 2 (mandatory, not occasional).
+    // v1.6.1-rc.11 — apply intensity-driven crash/hat balance before
+    // the fill splice. Above 0.92 intensity, ALL generator-placed
+    // hats are stripped and L+R crashes hit on every phrase top.
+    applyIntensityCrashHatBalance (arrangement.back(),
+                                   static_cast<std::uint64_t> (libIdx) ^ 0xBEEFULL);
+    // v1.6.1-rc.11 — RANDOMIZE result must always end on a fill at
+    // bar-8 BEAT 1 (was beat 2 in rc.10) — user changed the spec.
     spliceMandatoryFillIntoRegion (arrangement.back(), libIdx);
 }
 
@@ -1031,78 +1050,282 @@ aidrum::MidiPattern AIDrumAudioProcessor::makeAutoFillForKit (int /*kitIndex*/,
     return p;
 }
 
-// v1.6.1-rc.10 — guarantees every COMPOSE / RANDOMIZE result carries a
-// fill at bar-8 beat 2 of every 8-bar block. Stretches the region to a
-// multiple of 32 beats (8 bars at 4/4), then for each 8-bar boundary
-// clears the last 3 beats of bar 8 (preserving the bar-1 kick anchor
-// the user / corpus already laid down) and splices in
-// makeAutoFillForKit() shifted to start on bar-8 beat 2. The fill
-// chosen is seed-rotated per boundary so 16-bar / 24-bar regions
-// don't repeat the exact same fill twice in a row.
+// v1.6.1-rc.11 — guarantees every COMPOSE / RANDOMIZE result carries a
+// fill that starts on bar-8 BEAT 1 of every 8-bar block (was bar-8 beat 2
+// in rc.10 — user changed the spec, with the annotated screenshot showing
+// the fill landing on the very downbeat of bar 8).
+//
+// rc.11 also:
+//   * Cycles through the 22-fill library by index (FILL selector +
+//     per-block stride). The user's "Cycle between 2 of the 22 Fills
+//     Every Bar" — we lay down the FILL-selector fill at every boundary,
+//     and on multi-block regions we advance one slot per block so the
+//     library walks instead of repeating.
+//   * If a fill pattern is shorter than the bar (the fill's
+//     lengthInBeats < 4.0), the fill is *tiled* (looped end-to-end)
+//     until it reaches beat 4 of bar 8 — fulfilling "IF THE PATTERN IS
+//     INCOMPLETE REPEAT THE FILL TILL THE FULL GROOVE IS DONE".
+//   * NEVER stretches the region past its existing length. The rc.10
+//     auto-stretch to multiples of 32 was the source of "the arrangement
+//     randomly shapes out too far when clicking the FILL dial". Now if
+//     the region is shorter than 8 bars we just splice into whatever
+//     bar-8 window we *do* have (region.lengthInBeats - 4 .. end) and
+//     skip the splice entirely if the region is < 4 beats.
 void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     aidrum::MidiPattern& region, int seed) const
 {
-    constexpr double kBarsPerBlock      = 8.0;
-    constexpr double kBeatsPerBar       = 4.0;
-    constexpr double kBlockBeats        = kBarsPerBlock * kBeatsPerBar; // 32
-    constexpr double kFillStartInBlock  = (kBarsPerBlock - 1.0) * kBeatsPerBar
-                                        + 1.0; // bar 8 beat 2 == 29.0
+    constexpr double kBarsPerBlock = 8.0;
+    constexpr double kBeatsPerBar  = 4.0;
+    constexpr double kBlockBeats   = kBarsPerBlock * kBeatsPerBar; // 32
 
-    if (region.lengthInBeats < kBlockBeats - 1e-6)
-        region.lengthInBeats = kBlockBeats;
-    else
+    if (region.lengthInBeats < kBeatsPerBar - 1e-6)
+        return; // region too short to host a 1-bar fill — skip silently
+
+    const auto& fillLib = aidrum::fillLibrary();
+    if (fillLib.empty())
+        return;
+
+    // FILL-selector index (0..21). Auto-fill picks the SAME fill the
+    // user's FILL cycler is currently on, then advances one library slot
+    // per 8-bar block so 16-bar / 24-bar regions walk through the
+    // library instead of looping the same pattern.
+    const int selector = juce::jlimit (0,
+                                       static_cast<int> (fillLib.size()) - 1,
+                                       static_cast<int> (apvts.getRawParameterValue (kParamFillComplexity)->load()));
+
+    // Compute how many full 8-bar blocks fit in this region. Every full
+    // block gets a fill anchored at bar-8 beat 1 of that block. Anything
+    // less than a full block (e.g. a 6-bar region) gets its fill
+    // anchored on the LAST bar's beat 1 — so the user always hears a
+    // fill on the closing bar of whatever they laid down.
+    const int fullBlocks = static_cast<int> (region.lengthInBeats / kBlockBeats);
+    const bool partialTail = (region.lengthInBeats - fullBlocks * kBlockBeats) > 1e-6;
+
+    auto fillAnchorForBlock = [&] (int b) -> double
     {
-        const double remainder = std::fmod (region.lengthInBeats, kBlockBeats);
-        if (remainder > 1e-6)
-            region.lengthInBeats += (kBlockBeats - remainder);
-    }
+        if (b < fullBlocks)
+            return b * kBlockBeats + (kBarsPerBlock - 1.0) * kBeatsPerBar; // bar 8 beat 1
+        // partial tail: anchor on the LAST full bar of the region
+        const double lastBarStart = std::floor ((region.lengthInBeats - 1e-6) / kBeatsPerBar) * kBeatsPerBar;
+        return juce::jmax (0.0, lastBarStart);
+    };
 
-    const int blocks = juce::jmax (1, (int) std::round (region.lengthInBeats / kBlockBeats));
+    const int totalAnchors = fullBlocks + (partialTail ? 1 : 0);
+    if (totalAnchors == 0)
+        return;
 
+    // Wipe existing notes inside every fill window so the fill reads
+    // clean. Window = [anchor, min(anchor+4, region.lengthInBeats)).
     auto inFillWindow = [&] (double beat) noexcept
     {
-        for (int b = 0; b < blocks; ++b)
+        for (int b = 0; b < totalAnchors; ++b)
         {
-            const double blockBase  = b * kBlockBeats;
-            const double fillStart  = blockBase + kFillStartInBlock;
-            const double fillEnd    = blockBase + kBlockBeats;
-            if (beat >= fillStart - 1e-6 && beat < fillEnd - 1e-6)
+            const double anchor = fillAnchorForBlock (b);
+            const double end    = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
+            if (beat >= anchor - 1e-6 && beat < end - 1e-6)
                 return true;
         }
         return false;
     };
 
-    // Wipe any existing notes that land in a fill window so the
-    // fill reads cleanly instead of dog-piling on the original
-    // pattern's snare/hat hits.
     region.notes.erase (
         std::remove_if (region.notes.begin(), region.notes.end(),
                         [&] (const aidrum::MidiNote& n)
                         { return inFillWindow (n.startBeat); }),
         region.notes.end());
 
-    for (int b = 0; b < blocks; ++b)
+    // Splice fills.
+    for (int b = 0; b < totalAnchors; ++b)
     {
-        const aidrum::MidiPattern fill = makeAutoFillForKit (0, seed + b);
-        const double blockBase   = b * kBlockBeats;
-        const double anchorBeat  = blockBase + (kBarsPerBlock - 1.0) * kBeatsPerBar; // bar 8 beat 1
-        for (const auto& src : fill.notes)
+        const int           fillIdx = (selector + b) % static_cast<int> (fillLib.size());
+        const auto&         fill    = fillLib[(size_t) fillIdx].pattern;
+        const double        anchor  = fillAnchorForBlock (b);
+        const double        windowEnd = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
+        const double        fillLen = (fill.lengthInBeats > 1e-6 ? fill.lengthInBeats : kBeatsPerBar);
+
+        // Tile/loop the fill until it covers the full window.
+        // "IF THE PATTERN IS INCOMPLETE REPEAT THE FILL TILL THE FULL
+        // GROOVE IS DONE" — repeat the fill end-to-end inside the bar.
+        for (double tileOffset = 0.0;
+             tileOffset < (windowEnd - anchor) - 1e-6;
+             tileOffset += fillLen)
         {
-            // makeAutoFillForKit anchors a kick at beat 0.0 and runs
-            // its action from beat 2.0 onward. We want the *fill
-            // action* to start at bar-8 beat 2, so shift by
-            // (anchorBeat - 1.0) — a 1-beat lead-in lets bar-8
-            // beat 1 still carry whatever downbeat the corpus
-            // pattern brought (we keep it because the wipe above
-            // skipped beat 28).
-            aidrum::MidiNote shifted = src;
-            shifted.startBeat = src.startBeat + anchorBeat - 1.0;
-            if (shifted.startBeat < blockBase + kFillStartInBlock - 1e-6)
-                continue; // skip the helper's beat-1 kick anchor; user's pattern owns it
-            if (shifted.startBeat >= blockBase + kBlockBeats - 1e-6)
-                shifted.startBeat = blockBase + kBlockBeats - 0.01;
-            region.notes.push_back (shifted);
+            for (const auto& src : fill.notes)
+            {
+                const double absBeat = anchor + tileOffset + src.startBeat;
+                if (absBeat < anchor - 1e-6) continue;
+                if (absBeat >= windowEnd - 1e-6) continue;
+                aidrum::MidiNote shifted = src;
+                shifted.startBeat = absBeat;
+                region.notes.push_back (shifted);
+            }
         }
+        juce::ignoreUnused (seed);
+    }
+
+    std::sort (region.notes.begin(), region.notes.end(),
+               [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
+               { return a.startBeat < b.startBeat; });
+}
+
+// v1.6.1-rc.11 — INTENSITY-driven crash / hat balance for generator
+// output. The user has been emphatic: "HIGHER INTENSITY MORE CRASHES AND
+// LESS HI HATS ALL THE TIME … NOT HATS ABOVE 92 INTENSITY … UNLESS
+// MANUALLY PUT IN ON MANUAL MODE OR AUTO MODE." This helper is invoked
+// ONLY by COMPOSE / RANDOMIZE (and other generator paths) — never on
+// the manual pattern, so hand-clicked hats are never touched.
+//
+// Curve (intensity = APVTS reading, 0..1):
+//   intensity <= 0.55                : leave hats alone, no extra crashes
+//   0.55 .. 0.92                     : probabilistically thin hats; place
+//                                       L↔R alternating crashes on every
+//                                       4-beat phrase top + the "and" of 4
+//   intensity >= 0.92                : strip ALL hat hits (42/44/46) from
+//                                       the generator output; lay double
+//                                       L+R crashes on every 4-beat
+//                                       phrase top + every snare backbeat
+void AIDrumAudioProcessor::applyIntensityCrashHatBalance (
+    aidrum::MidiPattern& region, std::uint64_t seed) const
+{
+    constexpr int kClosedHat = 42;
+    constexpr int kPedalHat  = 44;
+    constexpr int kOpenHat   = 46;
+    constexpr int kSnare     = 38;
+    constexpr int kCrashL    = 49;
+    constexpr int kCrashR    = 57;
+
+    const float intensity = juce::jlimit (
+        0.0f, 1.0f, apvts.getRawParameterValue (kParamIntensity)->load());
+
+    // Below the floor, generator output is left alone.
+    if (intensity <= 0.55f + 1e-3f)
+        return;
+
+    std::mt19937_64 rng (seed ^ 0x9E3779B97F4A7C15ULL);
+    auto roll = [&] () { return std::uniform_real_distribution<float> (0.0f, 1.0f) (rng); };
+
+    // Hat thinning probability: 0% at 0.55, ~70% at 0.85, 100% at >=0.92.
+    auto hatRemoveProb = [intensity] () -> float
+    {
+        if (intensity >= 0.92f) return 1.0f;
+        if (intensity <= 0.55f) return 0.0f;
+        const float t = (intensity - 0.55f) / (0.92f - 0.55f);
+        return juce::jlimit (0.0f, 1.0f, std::pow (t, 0.85f));
+    } ();
+
+    region.notes.erase (
+        std::remove_if (region.notes.begin(), region.notes.end(),
+                        [&] (const aidrum::MidiNote& n)
+                        {
+                            const bool isHat = (n.noteNumber == kClosedHat
+                                             || n.noteNumber == kPedalHat
+                                             || n.noteNumber == kOpenHat);
+                            if (! isHat) return false;
+                            return roll() < hatRemoveProb;
+                        }),
+        region.notes.end());
+
+    // Crash placement. Density rises with intensity. Beat positions
+    // chosen from real sludge / heavy-rock placement: phrase tops,
+    // snare-backbeat doubles, "and" of 4 leading into the next bar.
+    const double regLen = std::max (0.0, region.lengthInBeats);
+    if (regLen < 4.0)
+        return;
+
+    auto noteAt = [&] (int n, double startBeat, float vel) -> aidrum::MidiNote
+    {
+        aidrum::MidiNote m;
+        m.noteNumber = n;
+        m.startBeat  = startBeat;
+        m.lengthBeat = 0.20;
+        m.velocity   = juce::jlimit (0.0f, 1.0f, vel);
+        return m;
+    };
+
+    auto hasNote = [&] (int n, double startBeat) -> bool
+    {
+        for (const auto& x : region.notes)
+            if (x.noteNumber == n && std::abs (x.startBeat - startBeat) < 1e-2)
+                return true;
+        return false;
+    };
+
+    auto place = [&] (int n, double startBeat, float vel)
+    {
+        if (startBeat < 0.0 || startBeat >= regLen - 1e-3) return;
+        if (hasNote (n, startBeat)) return;
+        region.notes.push_back (noteAt (n, startBeat, vel));
+    };
+
+    // Phrase-top crashes on every bar 1, alternating L↔R per bar.
+    // At very high intensity, double them (L AND R together) on the
+    // 1 of bar 1 / bar 5 of every 8-bar phrase.
+    const int totalBars = static_cast<int> (regLen / 4.0 + 1e-6);
+    for (int bar = 0; bar < totalBars; ++bar)
+    {
+        const double anchor = bar * 4.0;
+        const bool   isPhraseTop = (bar % 4 == 0); // bar 1, 5, 9, …
+        const float  vel = 0.85f + 0.10f * intensity;
+
+        if (intensity >= 0.92f)
+        {
+            // Sludge — both L and R crashes hit on every phrase top
+            if (isPhraseTop)
+            {
+                place (kCrashL, anchor, vel);
+                place (kCrashR, anchor, vel);
+            }
+            else if (intensity >= 0.95f && (bar & 1))
+            {
+                // and on every other bar at the top
+                place ((bar % 2) ? kCrashL : kCrashR, anchor, vel * 0.92f);
+            }
+        }
+        else
+        {
+            // Mid-high — alternate L/R on phrase tops
+            if (isPhraseTop)
+                place ((bar & 1) ? kCrashR : kCrashL, anchor, vel);
+        }
+    }
+
+    // Mid-bar accents on the "and" of 4 leading into the next bar
+    // (3.5 within each bar). Probabilistic, scaled by intensity.
+    if (intensity >= 0.65f)
+    {
+        const float prob = juce::jlimit (0.0f, 1.0f,
+                                          (intensity - 0.65f) / 0.35f);
+        for (int bar = 0; bar < totalBars; ++bar)
+        {
+            if (roll() >= prob) continue;
+            const double accent = bar * 4.0 + 3.5;
+            const int    note   = (bar & 1) ? kCrashL : kCrashR;
+            place (note, accent, 0.70f + 0.20f * intensity);
+        }
+    }
+
+    // Backbeat-doubled crashes on every snare hit (beats 2/4) at very
+    // high intensity. This is what sells the "more crash, less hat"
+    // sludge feel — the kit reads as crash-led instead of hat-led.
+    if (intensity >= 0.88f)
+    {
+        std::vector<aidrum::MidiNote> snareCrashes;
+        snareCrashes.reserve (16);
+        for (const auto& n : region.notes)
+        {
+            if (n.noteNumber != kSnare) continue;
+            // Only double on the 2 / 4 backbeats — avoid ghost notes
+            const double inBar = std::fmod (n.startBeat, 4.0);
+            const bool onBackbeat = std::abs (inBar - 1.0) < 1e-2
+                                  || std::abs (inBar - 3.0) < 1e-2;
+            if (! onBackbeat) continue;
+            const int crashNote = (((int) std::round (n.startBeat / 4.0)) & 1)
+                                  ? kCrashR : kCrashL;
+            snareCrashes.push_back (noteAt (crashNote, n.startBeat, 0.78f));
+        }
+        for (auto& sc : snareCrashes)
+            if (! hasNote (sc.noteNumber, sc.startBeat))
+                region.notes.push_back (std::move (sc));
     }
 
     std::sort (region.notes.begin(), region.notes.end(),
