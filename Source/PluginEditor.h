@@ -82,8 +82,14 @@ private:
         void decayFlashes (float k);
         void paint (juce::Graphics&) override;
     private:
-        int   selectedKit = 0;
-        float flash[kNumFlashes] {};
+        int          selectedKit = 0;
+        float        flash[kNumFlashes] {};
+        // v1.6.1-rc.9 — bundled 3D Yamaha kit render. Loaded once from
+        // BinaryData; when present we paint the photo as the kit
+        // visual and overlay small yellow flash dots at each drum's
+        // approximate position so hits read as a real kit being
+        // played instead of the abstract circle/silhouette.
+        juce::Image  kitPhoto;
     };
 
     void timerCallback() override;
@@ -181,6 +187,11 @@ private:
     // Action buttons.
     PlusButton                plusButton;
     juce::Label               plusHelper     { {}, "COMPOSE" };
+    // v1.6.1-rc.9 — RANDOMIZE pad (full-pattern replace, the
+    // pre-rc.9 COMPOSE behavior). Sits next to COMPOSE so users
+    // can choose: COMPOSE molds around what they have, RANDOMIZE
+    // rolls a fresh idea from scratch.
+    juce::TextButton          randomizeButton { "RANDOMIZE" };
     juce::TextButton          undoButton     { "UNDO" };
     juce::TextButton          clearButton    { "CLEAR" };
 

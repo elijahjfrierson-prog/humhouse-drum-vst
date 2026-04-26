@@ -105,7 +105,9 @@ namespace aidrum
             // v1.6.1-rc.2 — reserve a narrow column on the left for per-lane
             // labels (CRASH / RIDE / HI-HAT / TOM / SNARE / KICK). 6 lanes
             // now — RIDE is explicit instead of being lumped with crashes.
-            constexpr float kLabelColumn = 54.0f;
+            // v1.6.1-rc.9 — widened from 54 to 76 so 'R CRASH' / 'L CRASH'
+            // labels render their final 'H' (was clipped at 54).
+            constexpr float kLabelColumn = 76.0f;
             constexpr float kHeaderRow   = 14.0f;
             auto labelArea = inner.removeFromLeft (kLabelColumn);
             inner.removeFromLeft (6.0f);                 // gap after labels

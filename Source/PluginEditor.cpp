@@ -154,7 +154,16 @@ void AIDrumAudioProcessorEditor::XYPad::paint (juce::Graphics& g)
 // ============================================================================
 // KitVisualizer — vector-ish drumkit silhouette that changes with kit choice.
 // ============================================================================
-AIDrumAudioProcessorEditor::KitVisualizer::KitVisualizer() = default;
+AIDrumAudioProcessorEditor::KitVisualizer::KitVisualizer()
+{
+    // v1.6.1-rc.9 — try to load the bundled 3D (Nu Rock) 70's Yamaha
+    // kit render from BinaryData. If the asset is missing for any
+    // reason we silently fall back to the original vector silhouette
+    // in paint() so the editor still shows *something*.
+    int sz = 0;
+    if (auto* d = BrandingData::getNamedResource ("NuRockYamahaKit_png", sz))
+        kitPhoto = juce::ImageFileFormat::loadFrom (d, (size_t) sz);
+}
 
 void AIDrumAudioProcessorEditor::KitVisualizer::setSelectedKit (int index)
 {
@@ -188,6 +197,90 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
     g.fillRoundedRectangle (r, 18.0f);
     g.setColour (juce::Colour (Palette::kPanelEdge));
     g.drawRoundedRectangle (r, 18.0f, 1.0f);
+
+    // v1.6.1-rc.9 — when the bundled 3D kit render is available we paint
+    // the photo as the kit visual and skip the original vector
+    // silhouette. Yellow flash dots are overlaid at each drum's
+    // approximate position on the photo so a hit reads as the real
+    // kit being struck. Bus index → drum mapping mirrors
+    // DrumBusMixer / DrumSynth::kNumBuses (0=KICK, 1=SNARE, 2=HAT,
+    // 3=SMALL TOM, 4=FLOOR TOM, 5=RIDE, 6=L CRASH, 7=R CRASH).
+    if (kitPhoto.isValid())
+    {
+        auto inner = r.reduced (6.0f);
+        const float photoAR = (float) kitPhoto.getWidth() / (float) kitPhoto.getHeight();
+        const float boxAR   = inner.getWidth() / std::max (1.0f, inner.getHeight());
+        juce::Rectangle<float> photoArea = inner;
+        if (boxAR > photoAR)
+        {
+            const float w = inner.getHeight() * photoAR;
+            photoArea = inner.withSizeKeepingCentre (w, inner.getHeight());
+        }
+        else
+        {
+            const float h = inner.getWidth() / photoAR;
+            photoArea = inner.withSizeKeepingCentre (inner.getWidth(), h);
+        }
+        g.setOpacity (1.0f);
+        g.drawImage (kitPhoto, photoArea, juce::RectanglePlacement::centred);
+
+        // Active-kit caption — small italic line top-left so users
+        // still see "(Nu Rock) 70's Yamaha" without overpowering the photo.
+        auto titleFont = juce::Font (juce::FontOptions (10.0f, juce::Font::italic));
+        titleFont.setExtraKerningFactor (0.30f);
+        g.setFont (titleFont);
+        g.setColour (juce::Colour (Palette::kMuted));
+        g.drawText ("ACTIVE KIT",
+                    r.toNearestInt().reduced (14, 10),
+                    juce::Justification::topLeft, false);
+        const auto& names = aidrum::drumKitDisplayNames();
+        const juce::String kitName = juce::String (
+            names[(size_t) juce::jlimit (0, (int) names.size() - 1, selectedKit)]);
+        g.setColour (juce::Colour (Palette::kBone));
+        g.drawFittedText (kitName,
+                          r.toNearestInt().withTrimmedTop (22).reduced (14, 0),
+                          juce::Justification::topLeft, 2);
+
+        // Yellow trigger dots (subtle) — relative photo coordinates
+        // [0..1, 0..1] sampled from the bundled render so each drum
+        // lights at the right point on the kit picture.
+        struct DotPos { int bus; float u; float v; float radius; };
+        const DotPos kDots[] = {
+            { 0, 0.50f, 0.78f, 18.0f },  // KICK   — front bass-drum head
+            { 1, 0.36f, 0.62f, 11.0f },  // SNARE  — left of kick, between toms
+            { 2, 0.27f, 0.46f, 10.0f },  // HAT    — far-left hi-hat stand
+            { 3, 0.46f, 0.50f, 10.0f },  // SMALL TOM — left rack tom
+            { 4, 0.66f, 0.66f, 13.0f },  // FLOOR TOM — right floor tom
+            { 5, 0.74f, 0.40f, 12.0f },  // RIDE   — right side cymbal
+            { 6, 0.30f, 0.30f, 12.0f },  // L CRASH — left top cymbal
+            { 7, 0.62f, 0.32f, 12.0f },  // R CRASH — right top cymbal
+        };
+
+        for (const auto& d : kDots)
+        {
+            const float f = (d.bus >= 0 && d.bus < kNumFlashes)
+                          ? flash[d.bus] : 0.0f;
+            const float cx = photoArea.getX() + d.u * photoArea.getWidth();
+            const float cy = photoArea.getY() + d.v * photoArea.getHeight();
+            // Idle dot (very subtle).
+            g.setColour (juce::Colour (0xffffd866).withAlpha (0.28f));
+            g.fillEllipse (cx - d.radius * 0.45f, cy - d.radius * 0.45f,
+                           d.radius * 0.90f, d.radius * 0.90f);
+            if (f > 0.01f)
+            {
+                // Render-video flash on hit: bright yellow halo that
+                // grows with velocity, fades on every decayFlashes() tick.
+                const float grow = 1.0f + 1.4f * f;
+                g.setColour (juce::Colour (0xffffe680).withAlpha (0.60f * f));
+                g.fillEllipse (cx - d.radius * grow, cy - d.radius * grow,
+                               d.radius * 2.0f * grow, d.radius * 2.0f * grow);
+                g.setColour (juce::Colour (0xfffff7b0).withAlpha (0.95f * f));
+                g.fillEllipse (cx - d.radius * 0.55f, cy - d.radius * 0.55f,
+                               d.radius * 1.10f, d.radius * 1.10f);
+            }
+        }
+        return;
+    }
 
     // v1.3.0 Per-kit tint — each of the 20 kits has a distinct accent
     // colour (walnut amber, sunburst red, jet black, neon pink for 808,
@@ -790,11 +883,15 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     halfButton  .onClick = [setTimeScale] { setTimeScale (1); };
     normalButton.onClick = [setTimeScale] { setTimeScale (2); };
     doubleButton.onClick = [setTimeScale] { setTimeScale (3); };
-    setTimeScale (timeScaleBox.getSelectedId() > 0 ? timeScaleBox.getSelectedId() : 2);
-
-    addAndMakeVisible (halfButton);
-    addAndMakeVisible (normalButton);
-    addAndMakeVisible (doubleButton);
+    // v1.6.1-rc.9 — force NORMAL and hide the HALF/NORMAL/DOUBLE transport
+    // group entirely. Switching playback rate at runtime caused samples to
+    // be re-resampled by the bundled-kit baker, sometimes pulling in the
+    // unintended 70s/80s electronic-kit fallbacks. We keep the param itself
+    // so older saved sessions still load, just pinned to NORMAL.
+    setTimeScale (2);
+    halfButton  .setVisible (false);
+    normalButton.setVisible (false);
+    doubleButton.setVisible (false);
 
     // v1.6.1-rc.7 — FILL SELECTOR cycler. Prev / next arrows step
     // through the 21 user-supplied fill MIDIs (Fill_01..Fill_12 + the
@@ -872,14 +969,34 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // the CURRENT KIT's bucket of 119 grooves (instead of synthesising
     // a new pattern). User explicitly asked to scrap ML-style
     // generation and stay inside the 119-groove library.
+    // v1.6.1-rc.9 — COMPOSE molds around what the user already drew.
+    // It cycles through the kit's groove bucket Scripter-style and
+    // overlays the picked pattern's decoration notes on the last
+    // region (preserving every kick / snare / hat the user laid down
+    // by hand). RANDOMIZE — below — keeps the original full-replace
+    // behavior for users who want a brand-new idea on a single click.
     plusButton.onClick = [this]
     {
-        processorRef.appendRandomGrooveForKit (drumKitBox.getSelectedItemIndex());
+        processorRef.composeMoldAroundForKit (drumKitBox.getSelectedItemIndex());
         plusButton.bump();
         arrangementStrip.repaint();
+        manualGrid.repaint();
     };
-    plusButton.setTooltip ("COMPOSE GROOVE (+) — picks a random groove from the current kit's bucket and drops it in as a new region.");
+    plusButton.setTooltip ("COMPOSE — molds around your existing pattern: cycles through the kit's groove bucket and overlays decoration (ghost notes, hat ostinatos, kick syncopations) on top of what you already drew. Your kicks/snares/hats are preserved.");
     addAndMakeVisible (plusButton);
+
+    // RANDOMIZE — full pattern replace, sits next to COMPOSE. Styling
+    // happens with the rest of the small buttons below where the
+    // styleSmallBtn lambda is defined.
+    randomizeButton.onClick = [this]
+    {
+        processorRef.randomizePatternForKit (drumKitBox.getSelectedItemIndex());
+        plusButton.bump();
+        arrangementStrip.repaint();
+        manualGrid.repaint();
+    };
+    randomizeButton.setTooltip ("RANDOMIZE — rolls a fresh groove from the kit's bucket and replaces the current pattern (the pre-rc.9 COMPOSE behavior).");
+    addAndMakeVisible (randomizeButton);
 
     {
         auto f = juce::Font (juce::FontOptions (11.0f, juce::Font::italic));
@@ -899,6 +1016,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     };
     styleSmallBtn (undoButton);
     styleSmallBtn (clearButton);
+    styleSmallBtn (randomizeButton);
     styleSmallBtn (saveMidiButton);
     styleSmallBtn (playButton);
     styleSmallBtn (pauseButton);
@@ -1080,17 +1198,34 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (kitPathLabel);
 
     // UI SCALE slider — resizes the entire editor 75% … 150%.
+    // v1.6.1-rc.9 — UI scale snaps to 4 fixed stops (25 / 50 / 75 / 100 %).
+    // Internal scale factors are 0.6 / 0.85 / 1.10 / 1.35 so the editor
+    // never collapses to unreadable nor explodes outside the host window.
     uiScaleSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    uiScaleSlider.setRange (0.75, 1.5, 0.01);
-    uiScaleSlider.setValue (processorRef.getUiScale(), juce::dontSendNotification);
+    uiScaleSlider.setRange (1.0, 4.0, 1.0);
+    {
+        const float cur = processorRef.getUiScale();
+        const double initStop = (cur < 0.725f) ? 1.0
+                              : (cur < 0.975f) ? 2.0
+                              : (cur < 1.225f) ? 3.0
+                                                : 4.0;
+        uiScaleSlider.setValue (initStop, juce::dontSendNotification);
+    }
     uiScaleSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 16);
     uiScaleSlider.textFromValueFunction = [] (double v)
-        { return juce::String ((int) std::round (v * 100.0)) + "%"; };
-    uiScaleSlider.setTooltip ("UI SCALE — resize the entire editor (75 % … 150 %). "
-                              "Handy when the VST window is cramped in your DAW.");
+    {
+        const int pct = (int) std::round (v) * 25;
+        return juce::String (pct) + "%";
+    };
+    uiScaleSlider.setTooltip ("UI SCALE — four fixed stops (25 / 50 / 75 / 100 %). "
+                              "Snaps so the editor never lands at an awkward in-between size.");
     uiScaleSlider.onValueChange = [this]
     {
-        const float s = (float) uiScaleSlider.getValue();
+        const int   stop = juce::jlimit (1, 4, (int) std::round (uiScaleSlider.getValue()));
+        const float s    = (stop == 1) ? 0.60f
+                          : (stop == 2) ? 0.85f
+                          : (stop == 3) ? 1.10f
+                                          : 1.35f;
         processorRef.setUiScale (s);
         setTransform (juce::AffineTransform::scale (s));
         setSize ((int) std::round (960.0f * s), (int) std::round (920.0f * s));
@@ -1415,6 +1550,13 @@ void AIDrumAudioProcessorEditor::resized()
     plusHelper.setBounds (plusRect.getX() - 28, plusRect.getBottom() - 1,
                           plusRect.getWidth() + 56, 16);
 
+    // v1.6.1-rc.9 — RANDOMIZE sits to the right of COMPOSE, vertically
+    // aligned with the (+) pad. Same height, narrower width.
+    const int rndW = 96, rndH = 26;
+    randomizeButton.setBounds (plusRect.getRight() + 14,
+                               plusRect.getCentreY() - rndH / 2,
+                               rndW, rndH);
+
     area.removeFromTop (6);
 
     // v1.6.0 — STARTER GROOVES dropdown + COPY / PASTE region buttons.
@@ -1466,16 +1608,12 @@ void AIDrumAudioProcessorEditor::resized()
 
         rc7Bar.removeFromLeft (12);
 
-        // Time-scale cluster — HALF / NORMAL / DOUBLE.
-        auto timeCluster = rc7Bar.removeFromLeft (300).reduced (2);
-        const int btnW = (timeCluster.getWidth() - 12) / 3;
-        halfButton  .setBounds (timeCluster.removeFromLeft (btnW));
-        timeCluster.removeFromLeft (6);
-        normalButton.setBounds (timeCluster.removeFromLeft (btnW));
-        timeCluster.removeFromLeft (6);
-        doubleButton.setBounds (timeCluster);
+        // v1.6.1-rc.9 — HALF / NORMAL / DOUBLE transport buttons removed
+        // (the playback-rate switch was triggering the wrong-kit bug).
+        halfButton  .setBounds ({});
+        normalButton.setBounds ({});
+        doubleButton.setBounds ({});
 
-        rc7Bar.removeFromLeft (12);
 
         // Ghost button on the far right of the bar.
         ghostButton.setBounds (rc7Bar.removeFromRight (96).reduced (2));

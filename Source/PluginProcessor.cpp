@@ -844,6 +844,175 @@ void AIDrumAudioProcessor::appendRandomGrooveForKit (int kitIndex)
     appendStarterGroove (bucket[pick]);
 }
 
+// v1.6.1-rc.9 — COMPOSE: mold around the existing last region. We pick
+// the next corpus groove via the same Scripter-style cycler the old
+// COMPOSE used, then *overlay* notes from that groove onto the last
+// region instead of replacing it. The user's manual edits are the
+// authoritative voice (kick / snare / hat positions on the
+// downbeats); the corpus pattern only contributes the decoration
+// notes the user wouldn't have drawn by hand — ghost-snare drags,
+// 1/16 hat ostinatos, kick syncopations on the "and" of beats. We
+// dedupe near-coincident hits per (note, time) so we never stack two
+// kicks on the same downbeat.
+void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
+{
+    const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
+    if (bucket.empty())
+        return;
+
+    // Scripter-style cycler — same counter as the old COMPOSE so
+    // repeated clicks audition every groove in the bucket in order.
+    const int safeKit = juce::jlimit (0, (int) composeCycleIndex.size() - 1,
+                                      std::max (0, kitIndex));
+    auto& counter = composeCycleIndex[(size_t) safeKit];
+    const size_t pick = counter % bucket.size();
+    counter = (counter + 1) % (bucket.size() * 16);
+
+    const auto& lib = aidrum::allStarterGrooves();
+    const int libIdx = bucket[pick];
+    if (libIdx < 0 || libIdx >= static_cast<int> (lib.size()))
+        return;
+
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (arrangement.empty())
+    {
+        // First click — nothing to mold around. Drop the groove in as
+        // a fresh region so the user gets sound, then subsequent COMPOSE
+        // clicks will mold around it.
+        arrangement.push_back (lib[(size_t) libIdx].pattern);
+        return;
+    }
+
+    auto& last = arrangement.back();
+    const aidrum::MidiPattern& src = lib[(size_t) libIdx].pattern;
+
+    // Build a fast (note, quantised-beat) set of what the user already
+    // has so we never double-up a kick/snare on the same downbeat.
+    auto quant = [] (double b) { return (int) std::llround (b * 8.0); }; // 1/32 grid
+    std::set<std::pair<int,int>> existing;
+    existing.clear();
+    for (const auto& n : last.notes)
+        existing.insert ({ n.noteNumber, quant (n.startBeat) });
+
+    // Phase-align src to last by wrapping its beat positions modulo
+    // last.lengthInBeats so an 8-bar src groove decorates a 4-bar
+    // user region cleanly.
+    const double targetLen = std::max (0.5, last.lengthInBeats);
+    for (const auto& n : src.notes)
+    {
+        aidrum::MidiNote dec = n;
+        dec.startBeat = std::fmod (n.startBeat, targetLen);
+        if (dec.startBeat < 0.0) dec.startBeat += targetLen;
+
+        const auto key = std::make_pair (dec.noteNumber, quant (dec.startBeat));
+        if (existing.count (key))
+            continue;
+
+        // Mold-around damping: corpus decorations come in softer than
+        // the user's primary pattern so they read as accents, not as
+        // a competing groove. Ghost-velocity hits stay ghost.
+        dec.velocity = juce::jlimit (0.05f, 1.0f, dec.velocity * 0.78f);
+        last.notes.push_back (dec);
+        existing.insert (key);
+    }
+
+    // Keep notes sorted by start time so any consumer that assumes
+    // monotonic order (e.g. older arrangement-strip render code)
+    // doesn't get confused.
+    std::sort (last.notes.begin(), last.notes.end(),
+               [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
+               { return a.startBeat < b.startBeat; });
+}
+
+// v1.6.1-rc.9 — RANDOMIZE: full pattern replace, the original COMPOSE
+// behavior. Picks a fresh groove and either replaces the last region
+// or appends one if the arrangement is empty.
+void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
+{
+    const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
+    if (bucket.empty())
+        return;
+
+    std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
+    std::uniform_int_distribution<size_t> pick (0, bucket.size() - 1);
+    const auto& lib = aidrum::allStarterGrooves();
+    const int libIdx = bucket[pick (rng)];
+    if (libIdx < 0 || libIdx >= static_cast<int> (lib.size()))
+        return;
+
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (arrangement.empty())
+        arrangement.push_back (lib[(size_t) libIdx].pattern);
+    else
+        arrangement.back() = lib[(size_t) libIdx].pattern;
+}
+
+// v1.6.1-rc.9 — Auto-fill helper. Returns a one-bar fill that the
+// caller will splice in as the 8th bar of an 8-bar block. Action
+// starts on beat 2 of the bar so beat 1 still carries the previous
+// groove's downbeat. The fill is a tom roll → snare/crash punctuation
+// using the canonical 8-lane note numbers.
+aidrum::MidiPattern AIDrumAudioProcessor::makeAutoFillForKit (int /*kitIndex*/,
+                                                              int seed) const
+{
+    aidrum::MidiPattern p;
+    p.lengthInBeats = 4.0;          // one 4/4 bar; host clock forces tempo
+
+    const int noteSnare    = 38;
+    const int noteHighTom  = 48;
+    const int noteLowTom   = 43;
+    const int noteCrashL   = 49;
+    const int noteKick     = 36;
+
+    auto add = [&p] (int n, double startBeat, float v)
+    {
+        aidrum::MidiNote x;
+        x.noteNumber = n;
+        x.startBeat  = startBeat;
+        x.lengthBeat = 0.20;
+        x.velocity   = juce::jlimit (0.0f, 1.0f, v);
+        p.notes.push_back (x);
+    };
+
+    // Beat 1 — kick anchor only (so the user's groove still resolves).
+    add (noteKick, 0.00, 0.95f);
+
+    // Beat 2 → 4 = the fill action. Tom drag with snare punctuation,
+    // ending on a crash + kick on beat 1 of the *next* bar (which the
+    // caller appends as a separate region — we just close the bar).
+    // Pattern shape (8th-note grid):
+    //   2.0 snare  2.5 snare ghost  3.0 high-tom  3.25 high-tom
+    //   3.5 low-tom 3.75 low-tom  3.875 snare flam (1/64 grace)  4 ends.
+    add (noteSnare,   2.00, 0.85f);
+    add (noteSnare,   2.50, 0.45f);   // ghost
+    add (noteHighTom, 3.00, 0.80f);
+    add (noteHighTom, 3.25, 0.78f);
+    add (noteLowTom,  3.50, 0.85f);
+    add (noteLowTom,  3.75, 0.88f);
+    add (noteSnare,   3.875, 0.70f);  // 1/64 flam grace into the downbeat
+
+    // Crash on the implicit downbeat of the next bar — we represent
+    // that by laying it just inside the last 1/64 of this region so
+    // the audio engine fires it before the next region starts.
+    add (noteCrashL,  3.99, 0.92f);
+
+    // Tiny seed-driven shuffle so repeated 8-bar cycles aren't
+    // identical: drop one random tom hit from the middle on every
+    // 4th cycle for breath.
+    if ((seed & 3) == 0 && p.notes.size() > 3)
+    {
+        // Erase the 4th note (first high-tom) for a tasteful drag.
+        for (auto it = p.notes.begin(); it != p.notes.end(); ++it)
+            if (it->noteNumber == noteHighTom)
+            {
+                p.notes.erase (it);
+                break;
+            }
+    }
+
+    return p;
+}
+
 void AIDrumAudioProcessor::remapLastRegionToKit (int kitIndex)
 {
     const auto& bucket = aidrum::starterIndicesForKit (kitIndex);

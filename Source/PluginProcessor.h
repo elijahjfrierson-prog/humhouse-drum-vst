@@ -91,6 +91,30 @@ public:
     // Picks a random groove from the kit's subset and appends it.
     void appendRandomGrooveForKit (int kitIndex);
 
+    // v1.6.1-rc.9 — COMPOSE pad: mold around the user's existing pattern
+    // instead of replacing it. If the arrangement already has at least
+    // one region, this picks the next groove from the kit's bucket
+    // (Scripter-style cycler) and *overlays* its idiomatic notes on
+    // top of the last region — preserving every kick / snare / hat the
+    // user has drawn in manual mode and only adding ghost-snare drags,
+    // hat ostinatos, kick syncopations, etc. that the corpus pattern
+    // brings. If the arrangement is empty it falls through to
+    // appendRandomGrooveForKit so the first click still produces sound.
+    void composeMoldAroundForKit (int kitIndex);
+
+    // v1.6.1-rc.9 — RANDOMIZE pad: full-pattern replacement (the
+    // original COMPOSE behavior). Picks a fresh groove from the kit's
+    // bucket and replaces the last region; if the arrangement is empty
+    // it appends one.
+    void randomizePatternForKit (int kitIndex);
+
+    // v1.6.1-rc.9 — auto-fill cadence helper. Returns a fill-shaped
+    // MidiPattern that fits the last bar of an 8-bar block, starting
+    // its action on beat 2. Pure helper so the editor can paint the
+    // cadence on the arrangement strip in advance of the audio
+    // engine reaching that bar.
+    aidrum::MidiPattern makeAutoFillForKit (int kitIndex, int seed) const;
+
     // v1.6.1-rc.3 — when the user changes kits, swap the last-appended
     // arrangement region for a groove from the new kit's bucket so the
     // user immediately hears a pattern that matches the kit's feel.
