@@ -330,26 +330,55 @@ namespace aidrum
         juce::AudioFormatManager fmt;
         fmt.registerBasicFormats();
 
-        int loaded = 0;
+        // v1.6.1-rc.11 — Devin Review 🟡: load() (the user-folder path)
+        // sorts its `pending` vector by (kind, velocity) before pushing
+        // layers into KitSlot, but loadBundled() iterated
+        // BundledKitData::namedResourceList in raw resource order —
+        // which JUCE BinaryData generation does NOT guarantee to be
+        // alphabetical or velocity-sorted. pickLayer() linearly maps
+        // velocity → layer index assuming soft → hard ascending order,
+        // so unsorted bundled layers could put a hard sample under a
+        // soft hit and vice versa. Mirror the load()-path fix: collect
+        // a Pending list, sort it, then process.
+        struct BundledPending
+        {
+            Kind        kind;
+            int         layer;
+            int         resIndex;
+            const char* resName;
+        };
+        std::vector<BundledPending> pending;
+        pending.reserve ((size_t) BundledKitData::namedResourceListSize);
+
         for (int i = 0; i < BundledKitData::namedResourceListSize; ++i)
         {
             const char* resName = BundledKitData::namedResourceList[i];
-            int dataSize = 0;
-            const char* bytes = BundledKitData::getNamedResource (resName, dataSize);
-            if (bytes == nullptr || dataSize <= 0) continue;
-
             juce::String origName = BundledKitData::getNamedResourceOriginalFilename (resName);
             if (origName.isEmpty()) origName = resName;
-
-            // v1.5.0+: all bundled kits share one binary blob; filenames are prefixed
-            // with "<KitName>__" (e.g. "PopRock__kick.wav"). Only load entries
-            // belonging to the requested kit.
             if (! origName.startsWith (prefix)) continue;
             auto remainder = origName.substring (prefix.length());
             auto stem = juce::File (remainder).getFileNameWithoutExtension();
-            (void) stripVelocitySuffix (stem);
+            const int vel = stripVelocitySuffix (stem);
             Kind k;
             if (! kindFromStem (stem, k)) continue;
+            pending.push_back ({ k, vel, i, resName });
+        }
+
+        std::sort (pending.begin(), pending.end(),
+                   [] (const BundledPending& a, const BundledPending& b)
+                   {
+                       if (a.kind != b.kind) return (int) a.kind < (int) b.kind;
+                       return a.layer < b.layer;
+                   });
+
+        int loaded = 0;
+        for (const auto& p : pending)
+        {
+            const char* resName = p.resName;
+            int dataSize = 0;
+            const char* bytes = BundledKitData::getNamedResource (resName, dataSize);
+            if (bytes == nullptr || dataSize <= 0) continue;
+            const Kind k = p.kind;
 
             std::unique_ptr<juce::InputStream> mem
                 (new juce::MemoryInputStream (bytes, (size_t) dataSize, false));

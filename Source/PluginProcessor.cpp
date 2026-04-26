@@ -920,40 +920,56 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
     if (libIdx < 0 || libIdx >= static_cast<int> (lib.size()))
         return;
 
-    std::lock_guard<std::mutex> lock (arrangementMutex);
-    if (arrangement.empty())
+    // v1.6.1-rc.11 — Devin Review 🔴: this used to take arrangementMutex
+    // and hold it across applyIntensityCrashHatBalance + the deduping
+    // overlay loop + spliceMandatoryFillIntoRegion (std::sort,
+    // std::remove_if, RNG, APVTS reads). processBlock() takes the same
+    // mutex via getArrangementTotalBeats / renderArrangementToMidiBuffer,
+    // so a single COMPOSE click could block the audio thread for
+    // hundreds of microseconds and drop samples. Same priority-inversion
+    // pattern the reviewer flagged on regenerateCurrentRegion in rc.11
+    // — apply the same fix: snapshot under a brief lock, do the heavy
+    // work on a local copy, re-acquire briefly to swap.
+
+    aidrum::MidiPattern result;
+    bool                hadExisting = false;
+    int                 phraseBar   = 0;
+    {
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        hadExisting = ! arrangement.empty();
+        phraseBar   = static_cast<int> (arrangement.size()) - (hadExisting ? 1 : 0);
+        if (hadExisting)
+            result = arrangement.back();
+    }
+
+    if (! hadExisting)
     {
         // First click — nothing to mold around. Drop the groove in as
         // a fresh region so the user gets sound, then subsequent COMPOSE
         // clicks will mold around it.
-        arrangement.push_back (lib[(size_t) libIdx].pattern);
-        // v1.6.1-rc.11 — apply intensity-driven crash/hat balance
-        // BEFORE the fill splice so the fill bar gets the freshest
-        // hits laid by the splicer (otherwise crash placement could
-        // dog-pile inside the fill window).
-        applyIntensityCrashHatBalance (arrangement.back(),
+        result = lib[(size_t) libIdx].pattern;
+        applyIntensityCrashHatBalance (result,
                                        static_cast<std::uint64_t> (counter) ^ 0x5151ULL);
-        // v1.6.1-rc.11 — every COMPOSE result carries a fill at
-        // bar-8 beat 1 (was beat 2 in rc.10), even on first click.
-        spliceMandatoryFillIntoRegion (arrangement.back(), (int) counter);
+        spliceMandatoryFillIntoRegion (result, (int) counter);
+
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        arrangement.push_back (std::move (result));
         return;
     }
 
-    auto& last = arrangement.back();
     const aidrum::MidiPattern& src = lib[(size_t) libIdx].pattern;
 
     // Build a fast (note, quantised-beat) set of what the user already
     // has so we never double-up a kick/snare on the same downbeat.
     auto quant = [] (double b) { return (int) std::llround (b * 8.0); }; // 1/32 grid
     std::set<std::pair<int,int>> existing;
-    existing.clear();
-    for (const auto& n : last.notes)
+    for (const auto& n : result.notes)
         existing.insert ({ n.noteNumber, quant (n.startBeat) });
 
-    // Phase-align src to last by wrapping its beat positions modulo
-    // last.lengthInBeats so an 8-bar src groove decorates a 4-bar
+    // Phase-align src to result by wrapping its beat positions modulo
+    // result.lengthInBeats so an 8-bar src groove decorates a 4-bar
     // user region cleanly.
-    const double targetLen = std::max (0.5, last.lengthInBeats);
+    const double targetLen = std::max (0.5, result.lengthInBeats);
     for (const auto& n : src.notes)
     {
         aidrum::MidiNote dec = n;
@@ -968,25 +984,32 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
         // the user's primary pattern so they read as accents, not as
         // a competing groove. Ghost-velocity hits stay ghost.
         dec.velocity = juce::jlimit (0.05f, 1.0f, dec.velocity * 0.78f);
-        last.notes.push_back (dec);
+        result.notes.push_back (dec);
         existing.insert (key);
     }
 
     // Keep notes sorted by start time so any consumer that assumes
     // monotonic order (e.g. older arrangement-strip render code)
     // doesn't get confused.
-    std::sort (last.notes.begin(), last.notes.end(),
+    std::sort (result.notes.begin(), result.notes.end(),
                [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
                { return a.startBeat < b.startBeat; });
 
-    // v1.6.1-rc.11 — apply intensity-driven crash/hat balance to the
-    // molded result before the fill splice (so high INTENSITY thins
-    // hats / lays alternating L↔R crashes / no hats above 0.92).
-    applyIntensityCrashHatBalance (last,
+    applyIntensityCrashHatBalance (result,
                                    static_cast<std::uint64_t> (counter) ^ 0xC0DEULL);
-    // v1.6.1-rc.11 — mold-around result must always end on a fill at
-    // bar-8 BEAT 1 (was beat 2 in rc.10) — user changed the spec.
-    spliceMandatoryFillIntoRegion (last, (int) counter);
+    spliceMandatoryFillIntoRegion (result, (int) counter);
+
+    {
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        // User could have appended/deleted regions while we were working
+        // unlocked; only commit if our snapshot is still the back of the
+        // arrangement.
+        if (arrangement.empty())
+            return;
+        if (phraseBar != static_cast<int> (arrangement.size()) - 1)
+            return;
+        arrangement.back() = std::move (result);
+    }
 }
 
 // v1.6.1-rc.9 — RANDOMIZE: full pattern replace, the original COMPOSE
@@ -1005,20 +1028,22 @@ void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
     if (libIdx < 0 || libIdx >= static_cast<int> (lib.size()))
         return;
 
+    // v1.6.1-rc.11 — Devin Review 🔴: same priority-inversion pattern as
+    // composeMoldAroundForKit / regenerateCurrentRegion. Build the
+    // randomised region on a local copy (the heavy work — crash/hat
+    // balance + fill splice — runs unlocked), then take arrangementMutex
+    // briefly to swap the result in. Audio thread no longer waits on
+    // RANDOMIZE clicks.
+    aidrum::MidiPattern result = lib[(size_t) libIdx].pattern;
+    applyIntensityCrashHatBalance (result,
+                                   static_cast<std::uint64_t> (libIdx) ^ 0xBEEFULL);
+    spliceMandatoryFillIntoRegion (result, libIdx);
+
     std::lock_guard<std::mutex> lock (arrangementMutex);
     if (arrangement.empty())
-        arrangement.push_back (lib[(size_t) libIdx].pattern);
+        arrangement.push_back (std::move (result));
     else
-        arrangement.back() = lib[(size_t) libIdx].pattern;
-
-    // v1.6.1-rc.11 — apply intensity-driven crash/hat balance before
-    // the fill splice. Above 0.92 intensity, ALL generator-placed
-    // hats are stripped and L+R crashes hit on every phrase top.
-    applyIntensityCrashHatBalance (arrangement.back(),
-                                   static_cast<std::uint64_t> (libIdx) ^ 0xBEEFULL);
-    // v1.6.1-rc.11 — RANDOMIZE result must always end on a fill at
-    // bar-8 BEAT 1 (was beat 2 in rc.10) — user changed the spec.
-    spliceMandatoryFillIntoRegion (arrangement.back(), libIdx);
+        arrangement.back() = std::move (result);
 }
 
 // v1.6.1-rc.9 — Auto-fill helper. Returns a one-bar fill that the
