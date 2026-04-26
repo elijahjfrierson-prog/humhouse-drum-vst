@@ -224,8 +224,13 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
     // by buildRequestForMode/backend.generate — regenerating on it
     // would silently destroy any hand-chosen STARTER groove the user
     // appended into the last region.
+    // v1.6.1-rc.7 — kParamIntensity is consumed only at MIDI emit time
+    // by shapeVelocity(), never by the generation pipeline. Regenerating
+    // on every intensity tweak would silently overwrite hand-picked
+    // STARTER grooves with random ones for zero audible benefit.
     if (id == kParamRoom || id == kParamRoomAmount
-     || id == kParamStepDiv || id == kParamTimeScale)
+     || id == kParamStepDiv || id == kParamTimeScale
+     || id == kParamIntensity)
         return;
 
     regenerateCurrentRegion();
