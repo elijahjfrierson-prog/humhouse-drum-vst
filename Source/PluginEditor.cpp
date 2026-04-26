@@ -244,16 +244,21 @@ void AIDrumAudioProcessorEditor::KitVisualizer::paint (juce::Graphics& g)
         // Yellow trigger dots (subtle) — relative photo coordinates
         // [0..1, 0..1] sampled from the bundled render so each drum
         // lights at the right point on the kit picture.
+        // Bus indices follow aidrum::Bus (DrumBusMixer.h): Kick=0,
+        // Snare=1, Toms=2, ClosedHat=3, OpenHat=4, Ride=5, Crash=6,
+        // China=7. Toms share a single bus, so SMALL TOM and FLOOR TOM
+        // both flash off bus 2; HAT flashes off ClosedHat (3); R CRASH
+        // is routed to the China bus (7) per SampleKit.cpp.
         struct DotPos { int bus; float u; float v; float radius; };
         const DotPos kDots[] = {
             { 0, 0.50f, 0.78f, 18.0f },  // KICK   — front bass-drum head
             { 1, 0.36f, 0.62f, 11.0f },  // SNARE  — left of kick, between toms
-            { 2, 0.27f, 0.46f, 10.0f },  // HAT    — far-left hi-hat stand
-            { 3, 0.46f, 0.50f, 10.0f },  // SMALL TOM — left rack tom
-            { 4, 0.66f, 0.66f, 13.0f },  // FLOOR TOM — right floor tom
+            { 3, 0.27f, 0.46f, 10.0f },  // HAT    — far-left hi-hat stand
+            { 2, 0.46f, 0.50f, 10.0f },  // SMALL TOM — left rack tom (Toms bus)
+            { 2, 0.66f, 0.66f, 13.0f },  // FLOOR TOM — right floor tom (Toms bus)
             { 5, 0.74f, 0.40f, 12.0f },  // RIDE   — right side cymbal
-            { 6, 0.30f, 0.30f, 12.0f },  // L CRASH — left top cymbal
-            { 7, 0.62f, 0.32f, 12.0f },  // R CRASH — right top cymbal
+            { 6, 0.30f, 0.30f, 12.0f },  // L CRASH — left top cymbal (Crash)
+            { 7, 0.62f, 0.32f, 12.0f },  // R CRASH — right top cymbal (China)
         };
 
         for (const auto& d : kDots)

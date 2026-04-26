@@ -669,8 +669,12 @@ namespace aidrum
             if (onDeleteRegion == nullptr || last.totalBeats <= 0.0
                 || last.regions.empty())
                 return;
+            // v1.6.1-rc.9 — must mirror kLabelColumn in paint() (76.0f)
+            // plus the 6px gap. Was 54+6 in rc.8; bumped to 76+6 here so
+            // right-click region-delete hit-tests against the same grid
+            // the user sees.
             auto gridRect = inner.withTrimmedRight (getAppendButtonBounds (inner).getWidth() + 10.0f)
-                                 .withTrimmedLeft  (54.0f + 6.0f)
+                                 .withTrimmedLeft  (76.0f + 6.0f)
                                  .withTrimmedTop   (14.0f);
             if (! gridRect.contains (p)) return;
             const double total = std::max (1.0, last.totalBeats);
