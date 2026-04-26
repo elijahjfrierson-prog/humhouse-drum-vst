@@ -226,6 +226,22 @@ namespace aidrum
                 pending.push_back ({ k, vel, f });
         }
 
+        // v1.6.1-rc.11 — Devin Review 🔴: pickLayer() maps velocity to
+        // layer index linearly (idx = v * numLayers) and assumes
+        // ascending velocity order (layer 0 = softest, N-1 = hardest).
+        // juce::File::findChildFiles returns files in
+        // filesystem-dependent order, so on hosts that don't iterate
+        // alphabetically a soft hit could play the heaviest WAV. Sort
+        // pending by (kind, layer) here so each KitSlot's layers
+        // vector is built in the right velocity order regardless of
+        // the OS's directory enumeration.
+        std::sort (pending.begin(), pending.end(),
+                   [] (const Pending& a, const Pending& b)
+                   {
+                       if (a.kind != b.kind) return (int) a.kind < (int) b.kind;
+                       return a.layer < b.layer;
+                   });
+
         int loaded = 0;
         for (auto& p : pending)
         {
