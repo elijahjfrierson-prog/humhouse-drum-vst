@@ -630,6 +630,15 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         processorRef.deleteNoteInRegion (region, note);
         arrangementStrip.repaint();
     };
+    // v1.6.1-rc.11 — Devin Review: route the drag-select multi-delete
+    // through the batched processor entry so all victim notes erase
+    // under a single arrangementMutex acquisition. Prevents deferred
+    // APVTS callbacks from invalidating note indices mid-batch.
+    arrangementStrip.onDeleteNotes = [this] (std::vector<std::pair<int, int>> victims)
+    {
+        processorRef.deleteNotesInRegions (std::move (victims));
+        arrangementStrip.repaint();
+    };
     arrangementStrip.onDuplicateNote = [this] (int region, int note)
     {
         processorRef.duplicateNoteInRegion (region, note);

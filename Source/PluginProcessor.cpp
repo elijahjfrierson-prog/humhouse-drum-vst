@@ -254,24 +254,54 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
 
 void AIDrumAudioProcessor::regenerateCurrentRegion()
 {
-    std::lock_guard<std::mutex> lock (arrangementMutex);
-    if (arrangement.empty())
-        return;
+    // v1.6.1-rc.11 — Devin Review flagged this as a 🔴 priority-inversion
+    // bug in rc.11: backend.generate() does substantial CPU work (RNG +
+    // sort + applyDrummerPost + applyKit + finalize) and used to run
+    // while the arrangement mutex was held. processBlock() also takes
+    // that mutex (renderArrangementToMidiBuffer / getArrangementTotalBeats),
+    // so a knob tweak on the message thread would block the audio
+    // thread for the entire generation, dropping samples.
+    //
+    // Fix: take the mutex once to read the snapshot we need (length +
+    // isFill + region count), drop it, run the expensive generate()
+    // unlocked, then re-acquire briefly to swap the result in. We
+    // re-validate `arrangement.back()` after re-acquiring because the
+    // user could have appended/deleted regions while we were generating.
+
+    bool   wasFill        = false;
+    double existingLen    = 0.0;
+    int    phraseBar      = 0;
+    {
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        if (arrangement.empty())
+            return;
+        wasFill     = arrangement.back().isFill;
+        existingLen = arrangement.back().lengthInBeats;
+        phraseBar   = static_cast<int> (arrangement.size()) - 1;
+    }
 
     // v1.6.1-rc.5 — preserve the region's fill/groove slot across live
     // regen. The old code always used Groove mode, silently converting
     // any Fill region into a Groove the moment the user touched a knob.
-    const bool wasFill = arrangement.back().isFill;
     auto req = buildRequestForMode (wasFill ? aidrum::GenerationMode::Fill
                                             : aidrum::GenerationMode::Groove);
-    req.phraseBar = static_cast<int> (arrangement.size()) - 1;
-
-    const auto existingLen = arrangement.back().lengthInBeats;
+    req.phraseBar = phraseBar;
     if (existingLen > 0.0) req.lengthInBeats = existingLen;
 
     auto regenerated = backend.generate (req);
     regenerated.isFill = wasFill;
-    arrangement.back() = std::move (regenerated);
+
+    {
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        // Region count could have changed while we were unlocked; only
+        // commit if there's still something to swap and the slot we
+        // sized for is still the back of the arrangement.
+        if (arrangement.empty())
+            return;
+        if (phraseBar != static_cast<int> (arrangement.size()) - 1)
+            return; // user appended a new region in the meantime — drop our regen
+        arrangement.back() = std::move (regenerated);
+    }
 }
 
 APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
@@ -1377,6 +1407,40 @@ void AIDrumAudioProcessor::deleteNoteInRegion (int regionIndex, int noteIndex)
     if (noteIndex < 0 || noteIndex >= static_cast<int> (region.notes.size()))
         return;
     region.notes.erase (region.notes.begin() + noteIndex);
+}
+
+void AIDrumAudioProcessor::deleteNotesInRegions (std::vector<std::pair<int, int>> noteRefs)
+{
+    // v1.6.1-rc.11 — Devin Review flagged that the per-note loop in
+    // ArrangementStrip released the arrangement mutex between deletes,
+    // letting deferred APVTS callbacks (regenerateCurrentRegion) fire
+    // and replace the entire last region between two of our deletes —
+    // which silently invalidated every stored note index for that
+    // region. Holding the mutex across the whole batch closes that
+    // race. Sort descending by (regionIdx, noteIdx) so erasing earlier
+    // indices doesn't shift the indices of still-pending deletions.
+    std::sort (noteRefs.begin(), noteRefs.end(),
+               [] (const auto& a, const auto& b)
+               {
+                   if (a.first != b.first) return a.first > b.first;
+                   return a.second > b.second;
+               });
+    // Drop exact duplicates that survived the sort (shouldn't happen
+    // from the drag-select rect, but it's a cheap defensive check
+    // because erasing the same index twice would corrupt the vector).
+    noteRefs.erase (std::unique (noteRefs.begin(), noteRefs.end()),
+                    noteRefs.end());
+
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    for (const auto& [regionIndex, noteIndex] : noteRefs)
+    {
+        if (regionIndex < 0 || regionIndex >= static_cast<int> (arrangement.size()))
+            continue;
+        auto& region = arrangement[(size_t) regionIndex];
+        if (noteIndex < 0 || noteIndex >= static_cast<int> (region.notes.size()))
+            continue;
+        region.notes.erase (region.notes.begin() + noteIndex);
+    }
 }
 
 void AIDrumAudioProcessor::duplicateNoteInRegion (int regionIndex, int noteIndex)

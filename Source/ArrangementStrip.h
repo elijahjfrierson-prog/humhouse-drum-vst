@@ -89,6 +89,12 @@ namespace aidrum
         // note; right-click / alt-click on empty grid deletes the whole
         // region under the cursor.
         std::function<void (int regionIndex, int noteIndex)> onDeleteNote;
+        // v1.6.1-rc.11 — batch delete for the drag-select multi-select.
+        // Caller (PluginEditor) routes this to a single mutex-locked
+        // PluginProcessor::deleteNotesInRegions so the arrangement
+        // can't be mutated by deferred APVTS callbacks between
+        // individual deletes (Devin Review caught this race in rc.11).
+        std::function<void (std::vector<std::pair<int, int>>)> onDeleteNotes;
         std::function<void (int regionIndex, int noteIndex)> onDuplicateNote;
         // New in rc.5 — (regionIndex, localStartBeat, noteNumber, velocity)
         std::function<void (int regionIndex, double localStartBeat,
@@ -606,24 +612,36 @@ namespace aidrum
         // arrangement is showing.
         bool keyPressed (const juce::KeyPress& key) override
         {
-            // v1.6.1-rc.11 — multi-select delete first. If a drag-select
+            // v1.6.1-rc.11 — multi-select delete. If a drag-select
             // captured one or more notes, Delete/Backspace removes them
-            // all in one shot. Sort by (regionIdx desc, noteIdx desc) so
-            // index shifts inside a region don't wreck the deletes.
+            // all atomically. Devin Review flagged that calling
+            // onDeleteNote() per-victim released the arrangement mutex
+            // between deletes, letting deferred APVTS callbacks
+            // (regenerateCurrentRegion) replace the back region and
+            // silently invalidate the remaining indices. We now hand
+            // the whole victim list to onDeleteNotes which holds the
+            // mutex once across the batch (sorting + dedup happens
+            // processor-side too, so the strip stays dumb).
             if ((key == juce::KeyPress::deleteKey
                  || key == juce::KeyPress::backspaceKey)
-                && ! selectedNotes.empty()
-                && onDeleteNote != nullptr)
+                && ! selectedNotes.empty())
             {
-                auto victims = selectedNotes;
-                std::sort (victims.begin(), victims.end(),
-                           [] (const auto& a, const auto& b)
-                           {
-                               if (a.first != b.first) return a.first > b.first;
-                               return a.second > b.second;
-                           });
-                for (const auto& [r, n] : victims)
-                    onDeleteNote (r, n);
+                if (onDeleteNotes != nullptr)
+                {
+                    onDeleteNotes (selectedNotes);
+                }
+                else if (onDeleteNote != nullptr)
+                {
+                    auto victims = selectedNotes;
+                    std::sort (victims.begin(), victims.end(),
+                               [] (const auto& a, const auto& b)
+                               {
+                                   if (a.first != b.first) return a.first > b.first;
+                                   return a.second > b.second;
+                               });
+                    for (const auto& [r, n] : victims)
+                        onDeleteNote (r, n);
+                }
                 selectedNotes.clear();
                 selectionRect = {};
                 repaint();

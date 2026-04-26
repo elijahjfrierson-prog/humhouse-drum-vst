@@ -146,6 +146,12 @@ public:
     // duplicate it without touching the rest of the region. Indices are
     // bounds-checked; out-of-range calls are no-ops.
     void deleteNoteInRegion (int regionIndex, int noteIndex);
+    // v1.6.1-rc.11 — batch-delete a list of (regionIdx, noteIdx) pairs
+    // under a single mutex acquisition. Used by the drag-select multi-
+    // delete path so the arrangement can't be mutated by deferred APVTS
+    // callbacks (regenerateCurrentRegion etc.) between individual
+    // deletes, which would silently invalidate stored note indices.
+    void deleteNotesInRegions (std::vector<std::pair<int, int>> noteRefs);
     void duplicateNoteInRegion (int regionIndex, int noteIndex);
     void addNoteToRegion (int regionIndex, int noteNumber,
                           double startBeat, double lengthBeats, float velocity);
