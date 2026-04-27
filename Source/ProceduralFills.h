@@ -220,7 +220,10 @@ namespace aidrum
             for (int s = 0; s < 16; ++s)
             {
                 const double beat = s * 0.25;
-                f.add (kSnare, beat - 1.0 / 16.0, 0.32f, 0.10);  // grace
+                // Devin Review: at s=0 the unclamped grace beat is
+                // -0.0625 which FillCtx::add silently drops, so the
+                // first hit sounded like a plain strike. Clamp at 0.
+                f.add (kSnare, std::max (0.0, beat - 1.0 / 16.0), 0.32f, 0.10);  // grace
                 f.add (kSnare, beat, 0.72f + 0.06f * (s % 4 == 0));
             }
             f.closeCrash (0.95f, 0.82f);

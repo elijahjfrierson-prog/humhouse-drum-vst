@@ -328,16 +328,18 @@ void AIDrumAudioProcessor::regenerateCurrentRegion()
     // re-validate `arrangement.back()` after re-acquiring because the
     // user could have appended/deleted regions while we were generating.
 
-    bool   wasFill        = false;
-    double existingLen    = 0.0;
-    int    phraseBar      = 0;
+    bool   wasFill         = false;
+    double existingLen     = 0.0;
+    int    phraseBar       = 0;
+    float  savedRegionInt  = -1.0f;  // v1.6.1-rc.14 — preserve per-region INTENSITY
     {
         std::lock_guard<std::mutex> lock (arrangementMutex);
         if (arrangement.empty())
             return;
-        wasFill     = arrangement.back().isFill;
-        existingLen = arrangement.back().lengthInBeats;
-        phraseBar   = static_cast<int> (arrangement.size()) - 1;
+        wasFill        = arrangement.back().isFill;
+        existingLen    = arrangement.back().lengthInBeats;
+        phraseBar      = static_cast<int> (arrangement.size()) - 1;
+        savedRegionInt = arrangement.back().regionIntensity;
     }
 
     // v1.6.1-rc.5 — preserve the region's fill/groove slot across live
@@ -349,7 +351,11 @@ void AIDrumAudioProcessor::regenerateCurrentRegion()
     if (existingLen > 0.0) req.lengthInBeats = existingLen;
 
     auto regenerated = backend.generate (req);
-    regenerated.isFill = wasFill;
+    regenerated.isFill          = wasFill;
+    // v1.6.1-rc.14 — restore the user's per-region INTENSITY override
+    // (Devin Review caught this — any APVTS knob tweak silently reset
+    // the override to the inherit-global sentinel).
+    regenerated.regionIntensity = savedRegionInt;
 
     {
         std::lock_guard<std::mutex> lock (arrangementMutex);
@@ -1159,12 +1165,23 @@ void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
     // SoCal-centerstone groove is now in the random pool — the
     // Intelligence pad rolls from the FULL allStarterGrooves() library
     // (SoCal + analyzer + BFD palettes), not the small subset.
+    // v1.6.1-rc.14 — preserve the user's per-region INTENSITY override
+    // across RANDOMIZE so re-rolling a groove doesn't silently drop the
+    // velocity vibe they set on the region's drag-strip.
+    float savedRegionInt = -1.0f;
+    {
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        if (! arrangement.empty())
+            savedRegionInt = arrangement.back().regionIntensity;
+    }
+
     aidrum::MidiPattern result = expandGrooveToEightBars (
         lib[(size_t) libIdx].pattern,
         static_cast<std::uint64_t> (libIdx) ^ 0xC0FFEEULL);
     applyIntensityCrashHatBalance (result,
                                    static_cast<std::uint64_t> (libIdx) ^ 0xBEEFULL);
     spliceMandatoryFillIntoRegion (result, libIdx);
+    result.regionIntensity = savedRegionInt;
 
     std::lock_guard<std::mutex> lock (arrangementMutex);
     if (arrangement.empty())
@@ -1710,7 +1727,11 @@ void AIDrumAudioProcessor::remapLastRegionToKit (int kitIndex)
     std::lock_guard<std::mutex> lock (arrangementMutex);
     if (arrangement.empty())
         return;
+    // v1.6.1-rc.14 — preserve the user's per-region INTENSITY override
+    // when swapping in a fresh library pattern.
+    const float savedRegionInt = arrangement.back().regionIntensity;
     arrangement.back() = lib[(size_t) libIdx].pattern;
+    arrangement.back().regionIntensity = savedRegionInt;
 }
 
 // ============================================================================

@@ -1567,9 +1567,12 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (8);
 
-    // ----- Knobs row: Variation | Humanize | Swing | Fills | Fill CX | Room Amount -----
+    // ----- Knobs row: Variation | Humanize | Swing | Fills | Intensity | Fill Density | Room Amount -----
+    // v1.6.1-rc.14 — divisor MUST match the number of placeKnob calls
+    // below. rc.14 added FILL DENSITY → 7 knobs total. Devin Review
+    // caught a /6 leftover that gave roomAmountSlider an empty cell.
     auto knobsRow = area.removeFromTop (108).reduced (4, 6);
-    const int knobW = knobsRow.getWidth() / 6;
+    const int knobW = knobsRow.getWidth() / 7;
     auto placeKnob = [&knobsRow, knobW] (juce::Slider& s)
     {
         auto cell = knobsRow.removeFromLeft (knobW).reduced (6, 10);
