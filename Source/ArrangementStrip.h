@@ -92,6 +92,13 @@ namespace aidrum
         // to PluginProcessor::setRegionIntensity.
         std::function<void (int regionIndex, float intensity01)> onRegionIntensityChanged;
 
+        // v1.6.1-rc.15 — fires when the user clicks the per-region
+        // INTENSITY mini-knob in a region's header. The editor uses
+        // this to "activate / select" that region for editing without
+        // changing its intensity (clicking the knob also selects the
+        // region; click+drag adjusts).
+        std::function<void (int regionIndex)> onRegionIntensitySelected;
+
         // v1.6.1-rc.5 — step-sequencer toggle semantics. Left-click on a
         // drawn note immediately deletes it (same motion = toggle off).
         // Left-click on an empty grid cell drops a new note at that lane
@@ -130,6 +137,7 @@ namespace aidrum
 
             cachedRegionOffsets.clear();
             cachedRegionIntensityHits.clear();
+            cachedRegionIntensityKnobs.clear();
 
             // v1.6.1-rc.2 — reserve a narrow column on the left for per-lane
             // labels (CRASH / RIDE / HI-HAT / TOM / SNARE / KICK). 6 lanes
@@ -271,17 +279,81 @@ namespace aidrum
 
                 cachedRegionOffsets.push_back (regionOffset);
 
-                // Region label at top-left of its cell
-                if (last.regions.size() > 1)
+                // v1.6.1-rc.15 — per-region INTENSITY mini-knob in the
+                // top-left header of EVERY region tile, painted right
+                // next to the region number. The bottom drag-strip is
+                // still there but the user said it wasn't visible enough,
+                // so we now render a real knob too. Vertical-drag = set
+                // 0..1, right-click clears (region inherits global
+                // INTENSITY). The number is always shown (even on a
+                // single region) so the knob has a label next to it.
                 {
                     auto lf = juce::Font (juce::FontOptions (9.0f));
                     lf.setExtraKerningFactor (0.22f);
                     g.setFont (lf);
-                    g.setColour (juce::Colour (GothicPalette::kMuted).withAlpha (0.75f));
+                    g.setColour (juce::Colour (GothicPalette::kBone).withAlpha (0.85f));
                     g.drawText (juce::String ((int) i + 1),
                                 juce::Rectangle<float> (regionX0 + 3.0f, inner.getY() + 1.0f,
-                                                        20.0f, 12.0f),
+                                                        14.0f, 14.0f),
                                 juce::Justification::topLeft, false);
+
+                    // Mini intensity knob — 18 px square, sits flush with
+                    // the region number in the same header band.
+                    const float knobSize = 18.0f;
+                    juce::Rectangle<float> knob (regionX0 + 18.0f,
+                                                 inner.getY() + 1.0f,
+                                                 knobSize, knobSize);
+                    if (knob.getRight() < inner.getX() + (float) (regionOffset + regionLen) * pxPerBeat - 2.0f)
+                    {
+                        cachedRegionIntensityKnobs.push_back ({ (int) i, knob });
+
+                        const float ri = region.regionIntensity;
+                        const float v01 = ri >= 0.0f ? juce::jlimit (0.0f, 1.0f, ri) : 0.5f;
+                        const auto centre = knob.getCentre();
+                        const float radius = knobSize * 0.42f;
+
+                        // Backplate
+                        g.setColour (juce::Colour (GothicPalette::kInk).withAlpha (0.85f));
+                        g.fillEllipse (knob.reduced (1.0f));
+
+                        // Track arc 5/4 turn (-135° → +135°)
+                        const float a0 = juce::degreesToRadians (-135.0f);
+                        const float a1 = juce::degreesToRadians ( 135.0f);
+                        const float aV = a0 + (a1 - a0) * v01;
+
+                        juce::Path track;
+                        track.addCentredArc (centre.x, centre.y, radius, radius,
+                                             0.0f, a0, a1, true);
+                        g.setColour (juce::Colour (GothicPalette::kPanelEdge).withAlpha (0.85f));
+                        g.strokePath (track, juce::PathStrokeType (1.6f));
+
+                        // Active arc — gold when override set, dim bronze
+                        // when inheriting the global INTENSITY.
+                        juce::Path active;
+                        active.addCentredArc (centre.x, centre.y, radius, radius,
+                                              0.0f, a0, aV, true);
+                        const auto goldHi = juce::Colour (GothicPalette::kAccent);
+                        const auto goldLo = juce::Colour (GothicPalette::kAccentDeep);
+                        if (ri >= 0.0f)
+                            g.setColour (goldHi);
+                        else
+                            g.setColour (juce::Colour (GothicPalette::kMuted).withAlpha (0.55f));
+                        g.strokePath (active, juce::PathStrokeType (1.8f));
+
+                        // Tick mark
+                        const float tx0 = centre.x + std::cos (aV) * radius * 0.40f;
+                        const float ty0 = centre.y + std::sin (aV) * radius * 0.40f;
+                        const float tx1 = centre.x + std::cos (aV) * radius * 0.95f;
+                        const float ty1 = centre.y + std::sin (aV) * radius * 0.95f;
+                        g.setColour (ri >= 0.0f
+                                     ? juce::Colour (GothicPalette::kBone).withAlpha (0.95f)
+                                     : juce::Colour (GothicPalette::kSilver).withAlpha (0.55f));
+                        g.drawLine (tx0, ty0, tx1, ty1, 1.4f);
+
+                        // Hairline ring outside the active arc
+                        g.setColour (goldLo.withAlpha (0.55f));
+                        g.drawEllipse (knob.reduced (1.0f), 0.6f);
+                    }
                 }
 
                 // Draw notes — each lane uses its own colour so KICK / SNARE /
@@ -482,6 +554,37 @@ namespace aidrum
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            // v1.6.1-rc.15 — per-region INTENSITY mini-knob hit-test.
+            // Tested FIRST so the knob in the region header wins over
+            // every other hit (lane labels, notes, grid). Vertical drag
+            // = set 0..1 (drag up to brighten); right-click clears the
+            // override.
+            for (const auto& hit : cachedRegionIntensityKnobs)
+            {
+                if (! hit.rect.contains (e.position))
+                    continue;
+                if (e.mods.isRightButtonDown() || e.mods.isAltDown())
+                {
+                    if (onRegionIntensityChanged != nullptr)
+                        onRegionIntensityChanged (hit.regionIdx, -1.0f);
+                    draggingRegionIntensity = -1;
+                    draggingKnobAnchorY     = -1.0f;
+                    draggingKnobAnchorVal   =  0.0f;
+                    repaint();
+                    return;
+                }
+                draggingRegionIntensity = hit.regionIdx;
+                draggingKnobAnchorY     = e.position.y;
+                draggingKnobAnchorVal   = (currentRegion (hit.regionIdx).regionIntensity >= 0.0f
+                                           ? currentRegion (hit.regionIdx).regionIntensity
+                                           : 0.5f);
+                draggingKnobIsKnob      = true;
+                if (onRegionIntensitySelected != nullptr)
+                    onRegionIntensitySelected (hit.regionIdx);
+                repaint();
+                return;
+            }
+
             // v1.6.1-rc.14 — per-region INTENSITY drag-strip hit-test.
             // Tested before lane labels and note-hits so the gold strip
             // wins over the underlying note grid. Right-click clears
@@ -495,10 +598,12 @@ namespace aidrum
                     if (onRegionIntensityChanged != nullptr)
                         onRegionIntensityChanged (hit.regionIdx, -1.0f);
                     draggingRegionIntensity = -1;
+                    draggingKnobIsKnob      = false;
                     repaint();
                     return;
                 }
                 draggingRegionIntensity = hit.regionIdx;
+                draggingKnobIsKnob      = false;
                 const float frac = juce::jlimit (0.0f, 1.0f,
                     (e.position.x - hit.rect.getX()) / juce::jmax (1.0f, hit.rect.getWidth()));
                 if (onRegionIntensityChanged != nullptr)
@@ -596,10 +701,23 @@ namespace aidrum
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
-            // v1.6.1-rc.14 — per-region INTENSITY drag continues. Find
-            // the strip we latched in mouseDown and rewrite its 0..1.
+            // v1.6.1-rc.14/15 — per-region INTENSITY drag continues.
+            // If we latched on the mini-knob (rc.15) use vertical drag
+            // — drag UP brightens. If we latched on the bottom strip
+            // (rc.14) use horizontal drag.
             if (draggingRegionIntensity >= 0)
             {
+                if (draggingKnobIsKnob)
+                {
+                    const float dy = draggingKnobAnchorY - e.position.y; // up = +
+                    const float frac = juce::jlimit (0.0f, 1.0f,
+                                                     draggingKnobAnchorVal + dy / 90.0f);
+                    if (onRegionIntensityChanged != nullptr)
+                        onRegionIntensityChanged (draggingRegionIntensity, frac);
+                    repaint();
+                    return;
+                }
+
                 for (const auto& hit : cachedRegionIntensityHits)
                 {
                     if (hit.regionIdx != draggingRegionIntensity)
@@ -696,6 +814,8 @@ namespace aidrum
             const auto inner = getLocalBounds().toFloat().reduced (10.5f, 8.5f);
             dragMode = DragMode::None;
             draggingRegionIntensity = -1;
+            draggingKnobIsKnob      = false;
+            draggingKnobAnchorY     = -1.0f;
             lastAddedRegion = -1;
             lastAddedStepBeat = -1.0;
             lastAddedNote = -1;
@@ -933,6 +1053,19 @@ namespace aidrum
         std::function<Snapshot()> provider;
         bool                      highlightAll = false;
         Snapshot                  last;
+
+        // v1.6.1-rc.15 — safe lookup used by the per-region INTENSITY
+        // mini-knob hit handler so we can read the live regionIntensity
+        // for the clicked region. Falls back to a static empty pattern
+        // if the index is stale (shouldn't happen because cachedKnobs
+        // is rebuilt on every paint() before mouseDown can fire).
+        const MidiPattern& currentRegion (int idx) const noexcept
+        {
+            static const MidiPattern empty;
+            if (idx < 0 || idx >= (int) last.regions.size())
+                return empty;
+            return last.regions[(size_t) idx];
+        }
         int                       selectedRegion = -1;
         int                       selectedNote   = -1;
         std::vector<NoteHit>      noteHits;
@@ -953,7 +1086,15 @@ namespace aidrum
             juce::Rectangle<float> rect;
         };
         std::vector<RegionIntensityHit> cachedRegionIntensityHits;
+        // v1.6.1-rc.15 — top-left mini-knob hit-rects per region. Same
+        // RegionIntensityHit shape (regionIdx + rect) but a separate
+        // cache so the knob and bottom strip can be hit-tested in
+        // priority order.
+        std::vector<RegionIntensityHit> cachedRegionIntensityKnobs;
         int                            draggingRegionIntensity = -1;
+        bool                           draggingKnobIsKnob      = false;
+        float                          draggingKnobAnchorY     = -1.0f;
+        float                          draggingKnobAnchorVal   =  0.0f;
 
         enum class DragMode { None, Paint, Erase };
         DragMode dragMode        = DragMode::None;

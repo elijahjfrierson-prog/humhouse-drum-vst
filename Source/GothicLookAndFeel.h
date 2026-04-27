@@ -119,51 +119,173 @@ namespace aidrum
             return f;
         }
 
-        // Sleek arc rotary: outer dim track, inner glowing arc, bone pointer.
+        // v1.6.1-rc.15 — fully 3D-rendered gold rotary. Drop shadow,
+        // recessed socket, brushed-gold dome with top-left specular,
+        // beveled inner cap, indicator wedge with glow. Mirrors the
+        // photoreal depth language of the bundled drum kit render so
+        // every knob sits in the panel instead of floating on it.
         void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h,
                                float pos, float angStart, float angEnd,
                                juce::Slider&) override
         {
-            const auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (6.0f);
-            const float r     = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
-            const auto centre = bounds.getCentre();
-            const float trackW = 3.5f;
+            const auto fullBounds = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (4.0f);
+            const float R     = juce::jmin (fullBounds.getWidth(), fullBounds.getHeight()) * 0.5f;
+            const auto  centre = fullBounds.getCentre();
 
-            // Dim outer track
+            const auto goldHi   = juce::Colour (GothicPalette::kAccent);
+            const auto goldMid  = juce::Colour (GothicPalette::kAccentSoft);
+            const auto goldLo   = juce::Colour (GothicPalette::kAccentDeep);
+            const auto bone     = juce::Colour (GothicPalette::kBone);
+            const auto ink      = juce::Colour (GothicPalette::kInk);
+
+            // --- Drop shadow under the whole knob (depth on the panel)
             {
-                juce::Path p;
-                p.addCentredArc (centre.x, centre.y, r, r, 0.0f, angStart, angEnd, true);
-                g.setColour (juce::Colour (GothicPalette::kAccentDeep).withAlpha (0.55f));
-                g.strokePath (p, juce::PathStrokeType (trackW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                juce::DropShadow ds (juce::Colours::black.withAlpha (0.55f), 8, { 0, 3 });
+                juce::Path shape;
+                shape.addEllipse (centre.x - R, centre.y - R, R * 2.0f, R * 2.0f);
+                ds.drawForPath (g, shape);
             }
 
-            // Active arc (accent, with a softer glow layer underneath)
+            // --- Recessed socket: dark radial well the dome sits inside
+            {
+                const float socketR = R + 1.0f;
+                juce::ColourGradient grad (
+                    ink.darker (0.5f),                    centre.x, centre.y + socketR,
+                    goldLo.withMultipliedAlpha (0.85f),   centre.x, centre.y - socketR,
+                    false);
+                grad.addColour (0.7, ink);
+                g.setGradientFill (grad);
+                g.fillEllipse (centre.x - socketR, centre.y - socketR, socketR * 2.0f, socketR * 2.0f);
+
+                // socket inner ring shadow (AO crease)
+                g.setColour (juce::Colours::black.withAlpha (0.55f));
+                g.drawEllipse (centre.x - R, centre.y - R, R * 2.0f, R * 2.0f, 1.0f);
+            }
+
+            // --- Outer arc track + active arc, sitting on the socket lip
+            const float trackR = R - 2.5f;
+            const float trackW = 3.2f;
             const float angCur = angStart + pos * (angEnd - angStart);
             {
-                juce::Path glow;
-                glow.addCentredArc (centre.x, centre.y, r, r, 0.0f, angStart, angCur, true);
-                g.setColour (juce::Colour (GothicPalette::kAccent).withAlpha (0.25f));
-                g.strokePath (glow, juce::PathStrokeType (trackW * 2.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                juce::Path track;
+                track.addCentredArc (centre.x, centre.y, trackR, trackR, 0.0f, angStart, angEnd, true);
+                g.setColour (goldLo.withAlpha (0.85f));
+                g.strokePath (track, juce::PathStrokeType (trackW,
+                                                          juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
 
+                // Soft glow under the active arc — feels lit-up
+                juce::Path glow;
+                glow.addCentredArc (centre.x, centre.y, trackR, trackR, 0.0f, angStart, angCur, true);
+                g.setColour (goldHi.withAlpha (0.30f));
+                g.strokePath (glow, juce::PathStrokeType (trackW * 2.6f,
+                                                         juce::PathStrokeType::curved,
+                                                         juce::PathStrokeType::rounded));
                 juce::Path active;
-                active.addCentredArc (centre.x, centre.y, r, r, 0.0f, angStart, angCur, true);
-                g.setColour (juce::Colour (GothicPalette::kAccent));
-                g.strokePath (active, juce::PathStrokeType (trackW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                active.addCentredArc (centre.x, centre.y, trackR, trackR, 0.0f, angStart, angCur, true);
+                g.setColour (goldHi);
+                g.strokePath (active, juce::PathStrokeType (trackW,
+                                                           juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
             }
 
-            // Inner dark disc
-            const float innerR = r * 0.74f;
-            g.setColour (juce::Colour (GothicPalette::kPanel));
-            g.fillEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
-            g.setColour (juce::Colour (GothicPalette::kPanelEdge));
-            g.drawEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f, 1.0f);
+            // --- 3D dome body: brushed-gold radial gradient, light from
+            //     the top-left, dark at the bottom-right
+            const float domeR = R * 0.78f;
+            {
+                juce::ColourGradient dome (
+                    goldHi.brighter (0.45f),  centre.x - domeR * 0.55f, centre.y - domeR * 0.55f,
+                    goldLo,                   centre.x + domeR * 0.65f, centre.y + domeR * 0.65f,
+                    true);
+                dome.addColour (0.55, goldMid);
+                g.setGradientFill (dome);
+                g.fillEllipse (centre.x - domeR, centre.y - domeR, domeR * 2.0f, domeR * 2.0f);
+            }
 
-            // Pointer
-            juce::Path tick;
-            const float tickLen = innerR * 0.78f;
-            tick.addRectangle (-1.25f, -innerR + 3.0f, 2.5f, tickLen - 3.0f);
-            g.setColour (juce::Colour (GothicPalette::kBone));
-            g.fillPath (tick, juce::AffineTransform::rotation (angCur).translated (centre));
+            // Concentric brushed-metal rings (machined-knurl feel)
+            for (int i = 0; i < 3; ++i)
+            {
+                const float ringR = domeR - 2.5f - (float) i * 2.0f;
+                if (ringR <= 4.0f) break;
+                g.setColour (goldLo.withAlpha (0.18f + 0.10f * (float) i));
+                g.drawEllipse (centre.x - ringR, centre.y - ringR, ringR * 2.0f, ringR * 2.0f, 0.55f);
+            }
+
+            // Specular highlight (top-left) — small bright crescent
+            {
+                const float specR = domeR * 0.82f;
+                juce::ColourGradient spec (
+                    juce::Colours::white.withAlpha (0.55f), centre.x - domeR * 0.45f, centre.y - domeR * 0.55f,
+                    juce::Colours::white.withAlpha (0.0f),  centre.x - domeR * 0.05f, centre.y - domeR * 0.05f,
+                    true);
+                g.setGradientFill (spec);
+                juce::Path arc;
+                arc.startNewSubPath (centre.x - specR, centre.y);
+                arc.addCentredArc (centre.x, centre.y, specR, specR, 0.0f,
+                                   juce::degreesToRadians (-150.0f),
+                                   juce::degreesToRadians (-30.0f), true);
+                g.fillPath (arc);
+            }
+
+            // Crisp inner cap (the recessed face the indicator sits on)
+            const float capR = domeR * 0.62f;
+            {
+                juce::ColourGradient cap (
+                    ink.brighter (0.10f), centre.x, centre.y - capR,
+                    ink.darker  (0.45f),  centre.x, centre.y + capR,
+                    false);
+                g.setGradientFill (cap);
+                g.fillEllipse (centre.x - capR, centre.y - capR, capR * 2.0f, capR * 2.0f);
+
+                // Bevel: bright top edge
+                g.setColour (goldHi.withAlpha (0.55f));
+                juce::Path topBevel;
+                topBevel.addCentredArc (centre.x, centre.y, capR, capR, 0.0f,
+                                        juce::degreesToRadians (-130.0f),
+                                        juce::degreesToRadians ( -50.0f), true);
+                g.strokePath (topBevel, juce::PathStrokeType (1.2f));
+
+                // Bevel: dark bottom edge
+                g.setColour (juce::Colours::black.withAlpha (0.65f));
+                juce::Path botBevel;
+                botBevel.addCentredArc (centre.x, centre.y, capR, capR, 0.0f,
+                                        juce::degreesToRadians (  50.0f),
+                                        juce::degreesToRadians ( 130.0f), true);
+                g.strokePath (botBevel, juce::PathStrokeType (1.0f));
+            }
+
+            // --- Indicator wedge: tapered gold pointer with luminous tip
+            {
+                const float tipR  = domeR - 1.5f;
+                const float baseR = capR  + 1.0f;
+                const float wBase = 2.4f;
+                const float wTip  = 1.0f;
+                juce::Path wedge;
+                wedge.startNewSubPath (-wBase, -baseR);
+                wedge.lineTo           ( wBase, -baseR);
+                wedge.lineTo           ( wTip,  -tipR);
+                wedge.lineTo           (-wTip,  -tipR);
+                wedge.closeSubPath();
+
+                const auto rot = juce::AffineTransform::rotation (angCur).translated (centre);
+
+                // Pointer glow halo
+                g.setColour (goldHi.withAlpha (0.45f));
+                g.fillPath (wedge, rot.followedBy (juce::AffineTransform::scale (1.6f, 1.0f, centre.x, centre.y)));
+
+                // Pointer body — bone with gold gradient
+                juce::ColourGradient ptr (
+                    bone.brighter (0.25f), centre.x, centre.y - tipR,
+                    goldHi,                centre.x, centre.y - baseR,
+                    false);
+                g.setGradientFill (ptr);
+                g.fillPath (wedge, rot);
+
+                // Bright tip dot
+                const float tx = centre.x + std::sin (angCur) *  tipR;
+                const float ty = centre.y + -std::cos (angCur) * tipR;
+                juce::ignoreUnused (tx, ty);
+            }
         }
 
         // Subtle gothic combo box.
