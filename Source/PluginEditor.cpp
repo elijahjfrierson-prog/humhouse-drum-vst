@@ -669,6 +669,16 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         arrangementStrip.repaint();
     };
 
+    // v1.6.1-rc.15 — clicking the per-region INTENSITY mini-knob (now
+    // painted next to every region's number) just nudges the strip to
+    // repaint; the region itself doesn't need to be "selected" because
+    // the per-region intensity is read from regionIntensity at MIDI
+    // emit time, independent of any global "active region" concept.
+    arrangementStrip.onRegionIntensitySelected = [this] (int /*regionIdx*/)
+    {
+        arrangementStrip.repaint();
+    };
+
     // v1.6.1-rc.7 — Cmd/Ctrl + two-finger trackpad scroll on the strip
     // grows or shrinks the visible cell width. Implemented at the
     // editor layer because the strip doesn't own its bounds — we
