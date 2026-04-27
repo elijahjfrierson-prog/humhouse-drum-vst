@@ -806,8 +806,13 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     }
     styleCombo (genreBox, genreLabel);
 
+    // v1.6.1-rc.13 — must mirror kPatternLengthChoices in PluginProcessor.cpp
+    // (9 entries). Default APVTS index is 7 ("8 bars") — without the new
+    // items the ComboBox renders blank and the user can't pick the new
+    // multi-bar lengths.
     patternLengthBox.addItemList (
-        juce::StringArray { "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars" }, 1);
+        juce::StringArray { "1/16 note", "1/8 note", "1/4 note", "1/2 bar",
+                            "1 bar", "2 bars", "4 bars", "8 bars", "16 bars" }, 1);
     styleCombo (patternLengthBox, patternLengthLabel);
 
     modeBox.addItem ("Groove", 1);
@@ -861,7 +866,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     styleCombo (roomBox, roomLabel);
 
     genreBox         .setTooltip ("GENRE — picks the groove vocabulary the AI draws from (rock, jazz, metal, trap, etc.).");
-    patternLengthBox .setTooltip ("LENGTH — how long each appended region is in bars.");
+    patternLengthBox .setTooltip ("LENGTH — how long each appended region is (1/16 note → 16 bars; default 8 bars).");
     modeBox          .setTooltip ("MODE — GROOVE appends a bar of steady pattern, FILL appends a transition fill.");
     hiHatBox         .setTooltip ("HI-HAT — forces the hat articulation: Dynamic (mix), Closed, Open, or Ride.");
     drumKitBox       .setTooltip ("DRUM KIT — selects one of 20 physically-modelled acoustic/electronic kits. The visualizer flashes each drum as it hits.");
@@ -1310,7 +1315,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     fillsSlider     .setTooltip ("FILLS — probability that the next COMPOSE becomes a drum fill instead of a groove.");
 
     genreBox        .setTooltip ("GENRE — rock, metal, jazz, funk, hip-hop, trap, pop, country… Auto picks one per press.");
-    patternLengthBox.setTooltip ("LENGTH — how long each appended region is (1/16 note → 2 bars).");
+    patternLengthBox.setTooltip ("LENGTH — how long each appended region is (1/16 note → 16 bars; default 8 bars).");
     modeBox         .setTooltip ("MODE — Groove (time-keeping pattern) or Fill (transition roll).");
     hiHatBox        .setTooltip ("HI-HAT — Dynamic (genre default), or force Closed / Open / Ride cymbal.");
     drumKitBox      .setTooltip ("DRUM KIT — 20 models from jazz Ludwig to thrash Sonor. Each remaps GM notes + velocity / ghost / accent curves for a distinct timbre in your sampler.");
