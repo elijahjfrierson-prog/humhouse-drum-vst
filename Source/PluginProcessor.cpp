@@ -1566,15 +1566,20 @@ void AIDrumAudioProcessor::applyIntensityCrashHatBalance (
         }
         else if (intensity >= 0.55f)
         {
-            // Mid — odd bars only (1, 3, 5, 7), L↔R alternating.
+            // Mid — even bars (0, 2, 4, 6), L↔R alternating across the
+            // even-bar series via `(bar / 2) & 1` since `bar & 1` would
+            // always be 0 inside the gate (Devin Review caught the dead
+            // L/R selector — would have pinned every hit to L).
             if ((bar & 1) == 0 || isPhraseTop)
-                place ((bar & 1) ? kCrashR : kCrashL, anchor, vel);
+                place (((bar / 2) & 1) ? kCrashR : kCrashL, anchor, vel);
         }
         else
         {
-            // Low (0.30 .. 0.55) — phrase tops only.
+            // Low (0.30 .. 0.55) — phrase tops only (bars 0, 4, 8, …),
+            // L↔R alternating across the phrase-top series via
+            // `(bar / 4) & 1` since `bar & 1` would always be 0 here.
             if (isPhraseTop)
-                place ((bar & 1) ? kCrashR : kCrashL, anchor, vel);
+                place (((bar / 4) & 1) ? kCrashR : kCrashL, anchor, vel);
         }
     }
 
