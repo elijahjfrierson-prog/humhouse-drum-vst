@@ -1559,7 +1559,9 @@ void AIDrumAudioProcessorEditor::resized()
     placeCombo (genreBox);
     placeCombo (roomBox);
     placeCombo (patternLengthBox);
-    placeCombo (modeBox);
+    // v1.6.1-rc.14 — modeBox is hidden (fills are now generative-only,
+    // no Auto/Manual toggle). Skipping placeCombo so it doesn't reserve
+    // a 56 px gap between LENGTH and HI-HAT.
     placeCombo (hiHatBox);
     placeCombo (stepDivBox);
     placeCombo (timeScaleBox);
