@@ -482,7 +482,7 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
     // 0.00 = sparse archetype baseline; 1.00 = 64th-saturated spray.
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamFillDensity, 1 }, "Fill Density",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 1.0f / 127.0f),
+        juce::NormalisableRange<float> (0.0f, 1.0f, 1.0f / 127.0f, kKnobSkew),
         0.50f));
 
     // v1.5.0 — Manual grid step division (Logic-style 1/16, 1/32, 1/64).
