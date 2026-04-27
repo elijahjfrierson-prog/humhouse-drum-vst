@@ -114,8 +114,13 @@ namespace
         }
     }
 
+    // v1.6.1-rc.13 — added 4-bar / 8-bar / 16-bar options so COMPOSE can
+    // produce full 8-bar loops by default. Index 7 ("8 bars") is the new
+    // default — the user explicitly asked for "FULL 8 BAR PATTERNS WITH
+    // EVERY COMPOSITION".
     const juce::StringArray kPatternLengthChoices {
-        "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars"
+        "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars",
+        "4 bars", "8 bars", "16 bars"
     };
 
     const juce::StringArray kHiHatChoices {
@@ -146,7 +151,10 @@ double AIDrumAudioProcessor::patternLengthBeatsFromChoice (int choiceIndex)
         case 3: return 2.0;   // 1/2 bar
         case 4: return 4.0;   // 1 bar
         case 5: return 8.0;   // 2 bars
-        default: return 4.0;
+        case 6: return 16.0;  // 4 bars (v1.6.1-rc.13)
+        case 7: return 32.0;  // 8 bars (v1.6.1-rc.13 — new default)
+        case 8: return 64.0;  // 16 bars (v1.6.1-rc.13)
+        default: return 32.0; // v1.6.1-rc.13: default to 8 bars (was 1 bar)
     }
 }
 
@@ -374,7 +382,7 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamPatternLength, 1 }, "Pattern Length",
-        kPatternLengthChoices, 4)); // default: 1 bar
+        kPatternLengthChoices, 7)); // v1.6.1-rc.13 default: 8 bars (was 1 bar)
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamGenre, 1 }, "Genre",
@@ -578,11 +586,33 @@ void AIDrumAudioProcessor::cycleFillSelector (int direction)
     if (n <= 1) return;
     const int dir = (direction >= 0) ? 1 : -1;
     const int next = ((getCurrentFillIndex() + dir) % n + n) % n;
+    setFillIndex (next);
+}
+
+// v1.6.1-rc.13 — direct fill-index setter for the dropdown UI. The
+// dropdown shows all 22 fills by name and lets the user pick one
+// directly instead of cycling through with prev/next buttons.
+void AIDrumAudioProcessor::setFillIndex (int idx)
+{
+    const int n = getFillLibrarySize();
+    if (n <= 1) return;
+    const int clamped = juce::jlimit (0, n - 1, idx);
     if (auto* p = apvts.getParameter (kParamFillComplexity))
     {
-        const float norm = (float) next / (float) (n - 1);
+        const float norm = (float) clamped / (float) (n - 1);
         p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, norm));
     }
+}
+
+// v1.6.1-rc.13 — return all fill names so the dropdown can populate
+// itself. Order matches fillLibrary() so the dropdown index == the
+// fill index.
+juce::StringArray AIDrumAudioProcessor::getAllFillNames() const
+{
+    juce::StringArray names;
+    for (const auto& f : aidrum::fillLibrary())
+        names.add (juce::String (std::string (f.name)));
+    return names;
 }
 
 int AIDrumAudioProcessor::getIntensity127() const
@@ -984,10 +1014,13 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
 
     if (! hadExisting)
     {
-        // First click — nothing to mold around. Drop the groove in as
-        // a fresh region so the user gets sound, then subsequent COMPOSE
-        // clicks will mold around it.
-        result = lib[(size_t) libIdx].pattern;
+        // v1.6.1-rc.13 — first click: tile the chosen groove out to a
+        // full 8-bar region (32 beats) so the user immediately gets a
+        // playable 8-bar loop with the closing fill on bar 8, instead
+        // of a 1- or 2-bar nub. Matches the user's spec: "GENERATE FULL
+        // 8 BAR PATTERNS WITH EVERY COMPOSITION".
+        result = expandGrooveToEightBars (lib[(size_t) libIdx].pattern,
+                                          static_cast<std::uint64_t> (counter) ^ 0xA110ULL);
         applyIntensityCrashHatBalance (result,
                                        static_cast<std::uint64_t> (counter) ^ 0x5151ULL);
         spliceMandatoryFillIntoRegion (result, (int) counter);
@@ -1074,7 +1107,16 @@ void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
     // balance + fill splice — runs unlocked), then take arrangementMutex
     // briefly to swap the result in. Audio thread no longer waits on
     // RANDOMIZE clicks.
-    aidrum::MidiPattern result = lib[(size_t) libIdx].pattern;
+    // v1.6.1-rc.13 — RANDOMIZE always builds a full 8-bar region too,
+    // tiling shorter library grooves out to 32 beats with smart subtle
+    // variations (ghost-snare drags, hat ostinato breathing, kick
+    // syncopation, tom drops on phrase ends). Every Spotify-corpus and
+    // SoCal-centerstone groove is now in the random pool — the
+    // Intelligence pad rolls from the FULL allStarterGrooves() library
+    // (SoCal + analyzer + BFD palettes), not the small subset.
+    aidrum::MidiPattern result = expandGrooveToEightBars (
+        lib[(size_t) libIdx].pattern,
+        static_cast<std::uint64_t> (libIdx) ^ 0xC0FFEEULL);
     applyIntensityCrashHatBalance (result,
                                    static_cast<std::uint64_t> (libIdx) ^ 0xBEEFULL);
     spliceMandatoryFillIntoRegion (result, libIdx);
@@ -1152,43 +1194,166 @@ aidrum::MidiPattern AIDrumAudioProcessor::makeAutoFillForKit (int /*kitIndex*/,
     return p;
 }
 
-// v1.6.1-rc.12 — auto-fill is now mandatory on EVERY region, not just
-// every 8-bar block (user: "adjust fills to auto load ontop of every
-// pattern and choose 1-22 based on density and intensity"). The fill
-// is always spliced into the LAST bar of the region so it resolves
-// musically into whatever follows.
+// v1.6.1-rc.13 — Smart 8-bar expansion. Takes a (typically 1- or 2-bar)
+// starter groove, tiles it out to 32 beats, then sprinkles corpus-
+// informed micro-flourishes that read as a real drummer breathing
+// through an 8-bar phrase rather than an 8x repeat:
+//   * Bars 1-7 carry the tiled groove, lightly humanised in velocity.
+//   * Ghost-snare drags between backbeats on bars 2/4/6 (32nd-note
+//     0.875 / 2.875 etc., velocity ~0.30..0.45).
+//   * Hat ostinato breathes — every other bar replaces a couple of
+//     16th hats with 32nd doubles for natural feel.
+//   * Kick syncopation on the "e" / "and" (16th off-beats) sprinkled
+//     across bars 3/5/7 so the pocket isn't stiff.
+//   * Tom drops at the end of bar 4 (mid-phrase punctuation) and bar
+//     7 (lead-in to the closing fill on bar 8).
+// The closing bar (bar 8) is left untouched here — spliceMandatory-
+// FillIntoRegion writes the actual fill there.
+aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToEightBars (
+    const aidrum::MidiPattern& src, std::uint64_t seed) const
+{
+    constexpr double kBeatsPerBar = 4.0;
+    constexpr double kTarget      = 8.0 * kBeatsPerBar; // 32 beats
+
+    aidrum::MidiPattern out;
+    out.lengthInBeats = kTarget;
+
+    const double srcLen = (src.lengthInBeats > 1e-6 ? src.lengthInBeats : kBeatsPerBar);
+
+    // Tile the source groove out to 32 beats.
+    for (double tileOffset = 0.0; tileOffset < kTarget - 1e-6; tileOffset += srcLen)
+    {
+        for (const auto& n : src.notes)
+        {
+            const double absBeat = tileOffset + n.startBeat;
+            if (absBeat >= kTarget - 1e-6) break;
+            aidrum::MidiNote shifted = n;
+            shifted.startBeat = absBeat;
+            out.notes.push_back (shifted);
+        }
+    }
+
+    std::mt19937_64 rng (seed ^ 0x6A09E667F3BCC908ULL);
+    auto roll = [&] { return std::uniform_real_distribution<float> (0.0f, 1.0f) (rng); };
+
+    constexpr int kKick     = 36;
+    constexpr int kSnare    = 38;
+    constexpr int kClosedHat= 42;
+    constexpr int kHighTom  = 48;
+    constexpr int kLowTom   = 43;
+    constexpr int kFloorTom = 41;
+
+    auto add = [&] (int n, double startBeat, float vel)
+    {
+        if (startBeat < 0.0 || startBeat >= kTarget - 1e-6) return;
+        aidrum::MidiNote m;
+        m.noteNumber = n;
+        m.startBeat  = startBeat;
+        m.lengthBeat = 0.18;
+        m.velocity   = juce::jlimit (0.0f, 1.0f, vel);
+        out.notes.push_back (m);
+    };
+
+    auto hasNoteNear = [&] (int n, double beat, double tol = 0.05) -> bool
+    {
+        for (const auto& x : out.notes)
+            if (x.noteNumber == n && std::abs (x.startBeat - beat) < tol)
+                return true;
+        return false;
+    };
+
+    // Ghost-snare drags between backbeats on every other bar, skipping
+    // bar 8 (which the fill owns).
+    for (int bar = 1; bar < 7; bar += 2)
+    {
+        const double base = bar * kBeatsPerBar;
+        // ghost on the "e" of 2 (1.25) and the "ah" of 4 (3.75)
+        if (roll() < 0.85f) add (kSnare, base + 1.25, 0.32f + roll() * 0.10f);
+        if (roll() < 0.70f) add (kSnare, base + 3.75, 0.30f + roll() * 0.10f);
+    }
+
+    // Hat ostinato breathing — turn a couple of 16th hats on bars 2/4/6
+    // into 32nd doubles so the hat doesn't feel like a click track.
+    for (int bar : { 1, 3, 5 })
+    {
+        const double base = bar * kBeatsPerBar;
+        for (double off : { 1.0, 2.5 })
+            if (roll() < 0.55f && hasNoteNear (kClosedHat, base + off))
+                add (kClosedHat, base + off + 0.125, 0.40f + roll() * 0.08f);
+    }
+
+    // Kick syncopation on the "e" / "and" of beats across bars 2 / 4 / 6
+    // so the pocket walks instead of stomping on every quarter.
+    for (int bar : { 2, 4, 6 })
+    {
+        const double base = bar * kBeatsPerBar;
+        if (roll() < 0.55f) add (kKick, base + 1.75, 0.78f);   // and-of-2
+        if (roll() < 0.45f) add (kKick, base + 3.25, 0.72f);   // e-of-4
+    }
+
+    // Tom drops on phrase endings — mid-phrase (end of bar 4) and
+    // pre-fill (end of bar 7). Three-tom descent into the next bar.
+    auto tomDrop = [&] (double startBeat)
+    {
+        add (kHighTom,  startBeat + 0.00, 0.78f);
+        add (kLowTom,   startBeat + 0.25, 0.82f);
+        add (kFloorTom, startBeat + 0.50, 0.86f);
+    };
+    if (roll() < 0.65f) tomDrop (3.0 * kBeatsPerBar + 3.25); // bar 4 e-of-4
+    if (roll() < 0.95f) tomDrop (6.0 * kBeatsPerBar + 3.25); // bar 7 e-of-4 → leads into the fill
+
+    std::sort (out.notes.begin(), out.notes.end(),
+               [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
+               { return a.startBeat < b.startBeat; });
+
+    // Dedupe near-coincident hits per (note, time) so tiling + flourishes
+    // never stack two kicks on the same downbeat.
+    auto quant = [] (double b) { return (int) std::llround (b * 16.0); }; // 1/64 grid
+    std::vector<aidrum::MidiNote> deduped;
+    deduped.reserve (out.notes.size());
+    std::set<std::pair<int,int>> seen;
+    for (const auto& n : out.notes)
+    {
+        const auto key = std::make_pair (n.noteNumber, quant (n.startBeat));
+        if (seen.count (key)) continue;
+        seen.insert (key);
+        deduped.push_back (n);
+    }
+    out.notes = std::move (deduped);
+    return out;
+}
+
+// v1.6.1-rc.13 — auto-fill anchors on the LAST bar of EVERY 8-bar block
+// (the user's annotated screenshot: "the fills are generated too early").
+// Regions shorter than 8 bars get NO auto-fill — fills only fire when a
+// full 8-bar phrase has played out, so the cadence reads as a real
+// drummer "closing the eight" rather than a fill on every micro-region.
 //
 // Behaviour:
-//   * Every region with lengthInBeats >= 4 (one bar) gets a fill on
-//     its last bar. Regions shorter than a bar are left alone.
-//   * Fill index (0..N-1) is chosen by DENSITY × INTENSITY (the user
-//     spec said "choose 1-22 based on density and intensity"). The
+//   * Every full 8-bar block in the region gets a fill on bar 8 (the
+//     LAST bar of that block). 16-bar regions fire fills at bars 8 and
+//     16; 24-bar regions at 8/16/24; etc.
+//   * Fill index (0..N-1) is chosen by DENSITY × INTENSITY. The
 //     COMPLEXITY knob is the density axis — light grooves draw from
-//     the low end of the fill library (gentle ghost rolls), hectic
-//     grooves draw from the top end (sludge tom flares).
-//   * The user's FILL-cycler selection still nudges the index so they
-//     can taste-test individual fills, but density × intensity is the
-//     primary driver.
-//   * If a fill pattern is shorter than a bar, the fill is tiled
-//     end-to-end until it covers the full bar window — fulfilling
-//     "IF THE PATTERN IS INCOMPLETE REPEAT THE FILL TILL THE FULL
-//     GROOVE IS DONE".
+//     the low end (gentle ghost rolls), hectic grooves the top end
+//     (sludge tom flares).
+//   * The FILL dropdown / cycler offset (-2..+2) still nudges the
+//     index so the user can taste-test, but density × intensity is
+//     the primary driver. Each successive 8-bar block also rotates
+//     the fill so a 16-bar region doesn't repeat the same flourish.
+//   * Fills tile end-to-end if shorter than a bar (rc.11 spec).
 //   * NEVER stretches the region past its existing length.
 void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     aidrum::MidiPattern& region, int seed) const
 {
-    constexpr double kBeatsPerBar = 4.0;
+    constexpr double kBeatsPerBar       = 4.0;
+    constexpr double kBeatsPerEightBar  = 8.0 * kBeatsPerBar; // 32
 
-    if (region.lengthInBeats < kBeatsPerBar - 1e-6)
-        return; // region too short to host a 1-bar fill — skip silently
-
-    // v1.6.1-rc.12 — Devin Review 🔴 (regression of rc.11 fix): a 1-bar
-    // region's "last bar" IS the entire region, so splicing a fill into
-    // it would wipe the user's groove notes wholesale. The default
-    // appendRegion length is 1 bar, so a fresh COMPOSE would erase the
-    // mold-around groove every time. Require at least two full bars
-    // (one bar of groove + one bar of fill) before auto-splicing.
-    if (region.lengthInBeats < 2.0 * kBeatsPerBar - 1e-6)
+    // v1.6.1-rc.13 — only fire fills once a full 8-bar phrase has been
+    // laid out. Sub-8-bar regions are protected: short user grooves are
+    // never overwritten by an auto-fill, and the default 8-bar COMPOSE
+    // gets exactly one fill on its closing bar (beats 28..32).
+    if (region.lengthInBeats < kBeatsPerEightBar - 1e-6)
         return;
 
     const auto& fillLib = aidrum::fillLibrary();
@@ -1218,40 +1383,50 @@ void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
                                        static_cast<int> (std::round ((fcRaw - 0.5f) * 4.0f)));
     const int   fillIdx          = ((primaryIdx + selectorBias) % numFills + numFills) % numFills;
 
-    // Anchor: the LAST full bar of the region. This is the universal
-    // "fill on the closing bar" placement — works for 1-bar regions
-    // (anchor = 0), 4-bar regions (anchor = 12 beats), 8-bar regions
-    // (anchor = 28 beats), etc.
-    const double lastBarStart = std::floor ((region.lengthInBeats - 1e-6) / kBeatsPerBar) * kBeatsPerBar;
-    const double anchor       = juce::jmax (0.0, lastBarStart);
-    const double windowEnd    = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
+    // v1.6.1-rc.13 — fire one fill per 8-bar block, anchored on bar 8 of
+    // each block (beats 28..32, 60..64, 92..96, …). This matches the
+    // user's annotated screenshot exactly: a single closing fill at the
+    // end of every 8-bar phrase, NOT a fill on every region.
+    const int numEightBarBlocks = static_cast<int> (
+        std::floor ((region.lengthInBeats + 1e-6) / kBeatsPerEightBar));
 
-    if (windowEnd - anchor < kBeatsPerBar - 1e-6)
-        return; // last bar is partial — skip rather than truncate the fill
-
-    // Wipe existing notes inside the fill window so the fill reads clean.
-    region.notes.erase (
-        std::remove_if (region.notes.begin(), region.notes.end(),
-                        [&] (const aidrum::MidiNote& n)
-                        { return n.startBeat >= anchor - 1e-6 && n.startBeat < windowEnd - 1e-6; }),
-        region.notes.end());
-
-    const auto&  fill    = fillLib[(size_t) fillIdx].pattern;
-    const double fillLen = (fill.lengthInBeats > 1e-6 ? fill.lengthInBeats : kBeatsPerBar);
-
-    // Tile/loop the fill until it covers the full window.
-    for (double tileOffset = 0.0;
-         tileOffset < (windowEnd - anchor) - 1e-6;
-         tileOffset += fillLen)
+    for (int block = 0; block < numEightBarBlocks; ++block)
     {
-        for (const auto& src : fill.notes)
+        // Bar 8 of this 8-bar block = block*32 + 28 beats.
+        const double anchor    = block * kBeatsPerEightBar + 7.0 * kBeatsPerBar;
+        const double windowEnd = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
+
+        if (windowEnd - anchor < kBeatsPerBar - 1e-6)
+            continue; // last block's closing bar is partial — skip silently
+
+        // Rotate the fill index across blocks so a 16-bar region's two
+        // fills aren't identical (fill at bar 8 ≠ fill at bar 16).
+        const int blockFillIdx = ((fillIdx + block) % numFills + numFills) % numFills;
+
+        // Wipe existing notes inside the fill window so the fill reads clean.
+        region.notes.erase (
+            std::remove_if (region.notes.begin(), region.notes.end(),
+                            [&] (const aidrum::MidiNote& n)
+                            { return n.startBeat >= anchor - 1e-6 && n.startBeat < windowEnd - 1e-6; }),
+            region.notes.end());
+
+        const auto&  fill    = fillLib[(size_t) blockFillIdx].pattern;
+        const double fillLen = (fill.lengthInBeats > 1e-6 ? fill.lengthInBeats : kBeatsPerBar);
+
+        // Tile/loop the fill until it covers the full bar window.
+        for (double tileOffset = 0.0;
+             tileOffset < (windowEnd - anchor) - 1e-6;
+             tileOffset += fillLen)
         {
-            const double absBeat = anchor + tileOffset + src.startBeat;
-            if (absBeat < anchor - 1e-6) continue;
-            if (absBeat >= windowEnd - 1e-6) continue;
-            aidrum::MidiNote shifted = src;
-            shifted.startBeat = absBeat;
-            region.notes.push_back (shifted);
+            for (const auto& src : fill.notes)
+            {
+                const double absBeat = anchor + tileOffset + src.startBeat;
+                if (absBeat < anchor - 1e-6) continue;
+                if (absBeat >= windowEnd - 1e-6) continue;
+                aidrum::MidiNote shifted = src;
+                shifted.startBeat = absBeat;
+                region.notes.push_back (shifted);
+            }
         }
     }
     juce::ignoreUnused (seed);
@@ -1290,12 +1465,15 @@ void AIDrumAudioProcessor::applyIntensityCrashHatBalance (
     const float intensity = juce::jlimit (
         0.0f, 1.0f, apvts.getRawParameterValue (kParamIntensity)->load());
 
-    // Below the floor, generator output is left alone.
-    if (intensity <= 0.55f + 1e-3f)
-        return;
-
     std::mt19937_64 rng (seed ^ 0x9E3779B97F4A7C15ULL);
     auto roll = [&] () { return std::uniform_real_distribution<float> (0.0f, 1.0f) (rng); };
+
+    // v1.6.1-rc.13 — user spec: "AUTOMATE MORE CRASHES IN PATTERNS".
+    // Crash placement now starts at intensity > 0.30 (was 0.55) so the
+    // sludge L↔R bounce is audible across most of the knob range, not
+    // just the top quarter.
+    if (intensity <= 0.30f + 1e-3f)
+        return;
 
     // Hat thinning probability: 0% at 0.55, ~70% at 0.85, 100% at >=0.92.
     auto hatRemoveProb = [intensity] () -> float
@@ -1350,57 +1528,87 @@ void AIDrumAudioProcessor::applyIntensityCrashHatBalance (
         region.notes.push_back (noteAt (n, startBeat, vel));
     };
 
-    // Phrase-top crashes on every bar 1, alternating L↔R per bar.
-    // At very high intensity, double them (L AND R together) on the
-    // 1 of bar 1 / bar 5 of every 8-bar phrase.
+    // v1.6.1-rc.13 — much denser crash placement across the bar (user:
+    // "AUTOMATE MORE CRASHES IN PATTERNS", "MORE ALTERNATE CRASH HIT
+    // VARIATIONS, MORE CRASH CENTERED"). Density tiers:
+    //   0.30 .. 0.55   → L↔R on every bar 1 of an 8-bar block (bars 1, 5)
+    //   0.55 .. 0.75   → L↔R on every odd bar (1, 3, 5, 7) + half-time
+    //                    "and" of 4 lead-ins
+    //   0.75 .. 0.92   → crash on every bar, alternating L↔R + every
+    //                    "and" of 4 lead-in + half of bar-2/6 accents
+    //   ≥ 0.92         → double L+R on every phrase top, single
+    //                    alternations on every bar, accents on "e" /
+    //                    "and" of 4 across all bars (sludge spray)
     const int totalBars = static_cast<int> (regLen / 4.0 + 1e-6);
     for (int bar = 0; bar < totalBars; ++bar)
     {
-        const double anchor = bar * 4.0;
+        const double anchor      = bar * 4.0;
         const bool   isPhraseTop = (bar % 4 == 0); // bar 1, 5, 9, …
-        const float  vel = 0.85f + 0.10f * intensity;
+        const float  vel         = 0.82f + 0.13f * intensity;
 
         if (intensity >= 0.92f)
         {
-            // Sludge — both L and R crashes hit on every phrase top
+            // Sludge spray — every bar gets a crash, phrase tops doubled.
             if (isPhraseTop)
             {
                 place (kCrashL, anchor, vel);
                 place (kCrashR, anchor, vel);
             }
-            else if (intensity >= 0.95f && (bar & 1))
+            else
             {
-                // and on every other bar at the top, alternating
-                // L↔R as the bar index advances. NB: the outer
-                // `(bar & 1)` already guarantees `bar` is odd, so
-                // `bar % 2` would always be 1 — Devin Review caught
-                // that the original code pinned every off-bar crash
-                // to L. `(bar / 2) & 1` walks 0,1,0,1,… across the
-                // odd bar series (1,3,5,7,…) so L and R actually
-                // alternate as intended.
                 place (((bar / 2) & 1) ? kCrashL : kCrashR, anchor, vel * 0.92f);
             }
         }
+        else if (intensity >= 0.75f)
+        {
+            // Driving — every bar, alternating L↔R.
+            place ((bar & 1) ? kCrashR : kCrashL, anchor, vel);
+        }
+        else if (intensity >= 0.55f)
+        {
+            // Mid — even bars (0, 2, 4, 6), L↔R alternating across the
+            // even-bar series via `(bar / 2) & 1` since `bar & 1` would
+            // always be 0 inside the gate (Devin Review caught the dead
+            // L/R selector — would have pinned every hit to L).
+            if ((bar & 1) == 0 || isPhraseTop)
+                place (((bar / 2) & 1) ? kCrashR : kCrashL, anchor, vel);
+        }
         else
         {
-            // Mid-high — alternate L/R on phrase tops
+            // Low (0.30 .. 0.55) — phrase tops only (bars 0, 4, 8, …),
+            // L↔R alternating across the phrase-top series via
+            // `(bar / 4) & 1` since `bar & 1` would always be 0 here.
             if (isPhraseTop)
-                place ((bar & 1) ? kCrashR : kCrashL, anchor, vel);
+                place (((bar / 4) & 1) ? kCrashR : kCrashL, anchor, vel);
         }
     }
 
-    // Mid-bar accents on the "and" of 4 leading into the next bar
-    // (3.5 within each bar). Probabilistic, scaled by intensity.
-    if (intensity >= 0.65f)
+    // "and" of 4 lead-ins (beat 3.5 of each bar) — start showing up at
+    // 0.45 intensity, scale density up from there.
+    if (intensity >= 0.45f)
     {
         const float prob = juce::jlimit (0.0f, 1.0f,
-                                          (intensity - 0.65f) / 0.35f);
+                                          (intensity - 0.45f) / 0.45f);
         for (int bar = 0; bar < totalBars; ++bar)
         {
             if (roll() >= prob) continue;
             const double accent = bar * 4.0 + 3.5;
             const int    note   = (bar & 1) ? kCrashL : kCrashR;
             place (note, accent, 0.70f + 0.20f * intensity);
+        }
+    }
+
+    // "e" of 4 (beat 3.25) sludge accents — kick in at 0.75 intensity.
+    if (intensity >= 0.75f)
+    {
+        const float prob = juce::jlimit (0.0f, 1.0f,
+                                          (intensity - 0.75f) / 0.25f);
+        for (int bar = 0; bar < totalBars; ++bar)
+        {
+            if (roll() >= prob) continue;
+            const double accent = bar * 4.0 + 3.25;
+            const int    note   = ((bar / 2) & 1) ? kCrashR : kCrashL;
+            place (note, accent, 0.65f + 0.20f * intensity);
         }
     }
 

@@ -133,6 +133,15 @@ public:
     void spliceMandatoryFillIntoRegion (aidrum::MidiPattern& region,
                                         int seed) const;
 
+    // v1.6.1-rc.13 — tile a starter groove out to a full 8-bar region
+    // (32 beats), adding smart corpus-informed flourishes between
+    // backbeats: ghost-snare drags, hat ostinato breathing (16ths into
+    // 32nds), kick syncopation on the "e" / "and", tom drops on phrase
+    // endings. Caller is responsible for any subsequent crash/hat
+    // balance + fill splicing — this only produces the base 8-bar bed.
+    aidrum::MidiPattern expandGrooveToEightBars (const aidrum::MidiPattern& src,
+                                                 std::uint64_t              seed) const;
+
     // v1.6.1-rc.11 — INTENSITY-driven hat thinning + crash density. The
     // user wants higher INTENSITY to read as "more crash, less hat" in
     // generator output (sludge-metal feel as the knob climbs). Above 92%
@@ -273,6 +282,13 @@ public:
     int          getCurrentFillIndex() const;
     juce::String getCurrentFillName()  const;
     void         cycleFillSelector (int direction);
+
+    // v1.6.1-rc.13 — direct fill picker (dropdown UI). setFillIndex maps
+    // the chosen library index to kParamFillComplexity (0..1 normalised);
+    // getAllFillNames returns labels in fillLibrary order for the
+    // ComboBox. Pure replacement for the prev/next cycler.
+    void              setFillIndex (int idx);
+    juce::StringArray getAllFillNames() const;
 
     // --- v1.6.1-rc.7 INTENSITY --------------------------------------------
     // Intensity knob (0..127 UI, stored as 0..1 float). Drives the base
