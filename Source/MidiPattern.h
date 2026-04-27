@@ -25,5 +25,14 @@ namespace aidrum
         // decaying into a Groove. Starter grooves appended via
         // appendStarterGroove leave this false (they are grooves).
         bool                  isFill = false;
+
+        // v1.6.1-rc.14 — per-region INTENSITY override. 0..1 = explicit
+        // velocity scale for this region (overrides the global INTENSITY
+        // knob); a sentinel value < 0 means "inherit the global INTENSITY".
+        // Lets the user dial pre-chorus soft, chorus slammed, bridge
+        // somber by spinning the knob inside each region tile in the
+        // arrangement strip without touching neighbouring regions.
+        // Consumed by spliceMandatoryFillIntoRegion + shapeVelocity().
+        float                 regionIntensity = -1.0f;
     };
 }

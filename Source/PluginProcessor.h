@@ -81,6 +81,14 @@ public:
     // (Logic-style) re-appears and the user picks their starting pattern.
     void clearArrangement();
 
+    // v1.6.1-rc.14 — per-region INTENSITY override. Pass < 0 to clear the
+    // override (region falls back to the global INTENSITY knob); pass
+    // 0..1 to lock that region to its own velocity vibe (soft pre-chorus,
+    // slammed chorus, somber bridge). Audio thread reads the value at
+    // emit time via shapeVelocity (no regen needed).
+    void  setRegionIntensity (int index, float intensity01);
+    float getRegionIntensity (int index) const;
+
     // v1.6.0 — STARTER GROOVES. The plugin ships with a library of
     // hand-played drum grooves (analysed from user-supplied WAVs). This
     // API drops one into the arrangement as a new region. Call with
@@ -376,7 +384,11 @@ private:
     // editor opens at a sane size in Logic instead of "crazy big" on
     // first instantiate. The slider's "75 %" stop also maps here so
     // legacy projects that saved scale=1.0 still come back larger.
-    std::atomic<float>       uiScale { 0.85f };
+    // v1.6.1-rc.14 — default UI scale lifted 0.85 → 1.00 per user
+    // request: "fix ui scale to open at 1 and a expand but not weird
+    // i find it troubling when it open it to a big ol blob of not
+    // enough labels". The slider still snaps {55 %, 70 %, 85 %, 100 %}.
+    std::atomic<float>       uiScale { 1.00f };
 
     // v1.6.1-rc.7 — bitmask of lanes in "ghost" mode (see header doc).
     // Atomic so the editor + audio thread can both touch it without
