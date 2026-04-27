@@ -928,32 +928,9 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     normalButton.setVisible (false);
     doubleButton.setVisible (false);
 
-    // v1.6.1-rc.7 — FILL SELECTOR cycler. Prev / next arrows step
-    // through the 21 user-supplied fill MIDIs (Fill_01..Fill_12 + the
-    // _1 alts). The current fill name is displayed between the arrows
-    // so the user can find one they like by tapping through.
-    auto styleCyclerBtn = [] (juce::TextButton& b)
-    {
-        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
-        b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
-        b.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kBone));
-        b.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
-    };
-    styleCyclerBtn (fillPrevButton);
-    styleCyclerBtn (fillNextButton);
-    fillPrevButton.setTooltip ("FILL \u2190 \u2014 step to the previous fill in the library.");
-    fillNextButton.setTooltip ("FILL \u2192 \u2014 step to the next fill in the library.");
-
-    auto refreshFillName = [this]
-    {
-        fillSelectorName.setText (processorRef.getCurrentFillName(),
-                                  juce::dontSendNotification);
-    };
-    fillPrevButton.onClick = [this, refreshFillName]
-        { processorRef.cycleFillSelector (-1); refreshFillName(); };
-    fillNextButton.onClick = [this, refreshFillName]
-        { processorRef.cycleFillSelector (+1); refreshFillName(); };
-
+    // v1.6.1-rc.13 — FILL SELECTOR is now a labeled dropdown of all 22
+    // fills (gentle ghost rolls → sludge tom flares). User picks a fill
+    // by name in one click instead of stepping through prev/next.
     {
         auto f = juce::Font (juce::FontOptions (10.0f, juce::Font::italic));
         f.setExtraKerningFactor (0.45f);
@@ -963,16 +940,32 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         fillSelectorTitle.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (fillSelectorTitle);
 
-        auto f2 = juce::Font (juce::FontOptions (12.0f));
-        fillSelectorName.setFont (f2);
-        fillSelectorName.setColour (juce::Label::textColourId,
-                                    juce::Colour (Palette::kBone));
-        fillSelectorName.setJustificationType (juce::Justification::centred);
-        addAndMakeVisible (fillSelectorName);
+        const auto fillNames = processorRef.getAllFillNames();
+        fillSelectorBox.clear (juce::dontSendNotification);
+        for (int i = 0; i < fillNames.size(); ++i)
+            fillSelectorBox.addItem (fillNames[i], i + 1); // ItemIDs are 1-based
+        fillSelectorBox.setSelectedId (processorRef.getCurrentFillIndex() + 1,
+                                       juce::dontSendNotification);
+        fillSelectorBox.setColour (juce::ComboBox::backgroundColourId,
+                                   juce::Colour (Palette::kPanel));
+        fillSelectorBox.setColour (juce::ComboBox::textColourId,
+                                   juce::Colour (Palette::kBone));
+        fillSelectorBox.setColour (juce::ComboBox::outlineColourId,
+                                   juce::Colour (Palette::kAccentDeep));
+        fillSelectorBox.setColour (juce::ComboBox::arrowColourId,
+                                   juce::Colour (Palette::kBone));
+        fillSelectorBox.setTooltip (
+            "FILL — pick any of the 22 fills (gentle \u2192 sludge). "
+            "Selection is the seed; auto-fills on the closing bar of every "
+            "8-bar block lerp from here based on COMPLEXITY \u00d7 INTENSITY.");
+        fillSelectorBox.onChange = [this]
+        {
+            const int sel = fillSelectorBox.getSelectedId() - 1;
+            if (sel >= 0)
+                processorRef.setFillIndex (sel);
+        };
+        addAndMakeVisible (fillSelectorBox);
     }
-    addAndMakeVisible (fillPrevButton);
-    addAndMakeVisible (fillNextButton);
-    refreshFillName();
 
     // v1.6.1-rc.7 — GHOST button. Workflow: user clicks a row label on
     // the arrangement strip (sets ghostSelectedLane via the strip's
@@ -1639,14 +1632,11 @@ void AIDrumAudioProcessorEditor::resized()
     // surfaces the time-scale toggle the user asked for.
     auto rc7Bar = area.removeFromTop (32);
     {
-        // Fill selector cluster — prev arrow | name label | next arrow.
-        auto fillCluster = rc7Bar.removeFromLeft (240).reduced (2);
+        // v1.6.1-rc.13 — Fill selector cluster: title + ComboBox dropdown.
+        auto fillCluster = rc7Bar.removeFromLeft (260).reduced (2);
         fillSelectorTitle.setBounds (fillCluster.removeFromLeft (40));
-        fillPrevButton.setBounds (fillCluster.removeFromLeft (28));
         fillCluster.removeFromLeft (4);
-        fillNextButton.setBounds (fillCluster.removeFromRight (28));
-        fillCluster.removeFromRight (4);
-        fillSelectorName.setBounds (fillCluster);
+        fillSelectorBox.setBounds (fillCluster);
 
         rc7Bar.removeFromLeft (12);
 

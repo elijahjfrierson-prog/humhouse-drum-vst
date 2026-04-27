@@ -140,11 +140,13 @@ private:
     juce::Slider              fillComplexitySlider;
     juce::Label               fillComplexityLabel { {}, "FILL CX" };
 
-    // v1.6.1-rc.7 — FILL SELECTOR cycler controls.
-    juce::TextButton          fillPrevButton  { "<" };
-    juce::TextButton          fillNextButton  { ">" };
+    // v1.6.1-rc.13 — FILL SELECTOR is now a labeled dropdown showing all
+    // 22 fills by name (gentle ghost rolls → sludge tom flares). The
+    // user no longer has to step through with prev/next; they see every
+    // option at a glance and click to pick. Cycler API still exists
+    // under the hood so MIDI/automation can step through programmatically.
     juce::Label               fillSelectorTitle { {}, "FILL"  };
-    juce::Label               fillSelectorName  { {}, "—" };
+    juce::ComboBox            fillSelectorBox;
 
     // v1.6.1-rc.7 — INTENSITY (drives base velocity + per-hit
     // fluctuation). 0..1 stored, displayed as 0..127.
