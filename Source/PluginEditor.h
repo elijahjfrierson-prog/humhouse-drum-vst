@@ -153,6 +153,13 @@ private:
     juce::Slider              intensitySlider;
     juce::Label               intensityLabel  { {}, "INTENSITY" };
 
+    // v1.6.1-rc.14 — FILL DENSITY. Separate axis from FILL SELECTOR
+    // (which picks the archetype) and from INTENSITY (which scales
+    // velocity). Density controls how many MIDI notes are packed into
+    // the procedurally-generated fill. 0..1 stored, displayed as 0..100 %.
+    juce::Slider              fillDensitySlider;
+    juce::Label               fillDensityLabel { {}, "FILL DENSITY" };
+
     // v1.6.1-rc.7 — HALF / NORMAL / DOUBLE transport buttons. Replaces
     // the timeScaleBox combo so the user can flip playback speed with
     // a single click instead of a dropdown.
@@ -252,6 +259,7 @@ private:
     std::unique_ptr<ButtonAttachment> halfTimeAttachment;
     std::unique_ptr<ComboAttachment>  timeScaleAttachment;
     std::unique_ptr<SliderAttachment> intensityAttachment;
+    std::unique_ptr<SliderAttachment> fillDensityAttachment;
 
     // v1.6.1-rc.7 — selection state for GHOST toggle.
     // -1 = no instrument selected. 0..5 = kick/snare/hat/tom/ride/crash.

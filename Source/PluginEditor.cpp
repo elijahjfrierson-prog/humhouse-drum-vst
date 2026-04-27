@@ -603,9 +603,11 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     });
     arrangementStrip.onAppend = [this]
     {
-        const auto mode = (modeBox.getSelectedId() == 2)
-                            ? aidrum::GenerationMode::Fill
-                            : aidrum::GenerationMode::Groove;
+        // v1.6.1-rc.14 — MODE toggle hidden; every appended region is a
+        // Groove. Procedural fills are auto-spliced on bar 8 of every
+        // 8-bar block by spliceMandatoryFillIntoRegion().
+        const auto mode = aidrum::GenerationMode::Groove;
+        juce::ignoreUnused (modeBox);
         processorRef.appendRegion (mode);
         plusButton.bump();
         arrangementStrip.repaint();
@@ -653,6 +655,18 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     {
         ghostSelectedLane = laneIdx;
         arrangementStrip.setSelectedLane (laneIdx);
+    };
+
+    // v1.6.1-rc.14 — per-region INTENSITY drag-strip. Click + drag the
+    // gold bar at the bottom of any region tile to set that region's
+    // velocity vibe (soft pre-chorus → slammed chorus → somber bridge);
+    // right-click clears the override (region inherits the global
+    // INTENSITY knob). Audio thread reads the value at MIDI emit time
+    // via shapeVelocity, so no regen is needed.
+    arrangementStrip.onRegionIntensityChanged = [this] (int regionIdx, float v)
+    {
+        processorRef.setRegionIntensity (regionIdx, v);
+        arrangementStrip.repaint();
     };
 
     // v1.6.1-rc.7 — Cmd/Ctrl + two-finger trackpad scroll on the strip
@@ -755,6 +769,16 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addRotary (fillComplexitySlider, fillComplexityLabel);
     addRotary (roomAmountSlider,     roomAmountLabel);
     addRotary (intensitySlider,      intensityLabel);
+    addRotary (fillDensitySlider,    fillDensityLabel);
+
+    // v1.6.1-rc.14 — Fill Density 0..1 stored, displayed as 0..100 %.
+    fillDensitySlider.textFromValueFunction = [] (double v)
+        { return juce::String (juce::roundToInt (v * 100.0)) + "%"; };
+    fillDensitySlider.setTooltip (
+        "FILL DENSITY (0..100 %) — how many MIDI notes are packed into the "
+        "procedurally-generated fill at the end of every 8-bar block. "
+        "Light = sparse archetype baseline; high = 64th-note saturated rolls "
+        "with doubled snares + tom cascades.");
 
     // v1.6.1-rc.7 — INTENSITY displayed as 0..127 (the MIDI velocity it
     // maps to). The underlying parameter stays 0..1 in APVTS so save
@@ -815,9 +839,19 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
                             "1 bar", "2 bars", "4 bars", "8 bars", "16 bars" }, 1);
     styleCombo (patternLengthBox, patternLengthLabel);
 
+    // v1.6.1-rc.14 — MODE toggle removed from the visible UI per user
+    // request: "take out fill mode and implement that all into your idea
+    // of the generative fills … fills should be sourced by you from now
+    // and genrative with every single pattern". Every region is now a
+    // groove with a procedural fill auto-spliced on bar 8 of every 8-bar
+    // block (see spliceMandatoryFillIntoRegion). The APVTS parameter is
+    // kept (state round-trip / DAW automation lanes) but the combo is
+    // never shown; appendRegion() always uses GenerationMode::Groove.
     modeBox.addItem ("Groove", 1);
     modeBox.addItem ("Fill",   2);
-    styleCombo (modeBox, modeLabel);
+    modeBox.setSelectedId (1, juce::dontSendNotification);
+    modeBox.setVisible (false);
+    modeLabel.setVisible (false);
 
     hiHatBox.addItem ("Dynamic", 1);
     hiHatBox.addItem ("Closed",  2);
@@ -1359,6 +1393,7 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     halfTimeAttachment      = std::make_unique<ButtonAttachment> (apvts, "halfTime",      halfTimeButton);
     timeScaleAttachment     = std::make_unique<ComboAttachment>   (apvts, "timeScale",     timeScaleBox);
     intensityAttachment     = std::make_unique<SliderAttachment>  (apvts, "intensity",     intensitySlider);
+    fillDensityAttachment   = std::make_unique<SliderAttachment>  (apvts, "fillDensity",   fillDensitySlider);
 
     // v1.6.1-rc.7 — chain custom onChange handlers AFTER the APVTS
     // ComboBoxAttachment ctors. Each ctor steals onChange to sync its
@@ -1524,7 +1559,9 @@ void AIDrumAudioProcessorEditor::resized()
     placeCombo (genreBox);
     placeCombo (roomBox);
     placeCombo (patternLengthBox);
-    placeCombo (modeBox);
+    // v1.6.1-rc.14 — modeBox is hidden (fills are now generative-only,
+    // no Auto/Manual toggle). Skipping placeCombo so it doesn't reserve
+    // a 56 px gap between LENGTH and HI-HAT.
     placeCombo (hiHatBox);
     placeCombo (stepDivBox);
     placeCombo (timeScaleBox);
@@ -1532,9 +1569,12 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (8);
 
-    // ----- Knobs row: Variation | Humanize | Swing | Fills | Fill CX | Room Amount -----
+    // ----- Knobs row: Variation | Humanize | Swing | Fills | Intensity | Fill Density | Room Amount -----
+    // v1.6.1-rc.14 — divisor MUST match the number of placeKnob calls
+    // below. rc.14 added FILL DENSITY → 7 knobs total. Devin Review
+    // caught a /6 leftover that gave roomAmountSlider an empty cell.
     auto knobsRow = area.removeFromTop (108).reduced (4, 6);
-    const int knobW = knobsRow.getWidth() / 6;
+    const int knobW = knobsRow.getWidth() / 7;
     auto placeKnob = [&knobsRow, knobW] (juce::Slider& s)
     {
         auto cell = knobsRow.removeFromLeft (knobW).reduced (6, 10);
@@ -1548,6 +1588,7 @@ void AIDrumAudioProcessorEditor::resized()
     // owned by INTENSITY (0..127 displayed). The fill selector lives
     // in its own bar above the arrangement grid (see below).
     placeKnob (intensitySlider);
+    placeKnob (fillDensitySlider);
     placeKnob (roomAmountSlider);
 
     // Hidden controls still need bounds so attachment writes don't

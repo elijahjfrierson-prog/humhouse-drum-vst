@@ -4,40 +4,46 @@
 
 // Minimal, self-contained look-and-feel.
 //
-// v1.6.1-rc.7 — repainted from "gothic purple" to a monochrome sunburst
-// (black → graphite grey → bone white) per the rc.7 brief: "change the
-// color of the OVERALL PROJECT TO black, grey and white in a gradient
-// sunburst like shift from left to right". The class names + symbol
-// names stay (GothicLookAndFeel, GothicPalette) so the editor and other
-// callers don't have to change; only the color values shifted.
+// v1.6.1-rc.7 — repainted from "gothic purple" to a monochrome sunburst.
+// v1.6.1-rc.14 — recolored AGAIN per user reference: "MAKE IT GOLD WE ARE
+// GOLD EVERYWEHERE JUST LIKE THIS PICTURE INSTEAD OF WHITE TO BLACK
+// GRADIENT". Background stays deep/near-black (sunburst left→right
+// black → amber → bright gold) so labels read against the panel; every
+// "accent" / arc / on-state / fill bar is now in the gold family. Class
+// names + symbol names stay (GothicLookAndFeel, GothicPalette) so the
+// editor and every existing call site keeps working — only the colour
+// values shifted.
 //
 // Thin serif titles, tracked-out labels, thin-arc rotary knobs.
 namespace aidrum
 {
     struct GothicPalette
     {
-        // Background blacks
-        static constexpr juce::uint32 kInk        = 0xff0a0a0c;  // near-black
-        static constexpr juce::uint32 kPanel      = 0xff141416;  // panel base
-        static constexpr juce::uint32 kPanelEdge  = 0xff2a2a2e;
+        // Background blacks (warmer than rc.7 — slight amber undertone
+        // so the gold accents don't look stranded on cold graphite).
+        static constexpr juce::uint32 kInk        = 0xff0a0905;  // near-black, amber-tinted
+        static constexpr juce::uint32 kPanel      = 0xff15110a;  // panel base
+        static constexpr juce::uint32 kPanelEdge  = 0xff2a2418;
 
-        // "Accent" is now a high-contrast bone-white so the active arc on
-        // every knob and the on-state of every button reads against the
-        // black/grey background.
-        static constexpr juce::uint32 kAccent     = 0xfff5f5f5;  // bone white
-        static constexpr juce::uint32 kAccentSoft = 0xffd6d6d6;  // light grey
-        static constexpr juce::uint32 kAccentDeep = 0xff3c3c40;  // graphite
+        // v1.6.1-rc.14 — Accent family is GOLD. Active arc on every knob,
+        // on-state of every button, region intensity strip fill, fill
+        // dropdown selection, etc. all use these.
+        static constexpr juce::uint32 kAccent     = 0xffe8c14a;  // bright gold
+        static constexpr juce::uint32 kAccentSoft = 0xffd4af37;  // antique gold
+        static constexpr juce::uint32 kAccentDeep = 0xff5c4214;  // deep amber
 
-        // Foreground / labels
-        static constexpr juce::uint32 kBone       = 0xfff3f3f3;
-        static constexpr juce::uint32 kSilver     = 0xffb8b8bc;
-        static constexpr juce::uint32 kMuted      = 0xff7a7a82;
+        // Foreground / labels (warm cream so they read on the dark panel
+        // without competing with the gold accents).
+        static constexpr juce::uint32 kBone       = 0xfff5e2a8;  // warm cream
+        static constexpr juce::uint32 kSilver     = 0xffc4a766;  // dim gold
+        static constexpr juce::uint32 kMuted      = 0xff8a7642;  // bronze
 
-        // v1.6.1-rc.7 — explicit sunburst stops (left → right).
-        // Used by PluginEditor::paint() for the background gradient.
-        static constexpr juce::uint32 kSunLeft    = 0xff050507;  // jet black
-        static constexpr juce::uint32 kSunMid     = 0xff2d2d31;  // mid graphite
-        static constexpr juce::uint32 kSunRight   = 0xffe6e6e8;  // bone glow
+        // v1.6.1-rc.14 — sunburst stops shifted from B/W to dark→gold so
+        // the background gradient reads as "gold light" sweeping across
+        // the panel (matches the marketing reference image).
+        static constexpr juce::uint32 kSunLeft    = 0xff060503;  // jet black, amber-tinted
+        static constexpr juce::uint32 kSunMid     = 0xff2e2210;  // dark amber
+        static constexpr juce::uint32 kSunRight   = 0xffe8c14a;  // gold glow
     };
 
     class GothicLookAndFeel : public juce::LookAndFeel_V4

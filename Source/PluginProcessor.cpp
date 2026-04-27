@@ -3,6 +3,7 @@
 #include "StarterGrooves.generated.h"
 #include "StarterGrooveKitFilter.h"
 #include "FillLibrary.generated.h"
+#include "ProceduralFills.h"
 
 namespace
 {
@@ -70,6 +71,16 @@ namespace
     constexpr const char* kParamBundledKit      = "bundledKit";
     constexpr const char* kParamFillComplexity  = "fillComplexity";
     constexpr const char* kParamStepDiv         = "stepDiv";
+
+    // v1.6.1-rc.14 — Fill Density knob. SEPARATE axis from "Fill Selector"
+    // (kParamFillComplexity, which picks WHICH archetype to play) and
+    // separate from the per-region INTENSITY which scales velocity.
+    // Density controls HOW MANY MIDI notes are packed into the fill:
+    //   0.00 → archetype baseline (sparse 8th rolls / quarter-note hits)
+    //   0.55 → +16th / +32nd subdivision overlays kick in
+    //   1.00 → 64th-spray, doubled snares, packed tom cascades
+    // Consumed by aidrum::fillgen::generate() at splice time.
+    constexpr const char* kParamFillDensity     = "fillDensity";
 
     // v1.6.1-rc.4 — arrangement playback time scale (½× / 1× / 2×).
     // Affects the rate the playhead advances through the arrangement so
@@ -282,7 +293,8 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
 
     if (id == kParamStepDiv || id == kParamTimeScale
      || id == kParamIntensity
-     || id == kParamFillComplexity)
+     || id == kParamFillComplexity
+     || id == kParamFillDensity)
         return;
 
     regenerateCurrentRegion();
@@ -316,16 +328,18 @@ void AIDrumAudioProcessor::regenerateCurrentRegion()
     // re-validate `arrangement.back()` after re-acquiring because the
     // user could have appended/deleted regions while we were generating.
 
-    bool   wasFill        = false;
-    double existingLen    = 0.0;
-    int    phraseBar      = 0;
+    bool   wasFill         = false;
+    double existingLen     = 0.0;
+    int    phraseBar       = 0;
+    float  savedRegionInt  = -1.0f;  // v1.6.1-rc.14 — preserve per-region INTENSITY
     {
         std::lock_guard<std::mutex> lock (arrangementMutex);
         if (arrangement.empty())
             return;
-        wasFill     = arrangement.back().isFill;
-        existingLen = arrangement.back().lengthInBeats;
-        phraseBar   = static_cast<int> (arrangement.size()) - 1;
+        wasFill        = arrangement.back().isFill;
+        existingLen    = arrangement.back().lengthInBeats;
+        phraseBar      = static_cast<int> (arrangement.size()) - 1;
+        savedRegionInt = arrangement.back().regionIntensity;
     }
 
     // v1.6.1-rc.5 — preserve the region's fill/groove slot across live
@@ -337,7 +351,11 @@ void AIDrumAudioProcessor::regenerateCurrentRegion()
     if (existingLen > 0.0) req.lengthInBeats = existingLen;
 
     auto regenerated = backend.generate (req);
-    regenerated.isFill = wasFill;
+    regenerated.isFill          = wasFill;
+    // v1.6.1-rc.14 — restore the user's per-region INTENSITY override
+    // (Devin Review caught this — any APVTS knob tweak silently reset
+    // the override to the inherit-global sentinel).
+    regenerated.regionIntensity = savedRegionInt;
 
     {
         std::lock_guard<std::mutex> lock (arrangementMutex);
@@ -460,6 +478,13 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
         juce::NormalisableRange<float> (0.0f, 1.0f, 1.0f / 127.0f, kKnobSkew),
         0.70f));
 
+    // v1.6.1-rc.14 — Fill Density. Default 0.50 = balanced 16th overlay.
+    // 0.00 = sparse archetype baseline; 1.00 = 64th-saturated spray.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { kParamFillDensity, 1 }, "Fill Density",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 1.0f / 127.0f, kKnobSkew),
+        0.50f));
+
     // v1.5.0 — Manual grid step division (Logic-style 1/16, 1/32, 1/64).
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamStepDiv, 1 }, "Step Div",
@@ -560,7 +585,10 @@ void AIDrumAudioProcessor::setUiScale (float s)
 
 int AIDrumAudioProcessor::getFillLibrarySize() const
 {
-    return (int) aidrum::fillLibrary().size();
+    // v1.6.1-rc.14 — 22 procedural archetypes. fillLibrary() is kept
+    // for state round-trip but the UI dropdown reads from the
+    // procedural archetype name table now.
+    return 22;
 }
 
 int AIDrumAudioProcessor::getCurrentFillIndex() const
@@ -574,10 +602,8 @@ int AIDrumAudioProcessor::getCurrentFillIndex() const
 
 juce::String AIDrumAudioProcessor::getCurrentFillName() const
 {
-    const auto& lib = aidrum::fillLibrary();
-    if (lib.empty()) return "—";
     const int idx = getCurrentFillIndex();
-    return juce::String (std::string (lib[(size_t) idx].name));
+    return juce::String (aidrum::fillgen::archetypeName (idx));
 }
 
 void AIDrumAudioProcessor::cycleFillSelector (int direction)
@@ -604,14 +630,15 @@ void AIDrumAudioProcessor::setFillIndex (int idx)
     }
 }
 
-// v1.6.1-rc.13 — return all fill names so the dropdown can populate
-// itself. Order matches fillLibrary() so the dropdown index == the
-// fill index.
+// v1.6.1-rc.14 — return procedural archetype names for the FILL
+// dropdown. Order matches aidrum::fillgen::generate() so the
+// dropdown index == the archetype index. Light → sludge complexity
+// ramp.
 juce::StringArray AIDrumAudioProcessor::getAllFillNames() const
 {
     juce::StringArray names;
-    for (const auto& f : aidrum::fillLibrary())
-        names.add (juce::String (std::string (f.name)));
+    for (int i = 0; i < 22; ++i)
+        names.add (juce::String (aidrum::fillgen::archetypeName (i)));
     return names;
 }
 
@@ -883,6 +910,30 @@ void AIDrumAudioProcessor::clearArrangement()
     playheadBeats.store (0.0, std::memory_order_release);
 }
 
+// v1.6.1-rc.14 — per-region INTENSITY accessors. The arrangement strip
+// shows a small slider/strip per region tile that drives setRegionIntensity
+// for that index. value < 0 (or NaN) restores the "inherit global" sentinel
+// so a fresh region falls back to the global INTENSITY knob until the
+// user dials this region in.
+void AIDrumAudioProcessor::setRegionIntensity (int index, float intensity01)
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (index < 0 || index >= static_cast<int> (arrangement.size()))
+        return;
+    auto& region = arrangement[(size_t) index];
+    region.regionIntensity = (intensity01 < 0.0f)
+                                ? -1.0f
+                                : juce::jlimit (0.0f, 1.0f, intensity01);
+}
+
+float AIDrumAudioProcessor::getRegionIntensity (int index) const
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (index < 0 || index >= static_cast<int> (arrangement.size()))
+        return -1.0f;
+    return arrangement[(size_t) index].regionIntensity;
+}
+
 // ============================================================================
 // v1.6.0 STARTER GROOVES
 // ============================================================================
@@ -1114,12 +1165,23 @@ void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
     // SoCal-centerstone groove is now in the random pool — the
     // Intelligence pad rolls from the FULL allStarterGrooves() library
     // (SoCal + analyzer + BFD palettes), not the small subset.
+    // v1.6.1-rc.14 — preserve the user's per-region INTENSITY override
+    // across RANDOMIZE so re-rolling a groove doesn't silently drop the
+    // velocity vibe they set on the region's drag-strip.
+    float savedRegionInt = -1.0f;
+    {
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        if (! arrangement.empty())
+            savedRegionInt = arrangement.back().regionIntensity;
+    }
+
     aidrum::MidiPattern result = expandGrooveToEightBars (
         lib[(size_t) libIdx].pattern,
         static_cast<std::uint64_t> (libIdx) ^ 0xC0FFEEULL);
     applyIntensityCrashHatBalance (result,
                                    static_cast<std::uint64_t> (libIdx) ^ 0xBEEFULL);
     spliceMandatoryFillIntoRegion (result, libIdx);
+    result.regionIntensity = savedRegionInt;
 
     std::lock_guard<std::mutex> lock (arrangementMutex);
     if (arrangement.empty())
@@ -1356,80 +1418,88 @@ void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     if (region.lengthInBeats < kBeatsPerEightBar - 1e-6)
         return;
 
-    const auto& fillLib = aidrum::fillLibrary();
-    if (fillLib.empty())
-        return;
+    // v1.6.1-rc.14 — PROCEDURAL MIDI fill generation. The WAV-onset
+    // fillLibrary() patterns are no longer spliced verbatim; instead
+    // each 8-bar block calls aidrum::fillgen::generate() which always
+    // produces a fully-populated 4-beat MIDI pattern (no leftover dead
+    // bar — fixes the "fill leaving a whole other bar left behind"
+    // workflow blocker). The 22 archetypes are ordered light → sludge
+    // and the dropdown / cycler index maps directly into them.
+    constexpr int kNumArchetypes = 22;
 
-    const int numFills = static_cast<int> (fillLib.size());
+    const float density      = juce::jlimit (0.0f, 1.0f,
+                                   apvts.getRawParameterValue (kParamComplexity)->load());
+    const float globalIntens = juce::jlimit (0.0f, 1.0f,
+                                   apvts.getRawParameterValue (kParamIntensity)->load());
+    // v1.6.1-rc.14 — fill velocity / complexity respect this region's
+    // own INTENSITY knob if the user dialled one in (sentinel < 0
+    // inherits the global). A soft pre-chorus → light fill; chorus
+    // slammed → sludgier fill picked up the archetype curve.
+    const float intensity    = (region.regionIntensity >= 0.0f)
+                                   ? juce::jlimit (0.0f, 1.0f, region.regionIntensity)
+                                   : globalIntens;
+    const float fcRaw        = juce::jlimit (0.0f, 1.0f,
+                                   apvts.getRawParameterValue (kParamFillComplexity)->load());
+    const float fillDens     = juce::jlimit (0.0f, 1.0f,
+                                   apvts.getRawParameterValue (kParamFillDensity)->load());
 
-    // Density × intensity → fill index mapping. Multiplied product is
-    // 0..1 (density 0.5, intensity 0.5 → product 0.25 → fill ~1/4 of the
-    // way through the library). The FILL-cycler selection adds a small
-    // offset so the user's hand-pick still has a perceptible influence
-    // when they cycle, but the dominant axis is density × intensity.
-    const float density   = juce::jlimit (0.0f, 1.0f,
-                                apvts.getRawParameterValue (kParamComplexity)->load());
-    const float intensity = juce::jlimit (0.0f, 1.0f,
-                                apvts.getRawParameterValue (kParamIntensity)->load());
-    const float fcRaw     = juce::jlimit (0.0f, 1.0f,
-                                apvts.getRawParameterValue (kParamFillComplexity)->load());
-
+    // Density × intensity drives the primary archetype index (light
+    // grooves → low archetypes, hectic grooves → sludge). The FILL
+    // dropdown bias adds ±2 so the user's hand-pick still nudges the
+    // selection without overriding the contextual choice.
     const float densityIntensity = density * intensity;
-    const int   primaryIdx       = juce::jlimit (0, numFills - 1,
-                                       static_cast<int> (std::round (densityIntensity * (float) (numFills - 1))));
-    // FILL cycler offset (-2..+2 slots) so the selector still feels
-    // useful without overriding the density × intensity choice.
+    const int   primaryIdx       = juce::jlimit (0, kNumArchetypes - 1,
+                                       static_cast<int> (std::round (densityIntensity
+                                           * (float) (kNumArchetypes - 1))));
     const int   selectorBias     = juce::jlimit (-2, 2,
                                        static_cast<int> (std::round ((fcRaw - 0.5f) * 4.0f)));
-    const int   fillIdx          = ((primaryIdx + selectorBias) % numFills + numFills) % numFills;
+    const int   fillIdx          = ((primaryIdx + selectorBias) % kNumArchetypes
+                                       + kNumArchetypes) % kNumArchetypes;
 
-    // v1.6.1-rc.13 — fire one fill per 8-bar block, anchored on bar 8 of
-    // each block (beats 28..32, 60..64, 92..96, …). This matches the
-    // user's annotated screenshot exactly: a single closing fill at the
-    // end of every 8-bar phrase, NOT a fill on every region.
     const int numEightBarBlocks = static_cast<int> (
         std::floor ((region.lengthInBeats + 1e-6) / kBeatsPerEightBar));
 
     for (int block = 0; block < numEightBarBlocks; ++block)
     {
-        // Bar 8 of this 8-bar block = block*32 + 28 beats.
         const double anchor    = block * kBeatsPerEightBar + 7.0 * kBeatsPerBar;
         const double windowEnd = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
 
         if (windowEnd - anchor < kBeatsPerBar - 1e-6)
-            continue; // last block's closing bar is partial — skip silently
+            continue;
 
-        // Rotate the fill index across blocks so a 16-bar region's two
-        // fills aren't identical (fill at bar 8 ≠ fill at bar 16).
-        const int blockFillIdx = ((fillIdx + block) % numFills + numFills) % numFills;
+        // Rotate archetype across blocks so a 16-bar region's two fills
+        // don't repeat verbatim. Density adds a perlin-ish offset too.
+        const int   blockFillIdx = ((fillIdx + block) % kNumArchetypes
+                                       + kNumArchetypes) % kNumArchetypes;
 
         // Wipe existing notes inside the fill window so the fill reads clean.
         region.notes.erase (
             std::remove_if (region.notes.begin(), region.notes.end(),
                             [&] (const aidrum::MidiNote& n)
-                            { return n.startBeat >= anchor - 1e-6 && n.startBeat < windowEnd - 1e-6; }),
+                            { return n.startBeat >= anchor - 1e-6
+                                  && n.startBeat <  windowEnd - 1e-6; }),
             region.notes.end());
 
-        const auto&  fill    = fillLib[(size_t) blockFillIdx].pattern;
-        const double fillLen = (fill.lengthInBeats > 1e-6 ? fill.lengthInBeats : kBeatsPerBar);
+        // Generate the procedural fill as a fresh 0..4 beat pattern,
+        // then translate every note up to the anchor inside this region.
+        const std::uint64_t blockSeed =
+            (static_cast<std::uint64_t> (seed) << 32) ^
+            (static_cast<std::uint64_t> (block) * 0x9E3779B97F4A7C15ULL) ^
+            (static_cast<std::uint64_t> (blockFillIdx) * 0xC6BC279692B5C323ULL);
 
-        // Tile/loop the fill until it covers the full bar window.
-        for (double tileOffset = 0.0;
-             tileOffset < (windowEnd - anchor) - 1e-6;
-             tileOffset += fillLen)
+        const aidrum::MidiPattern fill =
+            aidrum::fillgen::generate (blockFillIdx, fillDens, intensity, blockSeed);
+
+        for (const auto& src : fill.notes)
         {
-            for (const auto& src : fill.notes)
-            {
-                const double absBeat = anchor + tileOffset + src.startBeat;
-                if (absBeat < anchor - 1e-6) continue;
-                if (absBeat >= windowEnd - 1e-6) continue;
-                aidrum::MidiNote shifted = src;
-                shifted.startBeat = absBeat;
-                region.notes.push_back (shifted);
-            }
+            const double absBeat = anchor + src.startBeat;
+            if (absBeat < anchor - 1e-6 || absBeat >= windowEnd - 1e-9)
+                continue;
+            aidrum::MidiNote shifted = src;
+            shifted.startBeat = absBeat;
+            region.notes.push_back (shifted);
         }
     }
-    juce::ignoreUnused (seed);
 
     std::sort (region.notes.begin(), region.notes.end(),
                [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
@@ -1657,7 +1727,11 @@ void AIDrumAudioProcessor::remapLastRegionToKit (int kitIndex)
     std::lock_guard<std::mutex> lock (arrangementMutex);
     if (arrangement.empty())
         return;
+    // v1.6.1-rc.14 — preserve the user's per-region INTENSITY override
+    // when swapping in a fresh library pattern.
+    const float savedRegionInt = arrangement.back().regionIntensity;
     arrangement.back() = lib[(size_t) libIdx].pattern;
+    arrangement.back().regionIntensity = savedRegionInt;
 }
 
 // ============================================================================
@@ -2004,6 +2078,11 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
     double regionOffset = 0.0;
     for (const auto& region : snapshot)
     {
+        // v1.6.1-rc.14 — per-region intensity override, identical to the
+        // live-render path so dragged-out MIDI carries the same velocities.
+        const float regionI = (region.regionIntensity >= 0.0f)
+                                ? juce::jlimit (0.0f, 1.0f, region.regionIntensity)
+                                : intensity01;
         for (const auto& note : region.notes)
         {
             if (! isAllowedDrumNote (note.noteNumber))
@@ -2012,7 +2091,7 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
             const double offTicks = (regionOffset + note.startBeat
                                      + std::max (0.01, note.lengthBeat)) * kPPQ;
             const auto vel = shapeVelocity (note.noteNumber, note.velocity,
-                                            intensity01, shapeRng,
+                                            regionI, shapeRng,
                                             ghostMask.load());
 
             auto on  = juce::MidiMessage::noteOn  (10, note.noteNumber, vel);
@@ -2119,6 +2198,14 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
         for (const auto& region : snapshot)
         {
             const double regionLen = std::max (0.001, region.lengthInBeats);
+            // v1.6.1-rc.14 — per-region INTENSITY override. Sentinel < 0
+            // means "inherit the global INTENSITY knob"; any non-negative
+            // value clamped 0..1 wins so the user can program a soft
+            // pre-chorus → slammed chorus → somber bridge by spinning
+            // each region's own intensity dial.
+            const float regionI = (region.regionIntensity >= 0.0f)
+                                    ? juce::jlimit (0.0f, 1.0f, region.regionIntensity)
+                                    : intensity01;
             for (const auto& note : region.notes)
             {
                 if (! isAllowedDrumNote (note.noteNumber))
@@ -2130,14 +2217,10 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                 {
                     const int sample = static_cast<int> (
                         (onBeat - blockStartBeat) * secondsPerBeat * sampleRate / timeScale);
-                    // v1.6.1-rc.7 — every emitted note gets fresh per-hit
-                    // velocity jitter from the INTENSITY curve so the kit
-                    // feels like real human strikes (no two snare hits at
-                    // 60% intensity ever land on exactly the same number).
                     midiOut.addEvent (
                         juce::MidiMessage::noteOn (10, note.noteNumber,
                             shapeVelocity (note.noteNumber, note.velocity,
-                                           intensity01, shapeRng,
+                                           regionI, shapeRng,
                                            ghostMask.load())),
                         juce::jlimit (0, numSamples - 1, sample));
                 }

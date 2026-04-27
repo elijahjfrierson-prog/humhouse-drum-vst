@@ -82,6 +82,16 @@ namespace aidrum
         // allowed; the `+` button becomes the only interactive element.
         std::function<void (int regionIndex)> onDeleteRegion;
 
+        // v1.6.1-rc.14 — per-region INTENSITY drag-strip. Each region
+        // tile shows a thin gold bar at its bottom edge that the user
+        // can click+drag (left = soft / right = slammed) to set that
+        // region's velocity vibe independently of the global INTENSITY
+        // knob. Right-click on the strip clears the override (-1 = inherit
+        // global). Pre-chorus soft → chorus slammed → bridge somber, all
+        // without touching neighbouring regions. The editor wires this
+        // to PluginProcessor::setRegionIntensity.
+        std::function<void (int regionIndex, float intensity01)> onRegionIntensityChanged;
+
         // v1.6.1-rc.5 — step-sequencer toggle semantics. Left-click on a
         // drawn note immediately deletes it (same motion = toggle off).
         // Left-click on an empty grid cell drops a new note at that lane
@@ -119,6 +129,7 @@ namespace aidrum
             inner = inner.withTrimmedRight (appendButton.getWidth() + 10.0f);
 
             cachedRegionOffsets.clear();
+            cachedRegionIntensityHits.clear();
 
             // v1.6.1-rc.2 — reserve a narrow column on the left for per-lane
             // labels (CRASH / RIDE / HI-HAT / TOM / SNARE / KICK). 6 lanes
@@ -336,6 +347,70 @@ namespace aidrum
                                                         x1 - x0, inner.getHeight()), 1.8f);
                 }
 
+                // v1.6.1-rc.14 — per-region INTENSITY drag-strip. A 6 px
+                // gold bar pinned to the bottom edge of every region tile.
+                // Width fills with the region's intensity 0..1; an unset
+                // region (regionIntensity < 0) shows a thin neutral track
+                // so the user can see "this region inherits the global
+                // INTENSITY". Click+drag the strip to dial in pre-chorus
+                // soft / chorus slammed / bridge somber. Right-click on
+                // the strip clears the override.
+                {
+                    const float regionX1   = inner.getX()
+                                              + (float) (regionOffset + regionLen) * pxPerBeat;
+                    const float stripH     = 6.0f;
+                    const float stripPadY  = 1.5f;
+                    const float stripPadX  = 2.0f;
+                    juce::Rectangle<float> strip (regionX0 + stripPadX,
+                                                  inner.getBottom() - stripH - stripPadY,
+                                                  juce::jmax (10.0f,
+                                                              regionX1 - regionX0
+                                                              - stripPadX * 2.0f),
+                                                  stripH);
+
+                    cachedRegionIntensityHits.push_back ({ (int) i, strip });
+
+                    // Track (always shown, dim).
+                    g.setColour (juce::Colour (GothicPalette::kPanelEdge).withAlpha (0.55f));
+                    g.fillRoundedRectangle (strip, 2.0f);
+
+                    const float ri = region.regionIntensity;
+                    if (ri >= 0.0f)
+                    {
+                        // Filled portion = current intensity. Gold gradient
+                        // tracks dial position — dark at 0, bright at 1.
+                        const float fill01 = juce::jlimit (0.0f, 1.0f, ri);
+                        const auto fillRect = strip.withWidth (strip.getWidth() * fill01);
+                        const auto goldDeep = juce::Colour (GothicPalette::kAccentDeep);
+                        const auto gold     = juce::Colour (GothicPalette::kAccent);
+                        g.setGradientFill (juce::ColourGradient (
+                            goldDeep.withAlpha (0.9f), strip.getX(), strip.getY(),
+                            gold    .withAlpha (0.95f), strip.getRight(), strip.getY(),
+                            false));
+                        g.fillRoundedRectangle (fillRect, 2.0f);
+
+                        // Thumb tick
+                        g.setColour (juce::Colour (GothicPalette::kBone).withAlpha (0.95f));
+                        const float thumbX = strip.getX() + fillRect.getWidth();
+                        g.drawLine (thumbX, strip.getY() - 1.0f,
+                                    thumbX, strip.getBottom() + 1.0f, 1.6f);
+                    }
+                    else
+                    {
+                        // Sentinel: dotted line + "GLOBAL" caption so the
+                        // user can see this region inherits the global
+                        // INTENSITY knob.
+                        g.setColour (juce::Colour (GothicPalette::kMuted).withAlpha (0.55f));
+                        for (float x = strip.getX(); x < strip.getRight(); x += 4.0f)
+                            g.fillRect (juce::Rectangle<float> (x, strip.getCentreY() - 0.6f,
+                                                                2.0f, 1.2f));
+                    }
+
+                    // Frame
+                    g.setColour (juce::Colour (GothicPalette::kAccentDeep).withAlpha (0.55f));
+                    g.drawRoundedRectangle (strip, 2.0f, 0.7f);
+                }
+
                 regionOffset += regionLen;
 
                 // Divider line between regions
@@ -407,6 +482,31 @@ namespace aidrum
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            // v1.6.1-rc.14 — per-region INTENSITY drag-strip hit-test.
+            // Tested before lane labels and note-hits so the gold strip
+            // wins over the underlying note grid. Right-click clears
+            // the override (region inherits global INTENSITY).
+            for (const auto& hit : cachedRegionIntensityHits)
+            {
+                if (! hit.rect.contains (e.position))
+                    continue;
+                if (e.mods.isRightButtonDown() || e.mods.isAltDown())
+                {
+                    if (onRegionIntensityChanged != nullptr)
+                        onRegionIntensityChanged (hit.regionIdx, -1.0f);
+                    draggingRegionIntensity = -1;
+                    repaint();
+                    return;
+                }
+                draggingRegionIntensity = hit.regionIdx;
+                const float frac = juce::jlimit (0.0f, 1.0f,
+                    (e.position.x - hit.rect.getX()) / juce::jmax (1.0f, hit.rect.getWidth()));
+                if (onRegionIntensityChanged != nullptr)
+                    onRegionIntensityChanged (hit.regionIdx, frac);
+                repaint();
+                return;
+            }
+
             // v1.6.1-rc.7 — lane label click: arms a row for the GHOST
             // button. Hit-tested before notes/grid so labels can never
             // accidentally drop a kick on bar 1.
@@ -496,6 +596,25 @@ namespace aidrum
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
+            // v1.6.1-rc.14 — per-region INTENSITY drag continues. Find
+            // the strip we latched in mouseDown and rewrite its 0..1.
+            if (draggingRegionIntensity >= 0)
+            {
+                for (const auto& hit : cachedRegionIntensityHits)
+                {
+                    if (hit.regionIdx != draggingRegionIntensity)
+                        continue;
+                    const float frac = juce::jlimit (0.0f, 1.0f,
+                        (e.position.x - hit.rect.getX())
+                            / juce::jmax (1.0f, hit.rect.getWidth()));
+                    if (onRegionIntensityChanged != nullptr)
+                        onRegionIntensityChanged (hit.regionIdx, frac);
+                    repaint();
+                    return;
+                }
+                return;
+            }
+
             // v1.6.1-rc.7 / rc.11 — rectangular drag-highlight on the
             // arrangement grid. Tracks the cursor in either direction
             // (L→R or R→L), re-paints a translucent overlay, AND
@@ -576,6 +695,7 @@ namespace aidrum
             // right-click can only delete one region.
             const auto inner = getLocalBounds().toFloat().reduced (10.5f, 8.5f);
             dragMode = DragMode::None;
+            draggingRegionIntensity = -1;
             lastAddedRegion = -1;
             lastAddedStepBeat = -1.0;
             lastAddedNote = -1;
@@ -795,16 +915,19 @@ namespace aidrum
             if (! provider) return;
             auto now = provider();
 
+            // v1.6.1-rc.14 — only the visually-significant fields drive a
+            // repaint, but ALWAYS refresh `last` so an externally-triggered
+            // repaint() (e.g. after dragging the per-region INTENSITY strip
+            // while the transport is stopped) reads fresh region data
+            // instead of the stale snapshot.
             const bool changed =
                    now.regions.size() != last.regions.size()
                 || std::abs (now.totalBeats    - last.totalBeats)    > 1e-6
                 || std::abs (now.playheadBeats - last.playheadBeats) > 1e-3;
 
+            last = std::move (now);
             if (changed)
-            {
-                last = std::move (now);
                 repaint();
-            }
         }
 
         std::function<Snapshot()> provider;
@@ -820,6 +943,17 @@ namespace aidrum
         juce::Rectangle<float>  cachedGridInner;
         float                   cachedPxPerBeat = 0.0f;
         std::vector<double>     cachedRegionOffsets;
+
+        // v1.6.1-rc.14 — per-region intensity drag-strip hit-rects.
+        // Rebuilt every paint(); mouseDown/Drag use them to drag the
+        // gold strip at the bottom of each region tile.
+        struct RegionIntensityHit
+        {
+            int                   regionIdx = -1;
+            juce::Rectangle<float> rect;
+        };
+        std::vector<RegionIntensityHit> cachedRegionIntensityHits;
+        int                            draggingRegionIntensity = -1;
 
         enum class DragMode { None, Paint, Erase };
         DragMode dragMode        = DragMode::None;
