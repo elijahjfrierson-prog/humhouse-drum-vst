@@ -1135,7 +1135,13 @@ namespace aidrum
             const bool changed =
                    now.regions.size() != last.regions.size()
                 || std::abs (now.totalBeats    - last.totalBeats)    > 1e-6
-                || std::abs (now.playheadBeats - last.playheadBeats) > 1e-3;
+                || std::abs (now.playheadBeats - last.playheadBeats) > 1e-3
+                // v1.6.1-rc.16 — also repaint when the clipboard
+                // state flips so the PASTE pill brightness updates
+                // immediately after C/Ctrl+C even when the transport
+                // is stopped (otherwise the timer would update `last`
+                // silently with no repaint).
+                || now.clipboardHasContent != last.clipboardHasContent;
 
             last = std::move (now);
             if (changed)
