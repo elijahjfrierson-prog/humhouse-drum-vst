@@ -1882,6 +1882,14 @@ void AIDrumAudioProcessor::duplicateNoteInRegion (int regionIndex, int noteIndex
     copy.startBeat = std::min (region.lengthInBeats - 0.05,
                                copy.startBeat + 0.25);
     region.notes.push_back (copy);
+    // v1.6.1-rc.16 — keep region.notes sorted by startBeat. The render
+    // and export paths both apply snare L/R stick alternation by
+    // counting snare hits in vector order; if the vector isn't
+    // chronological a user-duplicated snare lands in the wrong hand
+    // (subtle but musicians hear it).
+    std::stable_sort (region.notes.begin(), region.notes.end(),
+                      [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
+                      { return a.startBeat < b.startBeat; });
 }
 
 void AIDrumAudioProcessor::addNoteToRegion (int regionIndex, int noteNumber,
@@ -1898,6 +1906,11 @@ void AIDrumAudioProcessor::addNoteToRegion (int regionIndex, int noteNumber,
     n.startBeat  = juce::jlimit (0.0, region.lengthInBeats - 0.01, startBeat);
     n.lengthBeat = std::max (0.05, lengthBeats);
     region.notes.push_back (n);
+    // v1.6.1-rc.16 — sort by startBeat; render/export count snare hits
+    // in vector order to assign L/R stick voicing.
+    std::stable_sort (region.notes.begin(), region.notes.end(),
+                      [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
+                      { return a.startBeat < b.startBeat; });
 }
 
 // ============================================================================
