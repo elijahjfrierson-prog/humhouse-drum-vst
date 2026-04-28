@@ -2190,14 +2190,44 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
         const float regionI = (region.regionIntensity >= 0.0f)
                                 ? juce::jlimit (0.0f, 1.0f, region.regionIntensity)
                                 : intensity01;
+
+        // v1.6.1-rc.16 — snare LEFT/RIGHT stick alternation MUST also
+        // apply at MIDI export time so a clip dragged into the DAW
+        // carries the same two-handed feel the user heard in the
+        // plugin. Tempo is fixed at 120 BPM here (500000 us/quarter,
+        // tempoMetaEvent above), so secondsPerBeat = 0.5.
+        constexpr double kExportSecondsPerBeat = 0.5;
+        const double leftBeatShift  = (-2.5 / 1000.0) / kExportSecondsPerBeat;
+        const double rightBeatShift = ( 1.0 / 1000.0) / kExportSecondsPerBeat;
+        constexpr int kSnareNote    = 38;
+        int snareHitIdx = 0;
+
         for (const auto& note : region.notes)
         {
             if (! isAllowedDrumNote (note.noteNumber))
                 continue;
-            const double onTicks  = (regionOffset + note.startBeat) * kPPQ;
-            const double offTicks = (regionOffset + note.startBeat
-                                     + std::max (0.01, note.lengthBeat)) * kPPQ;
-            const auto vel = shapeVelocity (note.noteNumber, note.velocity,
+
+            double rawOnBeat  = note.startBeat;
+            double rawLenBeat = std::max (0.01, note.lengthBeat);
+            float  rawVel     = note.velocity;
+
+            if (note.noteNumber == kSnareNote)
+            {
+                const bool leftHand = (snareHitIdx % 2) == 0;
+                rawOnBeat  += leftHand ? leftBeatShift  : rightBeatShift;
+                // Clamp so a snare on beat 0 never lands at a negative
+                // tick (the export sequence does not accept negative
+                // timestamps; live-render path also clamps for the same
+                // reason).
+                rawOnBeat   = std::max (0.0, rawOnBeat);
+                rawVel     *= leftHand ? 0.93f : 1.04f;
+                rawLenBeat *= leftHand ? 0.95  : 1.05;
+                ++snareHitIdx;
+            }
+
+            const double onTicks  = (regionOffset + rawOnBeat) * kPPQ;
+            const double offTicks = (regionOffset + rawOnBeat + rawLenBeat) * kPPQ;
+            const auto vel = shapeVelocity (note.noteNumber, rawVel,
                                             regionI, shapeRng,
                                             ghostMask.load());
 
@@ -2348,6 +2378,12 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                 {
                     const bool leftHand = (snareHitIdx % 2) == 0;
                     rawOnBeat  += leftHand ? leftBeatShift  : rightBeatShift;
+                    // Clamp so a snare hit at startBeat 0.0 in the
+                    // first region never lands at a negative onBeat —
+                    // negative onBeats fall before the playhead window
+                    // (winStart >= 0) and would be silently dropped,
+                    // leaving an orphan note-off.
+                    rawOnBeat   = std::max (0.0, rawOnBeat);
                     rawVel     *= leftHand ? 0.93f          : 1.04f;
                     rawLenBeat *= leftHand ? 0.95           : 1.05;
                     ++snareHitIdx;
