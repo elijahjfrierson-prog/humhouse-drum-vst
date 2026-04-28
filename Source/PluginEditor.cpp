@@ -596,9 +596,14 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     arrangementStrip.setProvider ([this]
     {
         aidrum::ArrangementStrip::Snapshot s;
-        s.regions       = processorRef.getArrangement();
-        s.totalBeats    = processorRef.getArrangementTotalBeats();
-        s.playheadBeats = processorRef.getPlayheadBeats();
+        s.regions             = processorRef.getArrangement();
+        s.totalBeats          = processorRef.getArrangementTotalBeats();
+        s.playheadBeats       = processorRef.getPlayheadBeats();
+        // v1.6.1-rc.16 — paste pill only lights up when the processor
+        // actually has a region copied. Polled at 30 Hz via the strip's
+        // internal timer so the brightness flips in real time after
+        // pressing C / Ctrl+C.
+        s.clipboardHasContent = processorRef.hasCopiedRegion();
         return s;
     });
     arrangementStrip.onAppend = [this]

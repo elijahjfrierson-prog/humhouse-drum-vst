@@ -219,8 +219,11 @@ namespace aidrum
                 f.add (kSnare, s * 0.25, 0.42f + t * 0.55f);
             }
             // Closed hat under beats 1–2, open hat under beat 3 (swell).
-            for (int s = 0; s < 8; ++s)
-                f.add ((s < 4 ? kClosedHat : kOpenHat), s * 0.25, 0.30f + 0.05f * s);
+            // rc.16: extended to 12 hits (s<12) so the open-hat swell on
+            // beat 3 actually lands; previous loop bound s<8 only covered
+            // beats 1–2 and left beat 3 with no cymbal support.
+            for (int s = 0; s < 12; ++s)
+                f.add ((s < 8 ? kClosedHat : kOpenHat), s * 0.25, 0.30f + 0.05f * s);
             f.add (kRide, 0.0, 0.55f);
             f.add (kRide, 1.0, 0.62f);
             f.add (kRide, 2.0, 0.72f);

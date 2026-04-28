@@ -23,8 +23,13 @@ namespace aidrum
         struct Snapshot
         {
             std::vector<MidiPattern> regions;
-            double                   playheadBeats = 0.0;
-            double                   totalBeats    = 0.0;
+            double                   playheadBeats       = 0.0;
+            double                   totalBeats          = 0.0;
+            // v1.6.1-rc.16 — true when the processor has a region in
+            // its clipboard. The PASTE pill renders bright (armed) only
+            // when this is true so the user gets a visual cue that
+            // pressing P will actually do something.
+            bool                     clipboardHasContent = false;
         };
 
         ArrangementStrip()
@@ -416,7 +421,9 @@ namespace aidrum
                         };
 
                         paintPill (copyRect,  "C", true);
-                        paintPill (pasteRect, "P", true);
+                        // v1.6.1-rc.16 — PASTE only lights up when the
+                        // processor's clipboard actually has a region.
+                        paintPill (pasteRect, "P", last.clipboardHasContent);
                     }
                 }
 
