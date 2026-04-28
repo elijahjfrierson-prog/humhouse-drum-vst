@@ -2182,6 +2182,17 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
     const float intensity01 = apvts.getRawParameterValue (kParamIntensity)->load();
     juce::Random shapeRng;
 
+    // v1.6.1-rc.16 — resolve the active kit's snare + ghost-snare note
+    // numbers so the L/R alternation also catches manual-mode snare hits
+    // for kits that remap GM 38 (e.g. Thrash/Sludge → 40, Jazz → 37,
+    // 808 Trap → 39). Without this, manual mode on remapped kits would
+    // skip the alternation and revert to the one-handed feel.
+    const auto activeKit = static_cast<aidrum::DrumKit> (
+        (int) apvts.getRawParameterValue (kParamDrumKit)->load());
+    const auto& activeProf  = aidrum::drumKitProfile (activeKit);
+    const int   activeSnare = activeProf.snare;
+    const int   activeGhost = activeProf.ghostSnare;
+
     double regionOffset = 0.0;
     for (const auto& region : snapshot)
     {
@@ -2199,7 +2210,7 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
         constexpr double kExportSecondsPerBeat = 0.5;
         const double leftBeatShift  = (-2.5 / 1000.0) / kExportSecondsPerBeat;
         const double rightBeatShift = ( 1.0 / 1000.0) / kExportSecondsPerBeat;
-        constexpr int kSnareNote    = 38;
+        constexpr int kSnareGM      = 38;
         int snareHitIdx = 0;
 
         for (const auto& note : region.notes)
@@ -2211,7 +2222,10 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
             double rawLenBeat = std::max (0.01, note.lengthBeat);
             float  rawVel     = note.velocity;
 
-            if (note.noteNumber == kSnareNote)
+            const bool isSnareLikeNote = (note.noteNumber == kSnareGM)
+                                       || (note.noteNumber == activeSnare)
+                                       || (note.noteNumber == activeGhost);
+            if (isSnareLikeNote)
             {
                 const bool leftHand = (snareHitIdx % 2) == 0;
                 rawOnBeat  += leftHand ? leftBeatShift  : rightBeatShift;
@@ -2329,6 +2343,15 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
     // rewinds so the next Play press starts from bar 1. If the user
     // wants a loop they should use the DAW's transport loop, not a
     // plugin-side one.
+    // v1.6.1-rc.16 — resolve the active kit's snare + ghost-snare so
+    // the L/R alternation below also catches manual-mode snare hits on
+    // kits that remap GM 38 (Thrash/Sludge → 40, Jazz → 37, 808 → 39).
+    const auto activeKit = static_cast<aidrum::DrumKit> (
+        (int) apvts.getRawParameterValue (kParamDrumKit)->load());
+    const auto& activeProf       = aidrum::drumKitProfile (activeKit);
+    const int   activeSnareNote  = activeProf.snare;
+    const int   activeGhostSnare = activeProf.ghostSnare;
+
     auto emitNotesInWindow = [&] (double winStart, double winEnd)
     {
         double regionOffset = 0.0;
@@ -2363,7 +2386,7 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
             int   snareHitIdx = 0;
             const double leftBeatShift  = (-2.5 / 1000.0) / secondsPerBeat;
             const double rightBeatShift = ( 1.0 / 1000.0) / secondsPerBeat;
-            constexpr int kSnareNote = 38;
+            constexpr int kSnareGM = 38;
 
             for (const auto& note : region.notes)
             {
@@ -2374,7 +2397,10 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                 double rawLenBeat = std::max (0.01, note.lengthBeat);
                 float  rawVel     = note.velocity;
 
-                if (note.noteNumber == kSnareNote)
+                const bool isSnareLikeNote = (note.noteNumber == kSnareGM)
+                                           || (note.noteNumber == activeSnareNote)
+                                           || (note.noteNumber == activeGhostSnare);
+                if (isSnareLikeNote)
                 {
                     const bool leftHand = (snareHitIdx % 2) == 0;
                     rawOnBeat  += leftHand ? leftBeatShift  : rightBeatShift;

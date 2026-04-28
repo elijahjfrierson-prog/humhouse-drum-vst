@@ -215,7 +215,7 @@ namespace aidrum
         {
             for (int s = 0; s < 12; ++s) // beats 1–3 snare crescendo
             {
-                const float t = (float) s / 15.0f;
+                const float t = (float) s / 11.0f; // rc.16: divisor matches loop bound so velocity ramps to 1.0
                 f.add (kSnare, s * 0.25, 0.42f + t * 0.55f);
             }
             // Closed hat under beats 1–2, open hat under beat 3 (swell).
@@ -231,7 +231,7 @@ namespace aidrum
             f.add (kFloorTom,3.75, 1.00f);
             if (f.density >= 0.55f)
                 for (int s = 0; s < 12; ++s)
-                    f.add (kSnare, s * 0.25 + 0.125, 0.30f + 0.50f * (s / 15.0f));
+                    f.add (kSnare, s * 0.25 + 0.125, 0.30f + 0.50f * (s / 11.0f));
             f.closeCrash (0.98f, 0.85f);
         }
 
@@ -333,7 +333,7 @@ namespace aidrum
         {
             for (int s = 0; s < 24; ++s) // beats 1–3 only
             {
-                const float v = 0.45f + 0.30f * (s / 31.0f);
+                const float v = 0.45f + 0.30f * (s / 23.0f); // rc.16: divisor matches loop bound
                 f.add (kSnare, s * 0.125, v + (s % 4 == 0 ? 0.10f : 0.0f));
             }
             // Beat 4 = full four-tom 16th descent.
@@ -519,7 +519,7 @@ namespace aidrum
         {
             for (int s = 0; s < 14; ++s)
             {
-                const float t = (float) s / 15.0f;
+                const float t = (float) s / 13.0f; // rc.16: divisor matches loop bound
                 f.add (kKick, s * 0.25, 0.55f + 0.40f * t);
             }
             f.add (kSnare, 1.0, 0.72f);
