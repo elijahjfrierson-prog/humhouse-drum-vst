@@ -55,7 +55,10 @@ namespace aidrum
                 p.ride         = kRide;
                 p.rideBell     = kBell;
                 p.crash        = kSplash;      // small splash instead of crash
-                p.lowTom       = kLowTom;      // rack + small floor, no deep thud
+                // v1.6.1-rc.17 — small jazz kit: no deep floor thud, all
+                // four tom voices land in the rack-tom range.
+                p.floorTom     = kLowTom;
+                p.lowTom       = kLowTom;
                 p.midTom       = kMidTom;
                 p.highTom      = kHiMidTom;
                 p.velocityScale  = 0.72f;
@@ -93,7 +96,10 @@ namespace aidrum
                 p.ride       = kRide;
                 p.crash      = kCrash;
                 p.crashAlt   = kCrash2;
-                p.lowTom     = kLowFloor;
+                // v1.6.1-rc.17 — full 4-tom layout (floor → high) so fills
+                // routing across all four tom voices stays distinct.
+                p.floorTom   = kLowFloor;
+                p.lowTom     = kHighFloor;
                 p.midTom     = kLowTom;
                 p.highTom    = kHighTom;
                 p.velocityScale  = 1.00f;
@@ -111,7 +117,9 @@ namespace aidrum
                 p.openHat    = kOpen;
                 p.ride       = kRide;
                 p.crash      = kCrash;
-                p.lowTom     = kLowFloor;
+                // v1.6.1-rc.17 — Bonham 4-tom layout (deep floor → bright rack).
+                p.floorTom   = kLowFloor;
+                p.lowTom     = kHighFloor;
                 p.midTom     = kLowTom;
                 p.highTom    = kHighTom;
                 p.velocityScale  = 1.02f;

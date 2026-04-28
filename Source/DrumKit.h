@@ -78,7 +78,22 @@ namespace aidrum
         int  crash      = 49;
         int  crashAlt   = 57;
         int  china      = 52;
-        int  lowTom     = 41;
+        // v1.6.1-rc.17 — split the 3-tom layout into 4 distinct voices so
+        // ProceduralFills.h's tom cascade (floor 41 / low 43 / mid 45 / high
+        // 48) routes to four DIFFERENT samples instead of collapsing 41+43
+        // onto the same Kind::LowTom slot. Defaults follow the GM lattice:
+        //   floorTom = GM 41 "Low Floor Tom"   (deepest, longest decay)
+        //   lowTom   = GM 43 "High Floor Tom"  (the previously-missing remap
+        //                                       that caused fills' GM 43 to
+        //                                       fall through to whatever the
+        //                                       host kit had on note 43 — on
+        //                                       some Logic / EZD kits that's
+        //                                       a snare, hence the user's
+        //                                       "toms at snares" report).
+        //   midTom   = GM 45 "Low Tom"         (rack-tom mid voice)
+        //   highTom  = GM 48 "Hi-Mid Tom"      (rack-tom high voice)
+        int  floorTom   = 41;
+        int  lowTom     = 43;
         int  midTom     = 45;
         int  highTom    = 48;
 
