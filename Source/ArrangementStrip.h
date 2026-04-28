@@ -99,6 +99,17 @@ namespace aidrum
         // region; click+drag adjusts).
         std::function<void (int regionIndex)> onRegionIntensitySelected;
 
+        // v1.6.1-rc.16 — per-region COPY / PASTE buttons. Each region
+        // tile renders a tiny "C" and "P" button in its header next
+        // to the intensity knob. Click "C" on region 1 to snapshot
+        // its pattern, then click "P" on region 4 to overwrite that
+        // region with the snapshot. Region 4's intensity override is
+        // preserved (so pre-chorus / chorus / bridge dial-in survives).
+        // The editor wires these to PluginProcessor::copyRegionToClipboard
+        // and pasteCopiedRegionInto.
+        std::function<void (int regionIndex)> onCopyRegion;
+        std::function<void (int regionIndex)> onPasteRegion;
+
         // v1.6.1-rc.5 — step-sequencer toggle semantics. Left-click on a
         // drawn note immediately deletes it (same motion = toggle off).
         // Left-click on an empty grid cell drops a new note at that lane
@@ -138,6 +149,8 @@ namespace aidrum
             cachedRegionOffsets.clear();
             cachedRegionIntensityHits.clear();
             cachedRegionIntensityKnobs.clear();
+            cachedRegionCopyButtons.clear();
+            cachedRegionPasteButtons.clear();
 
             // v1.6.1-rc.2 — reserve a narrow column on the left for per-lane
             // labels (CRASH / RIDE / HI-HAT / TOM / SNARE / KICK). 6 lanes
@@ -354,6 +367,57 @@ namespace aidrum
                         g.setColour (goldLo.withAlpha (0.55f));
                         g.drawEllipse (knob.reduced (1.0f), 0.6f);
                     }
+
+                    // v1.6.1-rc.16 — per-region COPY + PASTE buttons.
+                    // Two 14×14 gold-rimmed pills sit immediately to
+                    // the right of the intensity knob in the same
+                    // header band. "C" snapshots that region, "P"
+                    // pastes the snapshot into that region (replacing
+                    // its pattern but preserving its INTENSITY
+                    // override). Only render if there's room in the
+                    // region tile so 1-bar regions don't smear.
+                    const float btnW   = 14.0f;
+                    const float btnH   = 14.0f;
+                    const float btnGap = 2.0f;
+                    const float btnX0  = regionX0 + 18.0f + 18.0f + 2.0f; // after knob
+                    const float regionRight = inner.getX()
+                                              + (float) (regionOffset + regionLen) * pxPerBeat;
+                    juce::Rectangle<float> copyRect (btnX0,
+                                                      inner.getY() + 2.0f,
+                                                      btnW, btnH);
+                    juce::Rectangle<float> pasteRect (btnX0 + btnW + btnGap,
+                                                       inner.getY() + 2.0f,
+                                                       btnW, btnH);
+                    if (pasteRect.getRight() < regionRight - 2.0f)
+                    {
+                        cachedRegionCopyButtons.push_back ({ (int) i, copyRect });
+                        cachedRegionPasteButtons.push_back ({ (int) i, pasteRect });
+
+                        auto paintPill = [&] (juce::Rectangle<float> r,
+                                              const juce::String& label,
+                                              bool armed)
+                        {
+                            // Backplate
+                            g.setColour (juce::Colour (GothicPalette::kInk).withAlpha (0.85f));
+                            g.fillRoundedRectangle (r, 3.0f);
+                            // Gold rim — brighter when armed (PASTE armed = clipboard set)
+                            g.setColour (armed
+                                         ? juce::Colour (GothicPalette::kAccent)
+                                         : juce::Colour (GothicPalette::kAccentDeep).withAlpha (0.85f));
+                            g.drawRoundedRectangle (r, 3.0f, 0.9f);
+                            // Letter
+                            auto bf = juce::Font (juce::FontOptions (8.5f, juce::Font::bold));
+                            bf.setExtraKerningFactor (0.05f);
+                            g.setFont (bf);
+                            g.setColour (armed
+                                         ? juce::Colour (GothicPalette::kBone)
+                                         : juce::Colour (GothicPalette::kBone).withAlpha (0.75f));
+                            g.drawText (label, r, juce::Justification::centred, false);
+                        };
+
+                        paintPill (copyRect,  "C", true);
+                        paintPill (pasteRect, "P", true);
+                    }
                 }
 
                 // Draw notes — each lane uses its own colour so KICK / SNARE /
@@ -554,11 +618,32 @@ namespace aidrum
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            // v1.6.1-rc.16 — per-region COPY / PASTE buttons. Tested
+            // FIRST so the C / P pills in the region header always
+            // win over the intensity knob and the underlying grid.
+            for (const auto& hit : cachedRegionCopyButtons)
+            {
+                if (! hit.rect.contains (e.position))
+                    continue;
+                if (onCopyRegion != nullptr)
+                    onCopyRegion (hit.regionIdx);
+                repaint();
+                return;
+            }
+            for (const auto& hit : cachedRegionPasteButtons)
+            {
+                if (! hit.rect.contains (e.position))
+                    continue;
+                if (onPasteRegion != nullptr)
+                    onPasteRegion (hit.regionIdx);
+                repaint();
+                return;
+            }
+
             // v1.6.1-rc.15 — per-region INTENSITY mini-knob hit-test.
-            // Tested FIRST so the knob in the region header wins over
-            // every other hit (lane labels, notes, grid). Vertical drag
-            // = set 0..1 (drag up to brighten); right-click clears the
-            // override.
+            // Tested AFTER the COPY/PASTE pills (which sit beside the
+            // knob) so the buttons win their tiny rectangles. Vertical
+            // drag = set 0..1 (drag up to brighten); right-click clears.
             for (const auto& hit : cachedRegionIntensityKnobs)
             {
                 if (! hit.rect.contains (e.position))
@@ -1091,6 +1176,12 @@ namespace aidrum
         // cache so the knob and bottom strip can be hit-tested in
         // priority order.
         std::vector<RegionIntensityHit> cachedRegionIntensityKnobs;
+        // v1.6.1-rc.16 — per-region COPY / PASTE button hit-rects.
+        // Same RegionIntensityHit shape (regionIdx + rect). Rebuilt
+        // every paint() and hit-tested in mouseDown before the
+        // intensity knob so the buttons take priority.
+        std::vector<RegionIntensityHit> cachedRegionCopyButtons;
+        std::vector<RegionIntensityHit> cachedRegionPasteButtons;
         int                            draggingRegionIntensity = -1;
         bool                           draggingKnobIsKnob      = false;
         float                          draggingKnobAnchorY     = -1.0f;

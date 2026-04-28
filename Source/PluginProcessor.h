@@ -188,6 +188,15 @@ public:
     bool hasCopiedRegion() const;
     void pasteCopiedRegion();
 
+    // v1.6.1-rc.16 — per-region paste. The user wants COPY+PASTE on
+    // every region tile so they can copy region 1 (a verse pattern)
+    // straight into region 4 (the second verse). Unlike the legacy
+    // pasteCopiedRegion(), this REPLACES the region at `index` with
+    // the clipboard contents instead of appending to the end. The
+    // region's regionIntensity override is preserved so dialing
+    // pre-chorus / chorus / bridge knobs survives the paste.
+    void pasteCopiedRegionInto (int index);
+
     // Returns a copy of the full arrangement for UI rendering (thread-safe).
     std::vector<aidrum::MidiPattern> getArrangement() const;
 

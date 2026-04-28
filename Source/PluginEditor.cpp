@@ -674,6 +674,21 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // repaint; the region itself doesn't need to be "selected" because
     // the per-region intensity is read from regionIntensity at MIDI
     // emit time, independent of any global "active region" concept.
+    // v1.6.1-rc.16 — per-region COPY / PASTE buttons. The C pill in
+    // a region's header snapshots that region's pattern; the P pill
+    // overwrites that region with the snapshot. Region's INTENSITY
+    // override is preserved by pasteCopiedRegionInto so dialed-in
+    // pre-chorus / chorus / bridge survives the paste.
+    arrangementStrip.onCopyRegion = [this] (int regionIdx)
+    {
+        processorRef.copyRegionToClipboard (regionIdx);
+    };
+    arrangementStrip.onPasteRegion = [this] (int regionIdx)
+    {
+        processorRef.pasteCopiedRegionInto (regionIdx);
+        arrangementStrip.repaint();
+    };
+
     arrangementStrip.onRegionIntensitySelected = [this] (int /*regionIdx*/)
     {
         arrangementStrip.repaint();

@@ -1411,11 +1411,21 @@ void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     constexpr double kBeatsPerBar       = 4.0;
     constexpr double kBeatsPerEightBar  = 8.0 * kBeatsPerBar; // 32
 
-    // v1.6.1-rc.13 — only fire fills once a full 8-bar phrase has been
-    // laid out. Sub-8-bar regions are protected: short user grooves are
-    // never overwritten by an auto-fill, and the default 8-bar COMPOSE
-    // gets exactly one fill on its closing bar (beats 28..32).
-    if (region.lengthInBeats < kBeatsPerEightBar - 1e-6)
+    // v1.6.1-rc.16 — phrase-end fill placement matches Logic Pro's
+    // Drummer engine: "Drummer automatically places fills at the end
+    // of 2-bar, 4-bar, or 8-bar phrases" (newpatch+for+1.6.docx).
+    // Pick the largest power-of-two phrase length that fits the
+    // region: 8-bar regions get one fill on bar 8; 4-bar regions
+    // get one fill on bar 4; 2-bar regions get one on bar 2.
+    // Anything < 2 bars stays user-owned (no fill).
+    constexpr double kBeatsPerTwoBar  = 2.0 * kBeatsPerBar;
+    constexpr double kBeatsPerFourBar = 4.0 * kBeatsPerBar;
+
+    double phraseBeats = 0.0;
+    if      (region.lengthInBeats >= kBeatsPerEightBar - 1e-6) phraseBeats = kBeatsPerEightBar;
+    else if (region.lengthInBeats >= kBeatsPerFourBar  - 1e-6) phraseBeats = kBeatsPerFourBar;
+    else if (region.lengthInBeats >= kBeatsPerTwoBar   - 1e-6) phraseBeats = kBeatsPerTwoBar;
+    else
         return;
 
     // v1.6.1-rc.14 — PROCEDURAL MIDI fill generation. The WAV-onset
@@ -1456,13 +1466,17 @@ void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     const int   fillIdx          = ((primaryIdx + selectorBias) % kNumArchetypes
                                        + kNumArchetypes) % kNumArchetypes;
 
-    const int numEightBarBlocks = static_cast<int> (
-        std::floor ((region.lengthInBeats + 1e-6) / kBeatsPerEightBar));
+    // v1.6.1-rc.16 — iterate phrase blocks of `phraseBeats` (32 / 16 /
+    // 8 beats for 8/4/2-bar phrases). The fill always lands in the
+    // LAST bar of each phrase block.
+    const int numBlocks = static_cast<int> (
+        std::floor ((region.lengthInBeats + 1e-6) / phraseBeats));
 
-    for (int block = 0; block < numEightBarBlocks; ++block)
+    for (int block = 0; block < numBlocks; ++block)
     {
-        const double anchor    = block * kBeatsPerEightBar + 7.0 * kBeatsPerBar;
-        const double windowEnd = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
+        const double phraseStart = block * phraseBeats;
+        const double anchor      = phraseStart + (phraseBeats - kBeatsPerBar);
+        const double windowEnd   = juce::jmin (anchor + kBeatsPerBar, region.lengthInBeats);
 
         if (windowEnd - anchor < kBeatsPerBar - 1e-6)
             continue;
@@ -1528,6 +1542,7 @@ void AIDrumAudioProcessor::applyIntensityCrashHatBalance (
     constexpr int kClosedHat = 42;
     constexpr int kPedalHat  = 44;
     constexpr int kOpenHat   = 46;
+    constexpr int kRide      = 51;
     constexpr int kSnare     = 38;
     constexpr int kCrashL    = 49;
     constexpr int kCrashR    = 57;
@@ -1537,6 +1552,77 @@ void AIDrumAudioProcessor::applyIntensityCrashHatBalance (
 
     std::mt19937_64 rng (seed ^ 0x9E3779B97F4A7C15ULL);
     auto roll = [&] () { return std::uniform_real_distribution<float> (0.0f, 1.0f) (rng); };
+
+    // v1.6.1-rc.16 — CRASH-MODE override above 0.85 intensity.
+    // User spec verbatim: "WHEN ABOVE 85 INTENSITY TAKE RIDES AND
+    // CRASHES OUT OF INTELLIGENCE PAD AND COMPOSITIONS SO CRASHES
+    // HIT. L CRASH ON THE 1, THEN R AND L CRASH ON THE 1 1/2 BAR,
+    // L CRASH ON THE 2 BAR BOOM BOOM BOOM TYPE FEEL".
+    //
+    // Implementation: above 0.85 we wipe every existing ride + hat
+    // + crash from the region, then stamp a 2-bar BOOM cadence
+    // (bar 1 beat 1 = L, bar 1 beat 3 [the "1 1/2"] = R+L doubled,
+    // bar 2 beat 1 = L) repeating across the region. No subtle
+    // "and-of-4" sprays — this is supposed to be relentless,
+    // measured, and CRASH-led.
+    if (intensity > 0.85f)
+    {
+        const double regLenHi = std::max (0.0, region.lengthInBeats);
+
+        region.notes.erase (
+            std::remove_if (region.notes.begin(), region.notes.end(),
+                            [&] (const aidrum::MidiNote& n)
+                            {
+                                return n.noteNumber == kClosedHat
+                                    || n.noteNumber == kPedalHat
+                                    || n.noteNumber == kOpenHat
+                                    || n.noteNumber == kRide
+                                    || n.noteNumber == kCrashL
+                                    || n.noteNumber == kCrashR;
+                            }),
+            region.notes.end());
+
+        auto stampCrash = [&] (int n, double startBeat, float vel)
+        {
+            if (startBeat < 0.0 || startBeat >= regLenHi - 1e-3) return;
+            aidrum::MidiNote m;
+            m.noteNumber = n;
+            m.startBeat  = startBeat;
+            m.lengthBeat = 0.50;
+            m.velocity   = juce::jlimit (0.0f, 1.0f, vel);
+            region.notes.push_back (m);
+        };
+
+        const int totalBarsHi = static_cast<int> (regLenHi / 4.0 + 1e-6);
+        // 2-bar repeating BOOM cadence. We anchor the cycle on every
+        // 8-beat block (bar 1 + bar 2) so the cadence stays in phase
+        // with the region downbeat regardless of region length.
+        for (int barHi = 0; barHi < totalBarsHi; ++barHi)
+        {
+            const double anchorBar = barHi * 4.0;
+            const bool   evenBar   = (barHi % 2 == 0);
+            const float  velMain   = 0.95f;
+            const float  velHalf   = 0.88f;
+
+            if (evenBar)
+            {
+                // Bar 1 of the cadence: L on beat 1, R+L on beat 3.
+                stampCrash (kCrashL, anchorBar,         velMain);
+                stampCrash (kCrashR, anchorBar + 2.0,   velHalf);
+                stampCrash (kCrashL, anchorBar + 2.0,   velHalf);
+            }
+            else
+            {
+                // Bar 2 of the cadence: L alone on beat 1.
+                stampCrash (kCrashL, anchorBar,         velMain);
+            }
+        }
+
+        std::sort (region.notes.begin(), region.notes.end(),
+                   [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
+                   { return a.startBeat < b.startBeat; });
+        return;
+    }
 
     // v1.6.1-rc.13 — user spec: "AUTOMATE MORE CRASHES IN PATTERNS".
     // Crash placement now starts at intensity > 0.30 (was 0.55) so the
@@ -1851,6 +1937,27 @@ void AIDrumAudioProcessor::pasteCopiedRegion()
     }
     std::lock_guard<std::mutex> lock (arrangementMutex);
     arrangement.push_back (std::move (toAppend));
+}
+
+void AIDrumAudioProcessor::pasteCopiedRegionInto (int index)
+{
+    // v1.6.1-rc.16 — per-region paste. Replaces the region at `index`
+    // with the clipboard snapshot instead of appending. Preserves
+    // that region's INTENSITY override so the user's pre-chorus /
+    // chorus / bridge dial-in survives the paste.
+    aidrum::MidiPattern snapshot;
+    {
+        std::lock_guard<std::mutex> lock (clipboardMutex);
+        if (! clipboardPattern.has_value())
+            return;
+        snapshot = *clipboardPattern;
+    }
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (index < 0 || index >= static_cast<int> (arrangement.size()))
+        return;
+    const float savedRegionInt = arrangement[(size_t) index].regionIntensity;
+    arrangement[(size_t) index] = std::move (snapshot);
+    arrangement[(size_t) index].regionIntensity = savedRegionInt;
 }
 
 std::vector<aidrum::MidiPattern> AIDrumAudioProcessor::getArrangement() const
@@ -2206,12 +2313,48 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
             const float regionI = (region.regionIntensity >= 0.0f)
                                     ? juce::jlimit (0.0f, 1.0f, region.regionIntensity)
                                     : intensity01;
+
+            // v1.6.1-rc.16 — snare LEFT/RIGHT stick alternation.
+            // User spec: "ADD A Left STICK AND Right STICK FOR SNARE
+            // THE HITS SHOULD SOUND APPARENTLY DIFFERENT … THERE ARE
+            // TWO HANDS PLAYING THE DRUMS NOT ONE HAND PLAYING AS FAST
+            // AS POSSIBLE." Implementation: count snare hits per
+            // region in startBeat order and apply alternating L/R
+            // micro-shifts in timing, velocity, and length so adjacent
+            // snares feel like two hands trading off rather than one
+            // hand machine-gunning a single sample.
+            //   Left  hand (idx 0,2,4…): -2.5 ms behind grid, vel ×0.93,
+            //                            length ×0.95 (slightly choked)
+            //   Right hand (idx 1,3,5…): +1.0 ms ahead of grid, vel ×1.04,
+            //                            length ×1.05 (slightly fuller)
+            // The asymmetry was modelled on the SoCal_*.wav reference
+            // loops the user supplied — the stronger hand lands a hair
+            // late and louder, the weaker hand a hair early and softer.
+            int   snareHitIdx = 0;
+            const double leftBeatShift  = (-2.5 / 1000.0) / secondsPerBeat;
+            const double rightBeatShift = ( 1.0 / 1000.0) / secondsPerBeat;
+            constexpr int kSnareNote = 38;
+
             for (const auto& note : region.notes)
             {
                 if (! isAllowedDrumNote (note.noteNumber))
                     continue;
-                const double onBeat  = regionOffset + note.startBeat;
-                const double offBeat = onBeat + std::max (0.01, note.lengthBeat);
+
+                double rawOnBeat  = note.startBeat;
+                double rawLenBeat = std::max (0.01, note.lengthBeat);
+                float  rawVel     = note.velocity;
+
+                if (note.noteNumber == kSnareNote)
+                {
+                    const bool leftHand = (snareHitIdx % 2) == 0;
+                    rawOnBeat  += leftHand ? leftBeatShift  : rightBeatShift;
+                    rawVel     *= leftHand ? 0.93f          : 1.04f;
+                    rawLenBeat *= leftHand ? 0.95           : 1.05;
+                    ++snareHitIdx;
+                }
+
+                const double onBeat  = regionOffset + rawOnBeat;
+                const double offBeat = onBeat + std::max (0.01, rawLenBeat);
 
                 if (onBeat >= winStart && onBeat < winEnd)
                 {
@@ -2219,7 +2362,7 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
                         (onBeat - blockStartBeat) * secondsPerBeat * sampleRate / timeScale);
                     midiOut.addEvent (
                         juce::MidiMessage::noteOn (10, note.noteNumber,
-                            shapeVelocity (note.noteNumber, note.velocity,
+                            shapeVelocity (note.noteNumber, rawVel,
                                            regionI, shapeRng,
                                            ghostMask.load())),
                         juce::jlimit (0, numSamples - 1, sample));
