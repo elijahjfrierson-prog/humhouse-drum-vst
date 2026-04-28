@@ -329,10 +329,16 @@ namespace aidrum
         // routed correctly"). Any legacy save-state asking for it (or
         // for older Thrash) remaps to NuRockYamaha so projects still
         // load *something* instead of going silent.
+        // v1.6.1-rc.17 — accept the second bundled kit. Two prefixes ship:
+        //   "NuRockYamaha"  (rc.8 default)
+        //   "HeavyStudio"   (rc.17 — user-supplied Heavy_*.wav recordings)
+        // Anything else (legacy "Thrash", old "BayGrunge", empty) falls back
+        // to NuRockYamaha so older save-states still load *something*
+        // instead of going silent.
         juce::String kitName = kitNameIn.isEmpty()
                                  ? juce::String ("NuRockYamaha")
                                  : kitNameIn;
-        if (kitName != "NuRockYamaha")
+        if (kitName != "NuRockYamaha" && kitName != "HeavyStudio")
             kitName = "NuRockYamaha";
         const juce::String prefix  = kitName + "__";
 

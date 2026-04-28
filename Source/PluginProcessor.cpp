@@ -100,11 +100,20 @@ namespace
     // crispy default kit — (Nu Rock) 70's Yamaha — and the LOAD KIT
     // path is how users bring in their own samples. The internal name
     // below is the WAV-bundle prefix scanned by SampleKit::loadBundled().
+    // v1.6.1-rc.17 — second bundled kit. The "HeavyStudio" prefix points at
+    // user-supplied recordings (Kick / Snare / Floor Tom / Small Tom ×2 /
+    // L+R Crash / Ride) sliced into one-shots by tools/build_heavy_studio_kit.py
+    // and aliased onto NuRockYamaha hat / china / ride-bell samples for the
+    // voices we don't have separate Heavy recordings of. Distinct timbre vs.
+    // NuRockYamaha: heavier kick attack, thicker snare body, longer cymbal
+    // sustain. ComboBox order MUST match SampleKit::loadBundled() recognition.
     const juce::StringArray kBundledKitChoices {
-        "NuRockYamaha"
+        "NuRockYamaha",
+        "HeavyStudio"
     };
     const juce::StringArray kBundledKitDisplayNames {
-        "(Nu Rock) 70's Yamaha"
+        "(Nu Rock) 70's Yamaha",
+        "(Heavy Studio) Big Room"
     };
 
     const juce::StringArray kStepDivChoices {
@@ -2116,7 +2125,13 @@ aidrum::MidiPattern AIDrumAudioProcessor::withActiveKitApplied (aidrum::MidiPatt
     constexpr int kKickGM = 36, kSnareGM = 38, kSideStickGM = 37, kClapGM = 39;
     constexpr int kClosedHatGM = 42, kPedalHatGM = 44, kOpenHatGM = 46;
     constexpr int kRideGM = 51, kRideBellGM = 53, kCrashGM = 49, kCrashAltGM = 57, kChinaGM = 52;
-    constexpr int kLowTomGM = 41, kMidTomGM = 45, kHighTomGM = 48;
+    // v1.6.1-rc.17 — split the tom GM family into FOUR voices so the
+    // ProceduralFills cascade (kFloorTom 41 / kLowTom 43 / kMidTom 45 /
+    // kHighTom 48) routes to four distinct prof.* slots. Previously GM 43
+    // had no remap and passed through untouched: on host kits where 43
+    // wasn't mapped it fell to the nearest mapped voice (often the snare),
+    // which was the user-reported "toms at snares" symptom.
+    constexpr int kFloorTomGM = 41, kLowTomGM = 43, kMidTomGM = 45, kHighTomGM = 48;
 
     for (auto& n : p.notes)
     {
@@ -2134,6 +2149,7 @@ aidrum::MidiPattern AIDrumAudioProcessor::withActiveKitApplied (aidrum::MidiPatt
         else if (n.noteNumber == kCrashGM)     n.noteNumber = prof.crash;
         else if (n.noteNumber == kCrashAltGM)  n.noteNumber = prof.crashAlt;
         else if (n.noteNumber == kChinaGM)     n.noteNumber = prof.china;
+        else if (n.noteNumber == kFloorTomGM)  n.noteNumber = prof.floorTom;
         else if (n.noteNumber == kLowTomGM)    n.noteNumber = prof.lowTom;
         else if (n.noteNumber == kMidTomGM)    n.noteNumber = prof.midTom;
         else if (n.noteNumber == kHighTomGM)   n.noteNumber = prof.highTom;
