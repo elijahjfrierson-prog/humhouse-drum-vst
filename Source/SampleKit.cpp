@@ -479,24 +479,52 @@ namespace aidrum
 
         int idx = -1;
         for (int i = 0; i < kMaxVoices; ++i)
-            if (! voices[i].active) { idx = i; break; }
+            if (! voices[(size_t) i].active) { idx = i; break; }
         if (idx < 0)
         {
             // Steal the voice with the largest playPos (nearest to end of sample).
-            int bestI = 0, bestPos = -1;
+            int bestI = 0;
+            double bestPos = -1.0;
             for (int i = 0; i < kMaxVoices; ++i)
-                if (voices[i].playPos > bestPos) { bestPos = voices[i].playPos; bestI = i; }
+                if (voices[(size_t) i].playPos > bestPos) { bestPos = voices[(size_t) i].playPos; bestI = i; }
             idx = bestI;
         }
 
-        auto& v = voices[idx];
+        auto& v = voices[(size_t) idx];
         v.active      = true;
         v.startSample = sampleOffset;
         v.velocity    = juce::jlimit (0.05f, 1.2f, velocity);
         v.kind        = k;
-        v.playPos     = 0;
+        v.playPos     = 0.0;
+        v.playRate    = 1.0;
+        v.lpAmount    = 0.0f;
+        v.lpZ         = {};
         v.kitRef      = data;
         v.layer       = layer;
+
+        // v1.6.1-rc.18 — programmatic R-hand / L-hand split for snare
+        // hits. Even-indexed snares are right-hand voicing (slightly
+        // sharp + bright), odd-indexed are left-hand voicing (slightly
+        // flat + 9 kHz one-pole roll-off so adjacent rolls breathe like
+        // two hands trading off rather than one hand machine-gunning a
+        // single sample). The ±5¢ pitch detune + the LP shelf together
+        // are what kills the "those snare rolls sound like gunshots"
+        // artefact at the source.
+        const bool isSnareLikeNote = (midiNote == 37 || midiNote == 38
+                                   || midiNote == 39 || midiNote == 40);
+        if (isSnareLikeNote)
+        {
+            const bool rightHand = ((snareHitCounter & 1) == 0);
+            // 5 cents = 2^(5/1200) ≈ 1.00289. Add a tiny per-hit jitter
+            // so even within one stick the four / five hits in a roll
+            // don't all share the same playback rate.
+            const double cents       = rightHand ?  5.0 : -5.0;
+            const double jitterCents = (((snareHitCounter * 2654435761u) % 7) - 3.0); // -3..+3 cents
+            const double semitones   = (cents + jitterCents) / 100.0;
+            v.playRate = std::pow (2.0, semitones / 12.0);
+            v.lpAmount = rightHand ? 0.0f : 0.55f;
+            ++snareHitCounter;
+        }
     }
 
     void SampleKit::renderIntoBuses (DrumBusMixer& mixer, int numSamples)
@@ -516,19 +544,37 @@ namespace aidrum
             const int start = juce::jlimit (0, numSamples, v.startSample);
             v.startSample = 0;
 
-            const float gain = v.velocity;
-            int i = start;
-            int pos = v.playPos;
-            for (; i < numSamples && pos < srcLen; ++i, ++pos)
+            const float gain     = v.velocity;
+            const double rate    = v.playRate;
+            const float  lpA     = juce::jlimit (0.0f, 0.95f, v.lpAmount);
+            const bool   doInterp = (std::abs (rate - 1.0) > 1e-5);
+            const bool   doLP     = (lpA > 1e-4f);
+
+            int   i   = start;
+            double pos = v.playPos;
+            for (; i < numSamples && pos < (double) (srcLen - 1); ++i, pos += rate)
             {
+                const int   p0   = (int) pos;
+                const float frac = doInterp ? (float) (pos - (double) p0) : 0.0f;
+
                 for (int c = 0; c < busChans; ++c)
                 {
-                    const int sc = juce::jmin (c, srcChans - 1);
-                    busBuf->addSample (c, i, src.getReadPointer (sc)[pos] * gain);
+                    const int sc  = juce::jmin (c, srcChans - 1);
+                    const float a = src.getReadPointer (sc)[p0];
+                    const float b = doInterp ? src.getReadPointer (sc)[p0 + 1] : 0.0f;
+                    float       s = doInterp ? (a + (b - a) * frac) : a;
+                    if (doLP)
+                    {
+                        // Simple one-pole LP: y[n] = (1-a)*x[n] + a*y[n-1].
+                        const int ci = juce::jlimit (0, 1, c);
+                        s = (1.0f - lpA) * s + lpA * v.lpZ[(size_t) ci];
+                        v.lpZ[(size_t) ci] = s;
+                    }
+                    busBuf->addSample (c, i, s * gain);
                 }
             }
             v.playPos = pos;
-            if (pos >= srcLen)
+            if (pos >= (double) (srcLen - 1))
             {
                 v.active = false;
                 v.kitRef.reset();

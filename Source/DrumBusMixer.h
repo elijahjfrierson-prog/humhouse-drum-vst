@@ -372,13 +372,6 @@ namespace aidrum
             rp.freezeMode = 0.0f;
             reverb.setParameters (rp);
 
-            if (reverbBuffer.getNumChannels() >= 2)
-                reverb.processStereo (reverbBuffer.getWritePointer (0),
-                                      reverbBuffer.getWritePointer (1),
-                                      n);
-            else if (reverbBuffer.getNumChannels() == 1)
-                reverb.processMono (reverbBuffer.getWritePointer (0), n);
-
             // v1.6.1-rc.18 — TRUE DRY/WET blend (was a parallel send).
             // User spec: "MAKE TRUE DRY TO WETNESS ON REVERB". The
             // master reverb knob is now a proper dry/wet ratio:
@@ -387,9 +380,37 @@ namespace aidrum
             //   1.0  → 100% wet bus (dry × 0.0,           wet × 1.0)
             // Equal-power (sin/cos) crossfade so the perceived loudness
             // stays roughly constant as the user sweeps through.
+            //
+            // Devin Review (rc.18, 1st pass): the per-bus reverbSend
+            // values (kick = 0.05, snare = 0.18, crash = 0.25) mean the
+            // reverbBuffer is a heavily-instrument-weighted partial of
+            // the full mix. If we crossfaded a dry-attenuated output
+            // against that partial wet, the kick would vanish at high
+            // mix values (kick send 0.05 + dryGain 0 = 5 % of normal).
+            // Fix: add the FULL output mix at unity into reverbBuffer
+            // BEFORE running the reverb, so every instrument is fully
+            // represented in the wet path. The per-bus sends remain
+            // additive flavouring on top (extra crash tail, etc.).
             const float revMix = juce::jlimit (
                 0.0f, 1.0f, master.reverbMix.load (std::memory_order_relaxed));
-            const float angle  = revMix * juce::MathConstants<float>::halfPi;
+            const int rvChans = reverbBuffer.getNumChannels();
+            for (int c = 0; c < rvChans; ++c)
+            {
+                auto* rvb = reverbBuffer.getWritePointer (c);
+                const auto* src = output.getReadPointer (
+                                      c < outCh ? c : 0);
+                for (int s = 0; s < n; ++s)
+                    rvb[s] += src[s];
+            }
+
+            if (reverbBuffer.getNumChannels() >= 2)
+                reverb.processStereo (reverbBuffer.getWritePointer (0),
+                                      reverbBuffer.getWritePointer (1),
+                                      n);
+            else if (reverbBuffer.getNumChannels() == 1)
+                reverb.processMono (reverbBuffer.getWritePointer (0), n);
+
+            const float angle   = revMix * juce::MathConstants<float>::halfPi;
             const float dryGain = std::cos (angle);
             const float wetGain = std::sin (angle);
             for (int c = 0; c < outCh; ++c)

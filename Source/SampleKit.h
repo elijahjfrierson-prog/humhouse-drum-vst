@@ -119,7 +119,18 @@ namespace aidrum
             int   startSample = 0;
             float velocity  = 1.0f;
             Kind  kind      = Kind::Kick;
-            int   playPos   = 0;
+            // v1.6.1-rc.18 — fractional playback position so we can
+            // micro-detune snare hits (±5¢) for R/L stick differentiation.
+            // For non-snare voices playRate stays at 1.0 and the path
+            // collapses to the original integer-step render.
+            double playPos    = 0.0;
+            double playRate   = 1.0;
+            // v1.6.1-rc.18 — per-voice one-pole HF damping for the L-hand
+            // snare path (left hand on a real kit reads slightly darker —
+            // weaker stick angle, shorter snare-wire attack envelope).
+            // 0.0 = bypass, ~0.55 = audibly damped without losing snap.
+            float lpAmount    = 0.0f;
+            std::array<float, 2> lpZ {};
             // Shared_ptr to the kit that owns the buffer — ensures the buffer
             // outlives the voice even if the user swaps kits mid-playback.
             std::shared_ptr<KitData> kitRef;
@@ -133,6 +144,14 @@ namespace aidrum
 
         double sr = 48000.0;
         std::array<Voice, kMaxVoices> voices {};
+
+        // v1.6.1-rc.18 — running count of snare-like noteOns so consecutive
+        // hits alternate between an R-hand voicing (idx 0,2,4… → playRate
+        // 1.003 ≈ +5¢, no HF damping) and an L-hand voicing (idx 1,3,5… →
+        // playRate 0.997 ≈ −5¢, lpAmount 0.55 → ~9 kHz one-pole roll-off).
+        // The counter is mutated on the audio thread but only by noteOn(),
+        // which is also audio-thread; no atomicity needed.
+        int snareHitCounter = 0;
 
         // Atomic shared_ptr — load() publishes, audio thread atomic_loads.
         std::shared_ptr<KitData> kit;

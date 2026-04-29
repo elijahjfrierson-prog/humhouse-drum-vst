@@ -1789,6 +1789,36 @@ void AIDrumAudioProcessor::applyIntensityCrashHatBalance (
         }
     }
 
+    // v1.6.1-rc.18 — RIDE re-injection on the metal/sludge band.
+    // User feedback verbatim: "WDF HAPPENED TO THE RIDES BRING ALL OF
+    // THOSE BACK". Rides went sparse because the hat-removal pass above
+    // thinned the time-keeping voice across the 0.55-0.92 band, leaving
+    // long stretches with no shimmer between the crashes. Restore the
+    // ride 8th-note pulse on bars 2 and 4 of every 4-bar block (the
+    // sludge / Sabbath ride placement) so the high-end re-engages
+    // between L↔R crash slams. Skipped above 0.85 because that band is
+    // CRASH-MODE-only by spec. RideBell punctuation on phrase tops at
+    // 0.75+ for the chest-thumping metal "ding" lead-ins.
+    if (intensity >= 0.55f && intensity <= 0.85f)
+    {
+        constexpr int kRideBell = 53;
+        const float velRide   = 0.62f + 0.18f * intensity;
+        const float velBell   = 0.78f + 0.12f * intensity;
+        for (int bar = 0; bar < totalBars; ++bar)
+        {
+            const bool rideBar = (bar % 4 == 1) || (bar % 4 == 3);
+            if (! rideBar) continue;
+            const double anchor = bar * 4.0;
+            for (int eighth = 0; eighth < 8; ++eighth)
+            {
+                const double pos = anchor + eighth * 0.5;
+                place (kRide, pos, velRide);
+            }
+            if (intensity >= 0.75f && (bar % 4 == 3))
+                place (kRideBell, anchor, velBell);
+        }
+    }
+
     // Backbeat-doubled crashes on every snare hit (beats 2/4) at very
     // high intensity. This is what sells the "more crash, less hat"
     // sludge feel — the kit reads as crash-led instead of hat-led.
