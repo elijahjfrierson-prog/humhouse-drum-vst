@@ -99,6 +99,9 @@ public:
         auto state = valueTreeState.copyState();
         auto xml = state.createXml();
 
+        // Store original name inside the XML for lossless roundtrip
+        xml->setAttribute("presetName", name);
+
         auto file = userPresetsDir.getChildFile(
             name.replaceCharacters(" /\\:", "____") + ".xml");
 
@@ -194,8 +197,10 @@ private:
             auto xml = juce::XmlDocument::parse(file);
             if (xml)
             {
-                PresetData pd (file.getFileNameWithoutExtension()
-                    .replaceCharacters("____", " /\\:"), "User");
+                // Prefer the stored name; fall back to filename
+                juce::String presetName = xml->getStringAttribute("presetName",
+                    file.getFileNameWithoutExtension());
+                PresetData pd (presetName, "User");
                 pd.ownedXml = std::move(xml);
                 allPresets.push_back(std::move(pd));
             }

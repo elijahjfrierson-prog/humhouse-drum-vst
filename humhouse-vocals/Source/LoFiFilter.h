@@ -71,7 +71,7 @@ public:
                         data[i] = std::round(data[i] * quantLevels) / quantLevels;
                     }
 
-                    ++holdCounter[chIdx];
+                    if (++holdCounter[chIdx] >= dsInt) holdCounter[chIdx] = 0;
                 }
             }
         }

@@ -254,8 +254,11 @@ private:
         if (std::abs(ratio - 1.0f) < 0.001f)
             return;
 
-        // Simple time-domain pitch shifting via resampling with
-        // overlap-add. For zero latency we use a minimal grain size.
+        // Copy input so resampling reads from unmodified source
+        if (static_cast<int>(grainBuffer.size()) < numSamples)
+            grainBuffer.resize(static_cast<size_t>(numSamples), 0.0f);
+        std::copy(data, data + numSamples, grainBuffer.begin());
+
         const int grainSize = std::min(256, numSamples);
         const int hopSize = grainSize / 2;
 
@@ -265,24 +268,25 @@ private:
         {
             int grainLen = std::min(grainSize, numSamples - pos);
 
-            // Resample grain
             for (int i = 0; i < grainLen; ++i)
             {
                 float srcPos = static_cast<float>(i) * ratio;
                 int srcIdx = pos + static_cast<int>(srcPos);
                 float frac = srcPos - std::floor(srcPos);
 
-                float s0 = (srcIdx >= 0 && srcIdx < numSamples) ? data[srcIdx] : 0.0f;
-                float s1 = (srcIdx + 1 >= 0 && srcIdx + 1 < numSamples) ? data[srcIdx + 1] : s0;
+                // Clamp to valid range instead of returning zero
+                srcIdx = juce::jlimit(0, numSamples - 1, srcIdx);
+                int srcIdx1 = juce::jlimit(0, numSamples - 1, srcIdx + 1);
 
-                // Hann window
+                float s0 = grainBuffer[static_cast<size_t>(srcIdx)];
+                float s1 = grainBuffer[static_cast<size_t>(srcIdx1)];
+
                 float window = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * static_cast<float>(i) / static_cast<float>(grainLen)));
 
                 outputBuffer[static_cast<size_t>(pos + i)] += (s0 + frac * (s1 - s0)) * window;
             }
         }
 
-        // Copy back
         for (int i = 0; i < numSamples; ++i)
             data[i] = outputBuffer[static_cast<size_t>(i)];
     }
