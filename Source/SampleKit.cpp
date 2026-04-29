@@ -580,7 +580,12 @@ namespace aidrum
                 }
             }
             v.playPos = pos;
-            if (pos >= (double) (srcLen - 1))
+            // v1.6.1-rc.18 — Devin Review fix (3rd pass): use the same
+            // `endPos` the loop uses, otherwise non-interpolating voices
+            // can be killed one sample early when a render block ends
+            // exactly at `srcLen - 1` because the block ran out of
+            // frames (not because the sample finished).
+            if (pos >= endPos)
             {
                 v.active = false;
                 v.kitRef.reset();
