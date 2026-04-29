@@ -752,15 +752,42 @@ namespace aidrum
             }
         }
 
-        // Double-kick gallop (Thrash only): at high complexity, fill in the
-        // "e" and "a" positions of every beat.
-        if (kp.doubleKick && cx > 0.55f)
+        // v1.6.1-rc.18 — double-kick gallop now triggers across the
+        // entire intensity range for metal/sludge kits ("BRING THOSE
+        // RISES BACK IN ALL INSTENSITY AND PATTERNS THEY WERE GREAT
+        // AND MASTERFUL ON THOSE METAL AND SLUDGIER GROOVES WITH THE
+        // EDICTION OF THOSE TRIPLE AND DOUBLE KICK, SYNC THOSE IN").
+        // Density now scales with complexity instead of an on/off gate:
+        //   cx 0.20–0.45 → "e"-only fills (light gallop, every other bar)
+        //   cx 0.45–0.65 → "e" + "a" on every beat (full double-kick)
+        //   cx 0.65–1.00 → adds the "&" of every other beat → TRIPLE-kick
+        //                  rise pattern that pulls into the next downbeat
+        if (kp.doubleKick && cx > 0.20f)
         {
+            const bool addA      = cx > 0.45f;            // both "e" and "a"
+            const bool tripleKick = cx > 0.65f;           // sludge rise
+            const float velA     = g.velBase * (0.78f + 0.10f * cx);
+            const float velTri   = g.velBase * (0.72f + 0.18f * cx);
+
             for (int beat = 0; beat < beatsTotal; ++beat)
             {
                 const double b = static_cast<double> (beat);
-                addNote (pattern, kKick, g.velBase * 0.85f, b + kSixteenth,     0.125);
-                addNote (pattern, kKick, g.velBase * 0.85f, b + kSixteenth * 3, 0.125);
+
+                // "e" subdivision — always present once gate is open.
+                addNote (pattern, kKick, velA, b + kSixteenth, 0.125);
+
+                if (addA)
+                    addNote (pattern, kKick, velA, b + kSixteenth * 3, 0.125);
+
+                // TRIPLE-kick rise: 32nd-note triplet leading into the
+                // next downbeat on bar 2/4 of every 4-bar block. Locked
+                // to even beats so it doesn't muddy the snare backbeat.
+                if (tripleKick && (beat % 4) == 3)
+                {
+                    addNote (pattern, kKick, velTri,         b + 0.50,  0.0625);
+                    addNote (pattern, kKick, velTri * 1.05f, b + 0.6875, 0.0625);
+                    addNote (pattern, kKick, velTri * 1.10f, b + 0.875, 0.0625);
+                }
             }
         }
 

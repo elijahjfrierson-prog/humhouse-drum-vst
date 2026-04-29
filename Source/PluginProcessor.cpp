@@ -138,6 +138,9 @@ namespace
     // produce full 8-bar loops by default. Index 7 ("8 bars") is the new
     // default — the user explicitly asked for "FULL 8 BAR PATTERNS WITH
     // EVERY COMPOSITION".
+    // v1.6.1-rc.18 — default bumped to index 8 ("16 bars") per user spec:
+    // "THE ARRANMGENT WILL NOW BE 16 BARS INSTEAD OF 8 TO FULL ADD A NEW
+    // ONE". 8 bars still selectable from the dropdown.
     const juce::StringArray kPatternLengthChoices {
         "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars",
         "4 bars", "8 bars", "16 bars"
@@ -172,9 +175,9 @@ double AIDrumAudioProcessor::patternLengthBeatsFromChoice (int choiceIndex)
         case 4: return 4.0;   // 1 bar
         case 5: return 8.0;   // 2 bars
         case 6: return 16.0;  // 4 bars (v1.6.1-rc.13)
-        case 7: return 32.0;  // 8 bars (v1.6.1-rc.13 — new default)
-        case 8: return 64.0;  // 16 bars (v1.6.1-rc.13)
-        default: return 32.0; // v1.6.1-rc.13: default to 8 bars (was 1 bar)
+        case 7: return 32.0;  // 8 bars (v1.6.1-rc.13)
+        case 8: return 64.0;  // 16 bars (v1.6.1-rc.18 — new default)
+        default: return 64.0; // v1.6.1-rc.18: default to 16 bars (was 8 bars)
     }
 }
 
@@ -409,7 +412,7 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamPatternLength, 1 }, "Pattern Length",
-        kPatternLengthChoices, 7)); // v1.6.1-rc.13 default: 8 bars (was 1 bar)
+        kPatternLengthChoices, 8)); // v1.6.1-rc.18 default: 16 bars (was 8 bars)
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamGenre, 1 }, "Genre",
@@ -761,8 +764,15 @@ namespace
         {
             // Kick
             case 35: case 36:                                return 0.55f;
-            // Snare / side-stick
-            case 37: case 38: case 39: case 40:              return 0.50f;
+            // Snare / side-stick — v1.6.1-rc.18: widened from 0.50 to 1.65
+            // so consecutive snares span ~14% of the velocity range
+            // instead of ~2.5%. This is the fix for the user feedback
+            // "those snare rolls sound like gunshots" — adjacent hits
+            // were collapsing into a single perceived velocity, so the
+            // ear couldn't separate them. Combined with the L/R stick
+            // multipliers (×0.93 / ×1.04) and the 8 ms timing jitter,
+            // every snare in a roll now lands at a distinct velocity.
+            case 37: case 38: case 39: case 40:              return 1.65f;
             // Toms
             case 41: case 43: case 45: case 47: case 48: case 50: return 0.75f;
             // Hi-hat family (breathes)
@@ -806,8 +816,16 @@ namespace
         // Per-hit jitter, in MIDI velocity units, scaled by ~5% of full
         // range. Asymmetric: -4% to +1% (matches user's 56..61 example
         // from a 60% knob).
-        const float lowPct   = -4.0f * factor;
-        const float highPct  =  1.0f * factor;
+        // v1.6.1-rc.18 — snare-like notes (37/38/39/40) get a much wider
+        // SYMMETRIC jitter band (-22% to +12% of full range) on top of
+        // the already-larger fluctuation factor so back-to-back snares
+        // in a roll land at obviously-distinct velocities, eliminating
+        // the "gunshot" fusion artefact. Other voices keep the original
+        // tight, asymmetric ±5% feel.
+        const bool isSnareLike = (noteNumber == 37 || noteNumber == 38
+                               || noteNumber == 39 || noteNumber == 40);
+        const float lowPct   = isSnareLike ? -22.0f : -4.0f * factor;
+        const float highPct  = isSnareLike ?  12.0f :  1.0f * factor;
         const float pctJit   = lowPct + (float) rng.nextDouble() * (highPct - lowPct);
         const float jitter   = pctJit * 1.27f; // 1% of 127
 
@@ -854,21 +872,15 @@ void AIDrumAudioProcessor::appendRegion (aidrum::GenerationMode requestedMode)
         }
     }
 
-    // v1.6.0 — 8-bar phrase cap is the ONLY place we auto-promote a region
-    // to a Fill. Between caps the fillsProb knob is still available.
-    const bool phraseCap = (req.phraseBar % 8) == 7;
-    if (requestedMode == aidrum::GenerationMode::Groove)
-    {
-        if (phraseCap)
-            req.mode = aidrum::GenerationMode::Fill;
-        else if (req.fillsProb > 0.0f)
-        {
-            std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
-            std::uniform_real_distribution<float> unit (0.0f, 1.0f);
-            if (unit (rng) < req.fillsProb)
-                req.mode = aidrum::GenerationMode::Fill;
-        }
-    }
+    // v1.6.1-rc.18 — REMOVED: phrase-cap auto-promotion to Fill, and
+    // the fillsProb random promotion. The COMPOSE / (+) button used to
+    // silently flip every 8th region (phraseBar % 8 == 7) into a
+    // Fill-only region, which the user reports as "FIX THE REGION
+    // COMPOSE BUTTON AND + BUTTON IT ADDS DILLS INSTEAD OF MT FULL
+    // GROOVES". Fills are now embedded *inside* every groove via
+    // spliceMandatoryFillIntoRegion(); the (+) button always appends
+    // a full groove pattern, never a fill-only region.
+    (void) requestedMode;
 
     // v1.6.0 — Groove regions appended via `+` duplicate the previous
     // region's pattern so the arrangement stays cohesive across bars

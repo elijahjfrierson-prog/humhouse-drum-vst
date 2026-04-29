@@ -379,17 +379,26 @@ namespace aidrum
             else if (reverbBuffer.getNumChannels() == 1)
                 reverb.processMono (reverbBuffer.getWritePointer (0), n);
 
-            const float revMix = master.reverbMix.load (std::memory_order_relaxed);
-            if (revMix > 0.001f)
+            // v1.6.1-rc.18 — TRUE DRY/WET blend (was a parallel send).
+            // User spec: "MAKE TRUE DRY TO WETNESS ON REVERB". The
+            // master reverb knob is now a proper dry/wet ratio:
+            //   0.0  → bone dry      (dry × 1.0,           wet × 0.0)
+            //   0.5  → balanced     (dry × 0.707,         wet × 0.707)
+            //   1.0  → 100% wet bus (dry × 0.0,           wet × 1.0)
+            // Equal-power (sin/cos) crossfade so the perceived loudness
+            // stays roughly constant as the user sweeps through.
+            const float revMix = juce::jlimit (
+                0.0f, 1.0f, master.reverbMix.load (std::memory_order_relaxed));
+            const float angle  = revMix * juce::MathConstants<float>::halfPi;
+            const float dryGain = std::cos (angle);
+            const float wetGain = std::sin (angle);
+            for (int c = 0; c < outCh; ++c)
             {
-                for (int c = 0; c < outCh; ++c)
-                {
-                    auto* o = output.getWritePointer (c);
-                    const auto* r = reverbBuffer.getReadPointer (
-                                        c < reverbBuffer.getNumChannels() ? c : 0);
-                    for (int s = 0; s < n; ++s)
-                        o[s] += r[s] * revMix;
-                }
+                auto* o = output.getWritePointer (c);
+                const auto* r = reverbBuffer.getReadPointer (
+                                    c < reverbBuffer.getNumChannels() ? c : 0);
+                for (int s = 0; s < n; ++s)
+                    o[s] = o[s] * dryGain + r[s] * wetGain;
             }
 
             // --- Master gain + soft clip -------------------------------------
