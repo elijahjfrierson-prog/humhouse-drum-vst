@@ -552,7 +552,13 @@ namespace aidrum
 
             int   i   = start;
             double pos = v.playPos;
-            for (; i < numSamples && pos < (double) (srcLen - 1); ++i, pos += rate)
+            // v1.6.1-rc.18 — Devin Review fix: tighter `srcLen - 1`
+            // bound is only required when we interpolate (the inner
+            // p0+1 fetch). For unity-rate voices (kicks, hats, toms,
+            // rides) the bound stays at `srcLen` so we never drop
+            // the final sample.
+            const double endPos = (double) (doInterp ? srcLen - 1 : srcLen);
+            for (; i < numSamples && pos < endPos; ++i, pos += rate)
             {
                 const int   p0   = (int) pos;
                 const float frac = doInterp ? (float) (pos - (double) p0) : 0.0f;

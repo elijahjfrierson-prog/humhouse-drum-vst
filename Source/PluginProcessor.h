@@ -147,8 +147,17 @@ public:
     // 32nds), kick syncopation on the "e" / "and", tom drops on phrase
     // endings. Caller is responsible for any subsequent crash/hat
     // balance + fill splicing — this only produces the base 8-bar bed.
-    aidrum::MidiPattern expandGrooveToEightBars (const aidrum::MidiPattern& src,
-                                                 std::uint64_t              seed) const;
+    // v1.6.1-rc.18 — `targetBars` parameterised so COMPOSE / RANDOMIZE
+    // honour the APVTS pattern-length choice (default is now 16 bars).
+    // Devin Review (rc.18, 2nd pass): hard-coded 8-bar target was
+    // shrinking the new 16-bar default back to 8 bars on every press
+    // of COMPOSE or RANDOMIZE. The hat / kick / snare flourish loops
+    // scale linearly with `targetBars`; the closing fill bar remains
+    // owned by spliceMandatoryFillIntoRegion (which already handles
+    // 2/4/8/16 bar phrase boundaries).
+    aidrum::MidiPattern expandGrooveToTargetBars (const aidrum::MidiPattern& src,
+                                                  std::uint64_t              seed,
+                                                  int                        targetBars = 16) const;
 
     // v1.6.1-rc.11 — INTENSITY-driven hat thinning + crash density. The
     // user wants higher INTENSITY to read as "more crash, less hat" in

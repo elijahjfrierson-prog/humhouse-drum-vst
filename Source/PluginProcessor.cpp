@@ -1087,12 +1087,19 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
     if (! hadExisting)
     {
         // v1.6.1-rc.13 — first click: tile the chosen groove out to a
-        // full 8-bar region (32 beats) so the user immediately gets a
-        // playable 8-bar loop with the closing fill on bar 8, instead
-        // of a 1- or 2-bar nub. Matches the user's spec: "GENERATE FULL
-        // 8 BAR PATTERNS WITH EVERY COMPOSITION".
-        result = expandGrooveToEightBars (lib[(size_t) libIdx].pattern,
-                                          static_cast<std::uint64_t> (counter) ^ 0xA110ULL);
+        // full region with the closing fill on the last bar, instead
+        // of a 1- or 2-bar nub.
+        // v1.6.1-rc.18 — Devin Review fix: read the APVTS pattern-
+        // length choice (default is 16 bars) so COMPOSE doesn't shrink
+        // a 16-bar default back to 8. The choice index drives both the
+        // arrangement region length and the expansion target.
+        const double targetBeats = patternLengthBeatsFromChoice (
+            (int) apvts.getRawParameterValue (kParamPatternLength)->load());
+        const int targetBars = juce::jlimit (1, 64,
+            (int) std::lround (targetBeats / 4.0));
+        result = expandGrooveToTargetBars (lib[(size_t) libIdx].pattern,
+                                           static_cast<std::uint64_t> (counter) ^ 0xA110ULL,
+                                           targetBars);
         applyIntensityCrashHatBalance (result,
                                        static_cast<std::uint64_t> (counter) ^ 0x5151ULL);
         spliceMandatoryFillIntoRegion (result, (int) counter);
@@ -1196,9 +1203,17 @@ void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
             savedRegionInt = arrangement.back().regionIntensity;
     }
 
-    aidrum::MidiPattern result = expandGrooveToEightBars (
+    // v1.6.1-rc.18 — Devin Review fix: RANDOMIZE was hard-coded to
+    // 8 bars and shrinking the new 16-bar default. Read the APVTS
+    // pattern-length choice so RANDOMIZE preserves region length.
+    const double targetBeats = patternLengthBeatsFromChoice (
+        (int) apvts.getRawParameterValue (kParamPatternLength)->load());
+    const int targetBars = juce::jlimit (1, 64,
+        (int) std::lround (targetBeats / 4.0));
+    aidrum::MidiPattern result = expandGrooveToTargetBars (
         lib[(size_t) libIdx].pattern,
-        static_cast<std::uint64_t> (libIdx) ^ 0xC0FFEEULL);
+        static_cast<std::uint64_t> (libIdx) ^ 0xC0FFEEULL,
+        targetBars);
     applyIntensityCrashHatBalance (result,
                                    static_cast<std::uint64_t> (libIdx) ^ 0xBEEFULL);
     spliceMandatoryFillIntoRegion (result, libIdx);
@@ -1292,18 +1307,23 @@ aidrum::MidiPattern AIDrumAudioProcessor::makeAutoFillForKit (int /*kitIndex*/,
 //     7 (lead-in to the closing fill on bar 8).
 // The closing bar (bar 8) is left untouched here — spliceMandatory-
 // FillIntoRegion writes the actual fill there.
-aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToEightBars (
-    const aidrum::MidiPattern& src, std::uint64_t seed) const
+aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToTargetBars (
+    const aidrum::MidiPattern& src, std::uint64_t seed, int targetBars) const
 {
     constexpr double kBeatsPerBar = 4.0;
-    constexpr double kTarget      = 8.0 * kBeatsPerBar; // 32 beats
+    // v1.6.1-rc.18 — Devin Review fix: was hard-coded to 8 bars. The
+    // APVTS default is now 16 bars, so we honour whatever the caller
+    // passes (COMPOSE / RANDOMIZE both read kParamPatternLength now).
+    const int    barsTarget = juce::jlimit (1, 64, targetBars);
+    const double kTarget    = (double) barsTarget * kBeatsPerBar;
 
     aidrum::MidiPattern out;
     out.lengthInBeats = kTarget;
 
     const double srcLen = (src.lengthInBeats > 1e-6 ? src.lengthInBeats : kBeatsPerBar);
 
-    // Tile the source groove out to 32 beats.
+    // Tile the source groove out to the target length (32 beats for an
+    // 8-bar region, 64 beats for the new 16-bar default, etc.).
     for (double tileOffset = 0.0; tileOffset < kTarget - 1e-6; tileOffset += srcLen)
     {
         for (const auto& n : src.notes)
@@ -1345,9 +1365,15 @@ aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToEightBars (
         return false;
     };
 
+    // v1.6.1-rc.18 — flourish loops now scale with `barsTarget` so
+    // a 16-bar region gets a properly populated 16-bar bed (was
+    // collapsing back to 8). The closing bar (`barsTarget - 1`,
+    // 0-indexed) is always left to spliceMandatoryFillIntoRegion.
+    const int kLastBar = barsTarget - 1;
+
     // Ghost-snare drags between backbeats on every other bar, skipping
-    // bar 8 (which the fill owns).
-    for (int bar = 1; bar < 7; bar += 2)
+    // the closing fill bar.
+    for (int bar = 1; bar < kLastBar; bar += 2)
     {
         const double base = bar * kBeatsPerBar;
         // ghost on the "e" of 2 (1.25) and the "ah" of 4 (3.75)
@@ -1355,9 +1381,10 @@ aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToEightBars (
         if (roll() < 0.70f) add (kSnare, base + 3.75, 0.30f + roll() * 0.10f);
     }
 
-    // Hat ostinato breathing — turn a couple of 16th hats on bars 2/4/6
-    // into 32nd doubles so the hat doesn't feel like a click track.
-    for (int bar : { 1, 3, 5 })
+    // Hat ostinato breathing — turn a couple of 16th hats on every
+    // odd bar (1, 3, 5, 7, 9, 11, 13, ...) into 32nd doubles so the
+    // hat doesn't feel like a click track. Skip the closing bar.
+    for (int bar = 1; bar < kLastBar; bar += 2)
     {
         const double base = bar * kBeatsPerBar;
         for (double off : { 1.0, 2.5 })
@@ -1365,25 +1392,34 @@ aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToEightBars (
                 add (kClosedHat, base + off + 0.125, 0.40f + roll() * 0.08f);
     }
 
-    // Kick syncopation on the "e" / "and" of beats across bars 2 / 4 / 6
-    // so the pocket walks instead of stomping on every quarter.
-    for (int bar : { 2, 4, 6 })
+    // Kick syncopation on the "e" / "and" across every even bar (2, 4,
+    // 6, 8, 10, 12, 14, ...) so the pocket walks instead of stomping.
+    for (int bar = 2; bar < kLastBar; bar += 2)
     {
         const double base = bar * kBeatsPerBar;
         if (roll() < 0.55f) add (kKick, base + 1.75, 0.78f);   // and-of-2
         if (roll() < 0.45f) add (kKick, base + 3.25, 0.72f);   // e-of-4
     }
 
-    // Tom drops on phrase endings — mid-phrase (end of bar 4) and
-    // pre-fill (end of bar 7). Three-tom descent into the next bar.
+    // Tom drops on phrase endings — mid-phrase (end of every 4th bar)
+    // and pre-fill (the bar just before the closing fill). Three-tom
+    // descent into the next bar.
     auto tomDrop = [&] (double startBeat)
     {
         add (kHighTom,  startBeat + 0.00, 0.78f);
         add (kLowTom,   startBeat + 0.25, 0.82f);
         add (kFloorTom, startBeat + 0.50, 0.86f);
     };
-    if (roll() < 0.65f) tomDrop (3.0 * kBeatsPerBar + 3.25); // bar 4 e-of-4
-    if (roll() < 0.95f) tomDrop (6.0 * kBeatsPerBar + 3.25); // bar 7 e-of-4 → leads into the fill
+    for (int bar = 3; bar < kLastBar; bar += 4)
+    {
+        if (roll() < 0.65f) tomDrop ((double) bar * kBeatsPerBar + 3.25);
+    }
+    if (kLastBar >= 1)
+    {
+        const int preFillBar = kLastBar - 1;
+        if (roll() < 0.95f)
+            tomDrop ((double) preFillBar * kBeatsPerBar + 3.25); // pre-fill lead-in
+    }
 
     std::sort (out.notes.begin(), out.notes.end(),
                [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
