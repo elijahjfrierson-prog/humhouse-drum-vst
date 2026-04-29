@@ -303,10 +303,19 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
         return;
     }
 
+    // v1.6.1-rc.18 — Devin Review fix (4th pass): the FILL UI was
+    // hidden in this RC (button + knob + dropdown all 0-sized) but
+    // the underlying APVTS parameter `kParamFillsProb` is still
+    // exposed for DAW automation. It is not consumed anywhere in the
+    // current generation pipeline, so any automation event was
+    // falling through to `regenerateCurrentRegion()` and destroying
+    // the user's pattern. Same class of bug as `kParamFillComplexity`
+    // above — skip regen.
     if (id == kParamStepDiv || id == kParamTimeScale
      || id == kParamIntensity
      || id == kParamFillComplexity
-     || id == kParamFillDensity)
+     || id == kParamFillDensity
+     || id == kParamFillsProb)
         return;
 
     regenerateCurrentRegion();
