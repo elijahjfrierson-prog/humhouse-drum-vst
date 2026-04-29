@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 #include <array>
+#include <functional>
 #include <vector>
 
 class HumHouseVocalsEditor : public juce::AudioProcessorEditor,
@@ -60,6 +61,22 @@ private:
     juce::Label titleLabel     { {}, "HUMHOUSE  VOCALS" };
     juce::Label subtitleLabel  { {}, "pitch \u00b7 tone \u00b7 space" };
 
+    // Preset controls (top-right corner)
+    juce::ComboBox presetBox;
+    juce::TextButton savePresetBtn   { "Save" };
+    juce::TextButton deletePresetBtn { "Del" };
+
+    // UI scale controls
+    juce::Slider     uiScaleSlider;
+    juce::Label      uiScaleLabel { {}, "UI Scale" };
+    juce::TextButton scaleDownBtn { "-" };
+    juce::TextButton scaleUpBtn   { "+" };
+
+    void refreshPresetList();
+    void applyUIScale (float newScale);
+    static constexpr int kBaseWidth  = 1100;
+    static constexpr int kBaseHeight = 780;
+
     PitchHeatMap pitchHeatMap;
 
     // Module strips
@@ -93,6 +110,8 @@ private:
 
     void setupModuleStrips();
     void attachParameters();
+    void setupPresetControls();
+    void setupScaleControls();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HumHouseVocalsEditor)
 };

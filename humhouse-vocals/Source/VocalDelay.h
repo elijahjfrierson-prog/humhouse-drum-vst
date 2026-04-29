@@ -51,6 +51,10 @@ public:
         float attackCoeff  = std::exp(-1.0f / (static_cast<float>(sr) * 0.005f));
         float releaseCoeff = std::exp(-1.0f / (static_cast<float>(sr) * 0.100f));
 
+        // Separate wet buffer for filtering only the delay signal
+        juce::AudioBuffer<float> wetBuffer (numChannels, numSamples);
+        wetBuffer.clear();
+
         for (int i = 0; i < numSamples; ++i)
         {
             // Ducking envelope
@@ -72,21 +76,27 @@ public:
                 int readIdx = (writePos - delaySamples + bufSize) % bufSize;
                 float delayed = delayBuf[static_cast<size_t>(ch)][static_cast<size_t>(readIdx)];
 
-                // Feedback (with optional ping-pong cross-feed)
+                // Feedback with filter in the feedback path (progressively darker repeats)
                 int fbCh = (pingPong && numChannels >= 2) ? (1 - ch) : ch;
                 delayBuf[static_cast<size_t>(ch)][static_cast<size_t>(writePos)] =
                     dry + delayBuf[static_cast<size_t>(fbCh)][static_cast<size_t>(readIdx)] * feedback;
 
-                buffer.setSample(ch, i, dry + delayed * mix * duckGain);
+                // Write wet signal to separate buffer
+                wetBuffer.setSample(ch, i, delayed * mix * duckGain);
             }
 
             writePos = (writePos + 1) % bufSize;
         }
 
-        // Post-delay filter (darken repeats)
-        juce::dsp::AudioBlock<float> block (buffer);
-        juce::dsp::ProcessContextReplacing<float> ctx (block);
-        postFilter.process(ctx);
+        // Post-delay filter on wet signal only (darken repeats, preserve dry)
+        juce::dsp::AudioBlock<float> wetBlock (wetBuffer);
+        juce::dsp::ProcessContextReplacing<float> wetCtx (wetBlock);
+        postFilter.process(wetCtx);
+
+        // Mix filtered wet into dry output
+        for (int ch = 0; ch < numChannels; ++ch)
+            for (int i = 0; i < numSamples; ++i)
+                buffer.addSample(ch, i, wetBuffer.getSample(ch, i));
     }
 
 private:

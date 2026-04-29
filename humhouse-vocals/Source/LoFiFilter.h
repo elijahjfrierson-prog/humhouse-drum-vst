@@ -20,8 +20,8 @@ public:
         hpFilter.prepare(spec);
         lpFilter.prepare(spec);
         updateFilters();
-        sampleHold = 0.0f;
-        holdCounter = 0;
+        sampleHold.fill(0.0f);
+        holdCounter.fill(0);
     }
 
     void setHighCut (float hz) { hpFreq = hz; updateFilters(); }
@@ -50,18 +50,19 @@ public:
             float quantLevels = std::pow(2.0f, bitDepth);
             int dsInt = static_cast<int>(downsampleFactor);
 
-            for (int ch = 0; ch < numChannels; ++ch)
+            for (int ch = 0; ch < std::min(numChannels, 2); ++ch)
             {
                 float* data = buffer.getWritePointer(ch);
+                auto chIdx = static_cast<size_t>(ch);
                 for (int i = 0; i < numSamples; ++i)
                 {
                     // Downsample (sample-and-hold)
                     if (dsInt > 1)
                     {
-                        if (holdCounter % dsInt == 0)
-                            sampleHold = data[i];
+                        if (holdCounter[chIdx] % dsInt == 0)
+                            sampleHold[chIdx] = data[i];
                         else
-                            data[i] = sampleHold;
+                            data[i] = sampleHold[chIdx];
                     }
 
                     // Bit-crush
@@ -70,7 +71,7 @@ public:
                         data[i] = std::round(data[i] * quantLevels) / quantLevels;
                     }
 
-                    ++holdCounter;
+                    ++holdCounter[chIdx];
                 }
             }
         }
@@ -84,8 +85,8 @@ private:
     float bitDepth = 32.0f;
     float downsampleFactor = 1.0f;
     float mix = 1.0f;
-    float sampleHold = 0.0f;
-    int holdCounter = 0;
+    std::array<float, 2> sampleHold {{ 0.0f, 0.0f }};
+    std::array<int, 2> holdCounter {{ 0, 0 }};
 
     using IIRFilter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                                       juce::dsp::IIR::Coefficients<float>>;

@@ -75,7 +75,8 @@ public:
                 buffer.setSample(ch, i, sample);
             }
 
-            peakLevel = std::max(peakLevel, std::abs(buffer.getSample(0, i)));
+            for (int ch = 0; ch < numChannels; ++ch)
+                peakLevel = std::max(peakLevel, std::abs(buffer.getSample(ch, i)));
         }
 
         // Auto-level: normalize output to target

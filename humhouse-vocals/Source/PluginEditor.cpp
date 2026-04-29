@@ -175,8 +175,141 @@ HumHouseVocalsEditor::HumHouseVocalsEditor (HumHouseVocalsProcessor& p)
 
     setupModuleStrips();
     attachParameters();
+    setupPresetControls();
+    setupScaleControls();
+
+    // Restore persisted UI scale
+    applyUIScale(processorRef.getUIScale());
 
     startTimerHz(30);
+}
+
+// ===========================================================================
+// Preset controls
+// ===========================================================================
+void HumHouseVocalsEditor::setupPresetControls()
+{
+    addAndMakeVisible(presetBox);
+    refreshPresetList();
+
+    presetBox.onChange = [this]
+    {
+        int idx = presetBox.getSelectedItemIndex();
+        if (idx >= 0)
+            processorRef.getPresetManager().loadPreset(idx);
+    };
+
+    savePresetBtn.setColour(juce::TextButton::buttonColourId,
+                            juce::Colour(humvocal::HumHousePalette::kAccentDeep));
+    addAndMakeVisible(savePresetBtn);
+    savePresetBtn.onClick = [this]
+    {
+        auto dlg = std::make_shared<juce::AlertWindow>("Save Preset",
+            "Enter a name for the preset:",
+            juce::MessageBoxIconType::QuestionIcon);
+        dlg->addTextEditor("name", "My Preset");
+        dlg->addButton("Save", 1);
+        dlg->addButton("Cancel", 0);
+        dlg->enterModalState(true,
+            juce::ModalCallbackFunction::create([this, dlg](int result)
+            {
+                if (result == 1)
+                {
+                    auto name = dlg->getTextEditorContents("name");
+                    if (name.isNotEmpty())
+                    {
+                        processorRef.getPresetManager().savePreset(name);
+                        refreshPresetList();
+                        // Select the newly saved preset
+                        for (int i = 0; i < presetBox.getNumItems(); ++i)
+                        {
+                            if (presetBox.getItemText(i) == name)
+                            {
+                                presetBox.setSelectedItemIndex(i, juce::dontSendNotification);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }));
+    };
+
+    deletePresetBtn.setColour(juce::TextButton::buttonColourId, juce::Colours::darkred);
+    addAndMakeVisible(deletePresetBtn);
+    deletePresetBtn.onClick = [this]
+    {
+        int idx = presetBox.getSelectedItemIndex();
+        if (idx < 0) return;
+        if (processorRef.getPresetManager().deletePreset(idx))
+        {
+            refreshPresetList();
+            if (presetBox.getNumItems() > 0)
+                presetBox.setSelectedItemIndex(0, juce::dontSendNotification);
+        }
+    };
+}
+
+void HumHouseVocalsEditor::refreshPresetList()
+{
+    presetBox.clear(juce::dontSendNotification);
+    auto names = processorRef.getPresetManager().getPresetNames();
+    for (int i = 0; i < names.size(); ++i)
+        presetBox.addItem(names[i], i + 1);
+    if (presetBox.getNumItems() > 0)
+        presetBox.setSelectedItemIndex(0, juce::dontSendNotification);
+}
+
+// ===========================================================================
+// UI Scale controls
+// ===========================================================================
+void HumHouseVocalsEditor::setupScaleControls()
+{
+    uiScaleSlider.setRange(0.5, 2.0, 0.1);
+    uiScaleSlider.setValue(processorRef.getUIScale(), juce::dontSendNotification);
+    uiScaleSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    uiScaleSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 36, 18);
+    uiScaleSlider.setColour(juce::Slider::textBoxTextColourId,
+                            juce::Colour(humvocal::HumHousePalette::kBone));
+    addAndMakeVisible(uiScaleSlider);
+
+    uiScaleSlider.onValueChange = [this]
+    {
+        float s = static_cast<float>(uiScaleSlider.getValue());
+        applyUIScale(s);
+    };
+
+    uiScaleLabel.setFont(juce::Font(10.0f).italicised());
+    uiScaleLabel.setColour(juce::Label::textColourId,
+                           juce::Colour(humvocal::HumHousePalette::kMuted));
+    uiScaleLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(uiScaleLabel);
+
+    scaleDownBtn.setColour(juce::TextButton::buttonColourId,
+                           juce::Colour(humvocal::HumHousePalette::kPanel));
+    addAndMakeVisible(scaleDownBtn);
+    scaleDownBtn.onClick = [this]
+    {
+        float s = static_cast<float>(uiScaleSlider.getValue()) - 0.1f;
+        uiScaleSlider.setValue(s);
+    };
+
+    scaleUpBtn.setColour(juce::TextButton::buttonColourId,
+                         juce::Colour(humvocal::HumHousePalette::kPanel));
+    addAndMakeVisible(scaleUpBtn);
+    scaleUpBtn.onClick = [this]
+    {
+        float s = static_cast<float>(uiScaleSlider.getValue()) + 0.1f;
+        uiScaleSlider.setValue(s);
+    };
+}
+
+void HumHouseVocalsEditor::applyUIScale (float newScale)
+{
+    newScale = juce::jlimit(0.5f, 2.0f, newScale);
+    processorRef.setUIScale(newScale);
+    int w = static_cast<int>(static_cast<float>(kBaseWidth)  * newScale);
+    int h = static_cast<int>(static_cast<float>(kBaseHeight) * newScale);
+    setSize(w, h);
 }
 
 HumHouseVocalsEditor::~HumHouseVocalsEditor()
@@ -429,17 +562,32 @@ void HumHouseVocalsEditor::resized()
 {
     auto area = getLocalBounds();
 
-    // Title bar
+    // Title bar (with preset controls on the right)
     auto titleArea = area.removeFromTop(62);
+
+    // Preset controls in the top-right
+    auto presetArea = titleArea.removeFromRight(360);
+    auto presetRow1 = presetArea.removeFromTop(30).reduced(4, 4);
+    deletePresetBtn.setBounds(presetRow1.removeFromRight(40));
+    savePresetBtn.setBounds(presetRow1.removeFromRight(50).reduced(2, 0));
+    presetBox.setBounds(presetRow1);
+
+    // Scale controls below presets
+    auto scaleCtrlArea = presetArea.removeFromTop(26).reduced(4, 2);
+    uiScaleLabel.setBounds(scaleCtrlArea.removeFromLeft(50));
+    scaleDownBtn.setBounds(scaleCtrlArea.removeFromLeft(22));
+    uiScaleSlider.setBounds(scaleCtrlArea.removeFromLeft(100));
+    scaleUpBtn.setBounds(scaleCtrlArea.removeFromLeft(22));
+
     titleLabel.setBounds(titleArea.removeFromTop(36));
     subtitleLabel.setBounds(titleArea);
 
     // Pitch heatmap
     auto heatArea = area.removeFromTop(36).reduced(20, 4);
     // Scale selectors on the left of heatmap
-    auto scaleArea = heatArea.removeFromLeft(140);
-    rootNoteBox.setBounds(scaleArea.removeFromLeft(65).reduced(2));
-    scaleTypeBox.setBounds(scaleArea.reduced(2));
+    auto musicalScaleArea = heatArea.removeFromLeft(140);
+    rootNoteBox.setBounds(musicalScaleArea.removeFromLeft(65).reduced(2));
+    scaleTypeBox.setBounds(musicalScaleArea.reduced(2));
     pitchHeatMap.setBounds(heatArea);
 
     // Master controls at bottom

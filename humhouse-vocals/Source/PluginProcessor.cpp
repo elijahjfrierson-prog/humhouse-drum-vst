@@ -125,6 +125,7 @@ HumHouseVocalsProcessor::HumHouseVocalsProcessor()
                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
+    presetManager = std::make_unique<humvocal::PresetManager>(apvts);
 }
 
 HumHouseVocalsProcessor::~HumHouseVocalsProcessor() = default;
@@ -359,6 +360,8 @@ void HumHouseVocalsProcessor::updateModuleParameters()
 void HumHouseVocalsProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
+    state.setProperty("uiScale", uiScale.load(), nullptr);
+    state.setProperty("presetIndex", presetManager ? presetManager->getCurrentPresetIndex() : -1, nullptr);
     auto xml = state.createXml();
     copyXmlToBinary (*xml, destData);
 }
@@ -367,7 +370,12 @@ void HumHouseVocalsProcessor::setStateInformation (const void* data, int sizeInB
 {
     auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml && xml->hasTagName (apvts.state.getType()))
-        apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    {
+        auto state = juce::ValueTree::fromXml (*xml);
+        if (state.hasProperty("uiScale"))
+            uiScale.store(static_cast<float>(state.getProperty("uiScale")));
+        apvts.replaceState (state);
+    }
 }
 
 // ---------------------------------------------------------------------------

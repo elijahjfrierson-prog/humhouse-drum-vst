@@ -12,9 +12,11 @@
 #include "VocalDoubler.h"
 #include "VocalEQ.h"
 #include "VocalReverb.h"
+#include "PresetManager.h"
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <memory>
 
 class HumHouseVocalsProcessor : public juce::AudioProcessor
 {
@@ -46,6 +48,11 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
+    humvocal::PresetManager& getPresetManager() { return *presetManager; }
+
+    // UI scale (persisted with state)
+    float getUIScale() const { return uiScale.load(); }
+    void  setUIScale (float s) { uiScale.store(juce::jlimit(0.5f, 2.0f, s)); }
 
     // Pitch feedback for the heatmap visualizer
     float getDetectedPitchHz() const { return detectedPitchHz.load(); }
@@ -57,6 +64,9 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     void updateModuleParameters();
+
+    std::unique_ptr<humvocal::PresetManager> presetManager;
+    std::atomic<float> uiScale { 1.0f };
 
     // DSP modules — signal chain order
     humvocal::PitchEngine       pitchEngine;

@@ -18,8 +18,10 @@ public:
         reverbLong.prepare(spec);
         duckEnvelope = 0.0f;
 
-        postEQ.prepare(spec);
-        *postEQ.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, 8000.0f, 0.707f);
+        postEQShort.prepare(spec);
+        postEQLong.prepare(spec);
+        *postEQShort.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, 8000.0f, 0.707f);
+        *postEQLong.state  = *juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, 8000.0f, 0.707f);
     }
 
     void setShortSize (float s) { shortParams.roomSize = juce::jlimit(0.0f, 1.0f, s); reverbShort.setParameters(shortParams); }
@@ -31,7 +33,13 @@ public:
     void setLongMix (float m) { longMix = m; }
 
     void setDuckAmount (float d) { duckAmount = juce::jlimit(0.0f, 1.0f, d); }
-    void setPostEQFreq (float hz) { postEQFreq = hz; if (sr > 0) *postEQ.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, hz, 0.707f); }
+    void setPostEQFreq (float hz) {
+        postEQFreq = hz;
+        if (sr > 0) {
+            *postEQShort.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, hz, 0.707f);
+            *postEQLong.state  = *juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, hz, 0.707f);
+        }
+    }
     void setActive (bool on) { active = on; }
 
     void process (juce::AudioBuffer<float>& buffer)
@@ -59,8 +67,9 @@ public:
         reverbShort.process(ctxShort);
         reverbLong.process(ctxLong);
 
-        // Post-EQ on wet signals
-        postEQ.process(ctxShort);
+        // Post-EQ on both wet signals
+        postEQShort.process(ctxShort);
+        postEQLong.process(ctxLong);
 
         // Ducking — reduce reverb when dry signal is loud
         float attackCoeff  = std::exp(-1.0f / (static_cast<float>(sr) * 0.005f));
@@ -105,7 +114,8 @@ private:
 
     using IIRFilter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                                       juce::dsp::IIR::Coefficients<float>>;
-    IIRFilter postEQ;
+    IIRFilter postEQShort;
+    IIRFilter postEQLong;
 };
 
 } // namespace humvocal
