@@ -48,11 +48,19 @@ namespace aidrum
         {
             sr = std::max (8000.0, sampleRate);
             for (auto& v : voices) v = Voice{};
+            // v1.6.1-rc.18 — Devin Review fix (5th pass): reset the
+            // R/L snare-hand alternation counter so the first snare
+            // after any host prepare cycle, transport reset, or
+            // session load is deterministically the R-hand voicing
+            // (bright, +5¢, no HF damping). Otherwise the initial
+            // pitch + brightness leaked across sessions.
+            snareHitCounter = 0;
         }
 
         void reset()
         {
             for (auto& v : voices) v = Voice{};
+            snareHitCounter = 0;
         }
 
         // True if a user-loaded (or bundled) sample pack is currently active.
