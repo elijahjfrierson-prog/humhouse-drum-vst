@@ -16,9 +16,10 @@
 // scales how many subdivisions are populated — low density = sparse
 // 8th-note ghost roll, high density = saturated 64th-spray.
 //
-// 22 archetypes, ordered light → sludge so the FILL dropdown still
-// reads as a complexity ramp. Names stay aligned with FillLibrary.
-// generated.h so the existing dropdown/cycler logic is untouched.
+// 27 archetypes (rc.21: 5 tom-focused bases appended at the heavy
+// end), ordered light → sludge so the FILL dropdown still reads as a
+// complexity ramp. Names stay aligned with FillLibrary.generated.h
+// so the existing dropdown/cycler logic is untouched.
 #pragma once
 
 #include "MidiPattern.h"
@@ -52,6 +53,12 @@ namespace aidrum
         constexpr int kCrashR    = 57;
 
         constexpr double kBar = 4.0;
+
+        // v1.6.1-rc.21 — single source of truth for the procedural-fill
+        // index space. Used by the FILL parameter step, dropdown, lerp
+        // scheduler and AIBackend request mapper so they all key off the
+        // same N. Was 22 in rc.14-rc.20; rc.21 added 5 tom-focused bases.
+        constexpr int kArchetypeCount = 27;
 
         struct FillCtx
         {
@@ -628,10 +635,135 @@ namespace aidrum
             f.add (kCrashR, kBar - 1.0 / 16.0, 1.0f, 0.5);
         }
 
+        // 22 — Tom Cascade Roll: descending high → mid → low 16th roll
+        // with snare bookends. Mid-intensity classic-rock fill (rc.21).
+        inline void tomCascadeRoll (FillCtx& f)
+        {
+            f.add (kSnare,    0.0,  0.78f);
+            f.add (kHighTom,  0.25, 0.66f);
+            f.add (kHighTom,  0.5,  0.60f);
+            f.add (kMidTom,   0.75, 0.68f);
+            f.add (kMidTom,   1.0,  0.62f);
+            f.add (kLowTom,   1.25, 0.70f);
+            f.add (kLowTom,   1.5,  0.66f);
+            f.add (kFloorTom, 1.75, 0.78f);
+            f.add (kSnare,    2.0,  0.78f);
+            f.add (kHighTom,  2.25, 0.66f);
+            f.add (kMidTom,   2.5,  0.70f);
+            f.add (kLowTom,   2.75, 0.74f);
+            f.add (kFloorTom, 3.0,  0.80f);
+            f.add (kFloorTom, 3.25, 0.78f);
+            f.add (kKick,     3.5,  0.88f);
+            f.add (kCrashL,   kBar - 1.0 / 16.0, 1.0f, 0.5);
+            f.add (kCrashR,   kBar - 1.0 / 16.0, 0.95f, 0.5);
+        }
+
+        // 23 — Floor Tom Flam: doubled low/floor-tom flams over kick
+        // downbeats and snare backbeat. Heavier sludge/metal flavour
+        // for users who pick the heavy archetypes (rc.21).
+        inline void floorTomFlam (FillCtx& f)
+        {
+            f.kickFloor (0.85f);
+            for (int beat = 0; beat < 4; ++beat)
+            {
+                const double base = (double) beat;
+                // grace flam (32nd before downbeat)
+                f.add (kLowTom,   base + 0.0625, 0.55f);
+                f.add (kFloorTom, base + 0.125,  0.85f);
+                // mid-beat snare answer except at beat 2 (open for fill)
+                if (beat != 1 && beat != 3)
+                    f.add (kSnare, base + 0.5, 0.74f);
+                // & of beat doubled tom hit
+                f.add (kFloorTom, base + 0.75, 0.78f);
+            }
+            f.add (kCrashL, kBar - 1.0 / 16.0, 1.0f, 0.5);
+            f.add (kCrashR, kBar - 1.0 / 16.0, 0.95f, 0.5);
+        }
+
+        // 24 — Tom Triplet Roll: 12-step triplet feel across all four
+        // tom voices with crescendo, ending on kick + crash (rc.21).
+        inline void tomTripletRoll (FillCtx& f)
+        {
+            const double tripletStep = kBar / 12.0; // 12 triplet 8ths in 4 beats
+            const int    pitches[12] = {
+                kHighTom, kHighTom, kMidTom,  kMidTom,
+                kMidTom,  kLowTom,  kLowTom,  kLowTom,
+                kFloorTom, kFloorTom, kFloorTom, kSnare
+            };
+            for (int i = 0; i < 12; ++i)
+            {
+                const float vel = 0.50f + 0.04f * (float) i; // crescendo
+                f.add (pitches[i], (double) i * tripletStep, vel);
+            }
+            f.add (kKick,   kBar - 1.0 / 16.0, 0.92f, 0.5);
+            f.add (kCrashL, kBar - 1.0 / 16.0, 1.0f, 0.5);
+            f.add (kCrashR, kBar - 1.0 / 16.0, 0.92f, 0.5);
+        }
+
+        // 25 — Tom-to-Snare Climb: ascending floor → low → mid → high
+        // tom run, snare doubles, ending on kick+crash (rc.21).
+        inline void tomToSnareClimb (FillCtx& f)
+        {
+            f.add (kFloorTom, 0.0,  0.55f);
+            f.add (kFloorTom, 0.25, 0.60f);
+            f.add (kLowTom,   0.5,  0.62f);
+            f.add (kLowTom,   0.75, 0.66f);
+            f.add (kMidTom,   1.0,  0.70f);
+            f.add (kMidTom,   1.25, 0.74f);
+            f.add (kHighTom,  1.5,  0.76f);
+            f.add (kHighTom,  1.75, 0.80f);
+            f.add (kSnare,    2.0,  0.74f);
+            f.add (kSnare,    2.25, 0.78f);
+            f.add (kSnare,    2.5,  0.82f);
+            f.add (kSnare,    2.75, 0.86f);
+            f.add (kKick,     3.0,  0.90f);
+            f.add (kFloorTom, 3.25, 0.85f);
+            f.add (kKick,     3.5,  0.92f);
+            f.add (kCrashL,   kBar - 1.0 / 16.0, 1.0f, 0.5);
+            f.add (kCrashR,   kBar - 1.0 / 16.0, 0.92f, 0.5);
+        }
+
+        // 26 — Double Tom Stab: punctuated tom doubles separated by
+        // hat 8ths. Pop / new-wave flavour, lighter-density variant
+        // for users who want toms without the metal weight (rc.21).
+        inline void doubleTomStab (FillCtx& f)
+        {
+            for (int b = 0; b < 4; ++b)
+            {
+                const double base = (double) b;
+                f.add (kClosedHat, base + 0.0,  0.42f);
+                int tom;
+                switch (b)
+                {
+                    case 0: tom = kLowTom;   break;
+                    case 1: tom = kMidTom;   break;
+                    case 2: tom = kHighTom;  break;
+                    default: tom = kFloorTom; break;
+                }
+                if (b < 3)
+                {
+                    f.add (tom, base + 0.25,  0.78f);
+                    f.add (tom, base + 0.375, 0.72f);
+                    f.add (kClosedHat, base + 0.5, 0.40f);
+                    f.add (tom, base + 0.75,  0.78f);
+                    f.add (tom, base + 0.875, 0.72f);
+                }
+                else
+                {
+                    f.add (kKick,    base + 0.0,  0.88f);
+                    f.add (kSnare,   base + 0.5,  0.82f);
+                    f.add (kFloorTom, base + 0.75, 0.80f);
+                }
+            }
+            f.add (kCrashL, kBar - 1.0 / 16.0, 1.0f, 0.5);
+            f.add (kCrashR, kBar - 1.0 / 16.0, 0.92f, 0.5);
+        }
+
         // ── Dispatcher ────────────────────────────────────────────────
-        // The 22 archetypes, ordered light → sludge. The FILL dropdown
-        // index maps directly into this table. Out-of-range indices
-        // wrap so seedy callers can pass any int safely.
+        // 27 archetypes (22 original + 5 tom-focused added in rc.21),
+        // ordered light → sludge with the new tom bases appended at
+        // the heavy end. The FILL dropdown index maps directly into
+        // this table. Out-of-range indices wrap.
         inline MidiPattern generate (int archetypeIdx,
                                      float density,
                                      float intensity,
@@ -644,11 +776,9 @@ namespace aidrum
             f.intensity       = std::clamp (intensity, 0.0f, 1.0f);
             f.rng.seed (seed ^ 0xA1F53D9C7BFE2401ULL);
 
-            // The 22 archetype generators — in the same order as
-            // FillLibrary.generated.h "Fill 10 Intensity 1" → "Fill 100
-            // Intensity 22" so the dropdown labels read as a complexity
-            // ramp.
-            switch (((archetypeIdx % 22) + 22) % 22)
+            // The 27 archetype generators. Tom-focused additions (22-26)
+            // were requested in rc.21: "a few more bases around toms".
+            switch (((archetypeIdx % 27) + 27) % 27)
             {
                 case  0: ghostRoll          (f); break;
                 case  1: halfTimeSnare      (f); break;
@@ -672,6 +802,11 @@ namespace aidrum
                 case 19: tomCascade         (f); break;
                 case 20: crashSpray         (f); break;
                 case 21: sludgeTomFlareHeavy(f); break;
+                case 22: tomCascadeRoll     (f); break;
+                case 23: floorTomFlam       (f); break;
+                case 24: tomTripletRoll     (f); break;
+                case 25: tomToSnareClimb    (f); break;
+                case 26: doubleTomStab      (f); break;
             }
 
             // Velocity scale by intensity: low intensity 0.65×, high
@@ -690,12 +825,13 @@ namespace aidrum
             return std::move (f.p);
         }
 
-        // Human-readable name table (22 entries, matches generate()).
+        // Human-readable name table (27 entries, matches generate()).
         // The FILL dropdown reads from here so users see a complexity-
-        // ramped list instead of "Fill 10 Intensity 1".
+        // ramped list instead of "Fill 10 Intensity 1". rc.21 added
+        // entries 22-26 at user request ("a few more bases around toms").
         inline const char* archetypeName (int idx)
         {
-            static const char* kNames[22] = {
+            static const char* kNames[27] = {
                 "Ghost Roll",            // 0
                 "Half-Time Snare",       // 1
                 "Eighth Snare Roll",     // 2
@@ -717,9 +853,14 @@ namespace aidrum
                 "Kick-Tom Buildup",      // 18
                 "32nd Tom Cascade",      // 19
                 "Crash Spray",           // 20
-                "Sludge Tom Flare Heavy" // 21
+                "Sludge Tom Flare Heavy",// 21
+                "Tom Cascade Roll",      // 22 (rc.21)
+                "Floor Tom Flam",        // 23 (rc.21)
+                "Tom Triplet Roll",      // 24 (rc.21)
+                "Tom-to-Snare Climb",    // 25 (rc.21)
+                "Double Tom Stab"        // 26 (rc.21)
             };
-            return kNames[((idx % 22) + 22) % 22];
+            return kNames[((idx % 27) + 27) % 27];
         }
     } // namespace fillgen
 } // namespace aidrum
