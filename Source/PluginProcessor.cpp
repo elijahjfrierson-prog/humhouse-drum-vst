@@ -2314,8 +2314,29 @@ void AIDrumAudioProcessor::addManualNote (int midiNote, double startBeat,
     std::lock_guard<std::mutex> lock (manualMutex);
     if (startBeat >= manualPattern.lengthInBeats) return;
 
+    const int clampedNote = juce::jlimit (0, 127, midiNote);
+
+    // v1.6.1-rc.20-fix5 — dedup mirrors setManualCellStep. Without
+    // this, a click whose raw (unsnapped) beat lands just before an
+    // existing note's start boundary misses noteAt() (raw beat <
+    // n.startBeat), but snapToStep rounds to the same beat, so
+    // onAddNote pushes a duplicate at the same (note, beat). The
+    // duplicate doubles playback velocity, and moveManualNote only
+    // touches the first match, orphaning the second.
+    for (auto& n : manualPattern.notes)
+    {
+        if (n.noteNumber == clampedNote
+            && std::abs (n.startBeat - startBeat) < 1.0e-3)
+        {
+            n.lengthBeat = juce::jmax (0.01, lengthBeat);
+            n.velocity   = juce::jlimit (0.05f, 1.0f, velocity);
+            n.oneShot    = oneShot;
+            return;
+        }
+    }
+
     aidrum::MidiNote n;
-    n.noteNumber = juce::jlimit (0, 127, midiNote);
+    n.noteNumber = clampedNote;
     n.startBeat  = startBeat;
     n.lengthBeat = juce::jmax (0.01, lengthBeat);
     n.velocity   = juce::jlimit (0.05f, 1.0f, velocity);
