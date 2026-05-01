@@ -504,9 +504,15 @@ namespace aidrum
             // hover-state cursor changes also work on the high MIDI
             // rows (otherwise the cursor never switches to drag/resize
             // for notes that the user just placed via mouseDown).
-            int        m   = juce::jlimit (0, 127, midiForY (e.position.y));
+            // v1.6.1-rc.20-fix5 — keep the `m < 0` guard alive: clamp
+            // AFTER the out-of-grid check, otherwise jlimit pins the
+            // value to 0 first and the guard below never fires, so
+            // every hover outside the grid spawns a needless provider()
+            // copy + manualMutex acquisition.
+            int        m   = midiForY (e.position.y);
             const auto beat = beatForX (e.position.x);
             if (m < 0) { setMouseCursor (juce::MouseCursor::CrosshairCursor); return; }
+            m = juce::jlimit (0, 127, m);
 
             const auto* hit = noteAt (m, beat);
             if (hit != nullptr)
