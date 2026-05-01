@@ -44,5 +44,14 @@ namespace aidrum
         // arrangement strip without touching neighbouring regions.
         // Consumed by spliceMandatoryFillIntoRegion + shapeVelocity().
         float                 regionIntensity = -1.0f;
+
+        // v1.6.1-rc.20-fix5 — true when the region was committed via
+        // commitManualPatternAsRegion (i.e. the user pressed ADD TO
+        // ARRANGEMENT while editing the FL-style piano roll). The live
+        // render + MIDI export paths skip the GM-drum whitelist (rc.3)
+        // for these regions so chromatic synth/pad/phrase notes survive
+        // after the user leaves manual mode. AI/STARTER regions leave
+        // this false and still get the whitelist scrub.
+        bool                  isManualOrigin = false;
     };
 }

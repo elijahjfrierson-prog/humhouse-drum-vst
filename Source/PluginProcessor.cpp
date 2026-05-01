@@ -2437,6 +2437,11 @@ void AIDrumAudioProcessor::commitManualPatternAsRegion()
         remapped = manualPattern;
     }
     remapped = withActiveKitApplied (std::move (remapped));
+    // v1.6.1-rc.20-fix5 — tag the committed region so render +
+    // export skip the GM-drum whitelist for it. Without this, every
+    // chromatic synth/pad/phrase note placed via the FL piano roll
+    // would be silently scrubbed once the user leaves manual mode.
+    remapped.isManualOrigin = true;
 
     std::lock_guard<std::mutex> lock (arrangementMutex);
     arrangement.push_back (std::move (remapped));
@@ -2521,8 +2526,15 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
         // through the drum whitelist silently drops every pitch
         // outside MIDI 35..59, defeating the entire piano-roll
         // feature. Bypass the filter when manual mode is active.
+        // v1.6.1-rc.20-fix5 — also bypass for arrangement regions
+        // that were committed via commitManualPatternAsRegion (ADD TO
+        // ARRANGEMENT button on the piano roll). Without this, the
+        // user's chromatic notes would survive live manual playback
+        // and instantly disappear the moment they pressed ADD TO
+        // ARRANGEMENT and switched out of manual mode.
         const bool allowAllNotes =
-            manualModeActive.load (std::memory_order_acquire);
+            manualModeActive.load (std::memory_order_acquire)
+            || region.isManualOrigin;
 
         for (const auto& note : region.notes)
         {
@@ -2598,10 +2610,10 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
     // v1.6.1-rc.20-fix3 — capture once so the inner loop knows
     // whether to bypass the GM-drum whitelist for chromatic
     // piano-roll notes. See export-path comment for context.
-    const bool allowAllNotes =
+    const bool manualLive =
         manualModeActive.load (std::memory_order_acquire);
 
-    if (allowAllNotes)
+    if (manualLive)
     {
         aidrum::MidiPattern manual;
         {
@@ -2704,6 +2716,12 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
             const double leftBeatShift  = (-2.5 / 1000.0) / secondsPerBeat;
             const double rightBeatShift = ( 1.0 / 1000.0) / secondsPerBeat;
             constexpr int kSnareGM = 38;
+
+            // v1.6.1-rc.20-fix5 — per-region bypass so committed
+            // manual regions (isManualOrigin) keep their chromatic
+            // notes after the user leaves manual mode. See export-
+            // path comment for the full reasoning.
+            const bool allowAllNotes = manualLive || region.isManualOrigin;
 
             for (const auto& note : region.notes)
             {
