@@ -250,7 +250,7 @@ namespace aidrum
                                "*.wav;*.aif;*.aiff;*.flac;*.ogg");
 
         // Track per-slot (kind, velLayer) so we can sort layers after reading.
-        struct Pending { Kind kind; int layer; juce::File file; };
+        struct Pending { Kind kind; int layer; juce::File file; juce::String stem; };
         std::vector<Pending> pending;
 
         for (auto& f : files)
@@ -259,7 +259,7 @@ namespace aidrum
             const int vel = stripVelocitySuffix (stem);
             Kind k;
             if (kindFromStem (stem, k))
-                pending.push_back ({ k, vel, f });
+                pending.push_back ({ k, vel, f, stem });
         }
 
         // v1.6.1-rc.11 — Devin Review 🔴: pickLayer() maps velocity to
@@ -291,6 +291,7 @@ namespace aidrum
             const int ch = juce::jmin (2, (int) reader->numChannels);
             Layer layer;
             layer.buffer.setSize (ch, len);
+            layer.stem = p.stem;
             if (! reader->read (&layer.buffer, 0, len, 0, true, ch >= 2)) continue;
 
             // Sample-rate convert crude-ily (linear) if needed.
@@ -391,10 +392,11 @@ namespace aidrum
         // a Pending list, sort it, then process.
         struct BundledPending
         {
-            Kind        kind;
-            int         layer;
-            int         resIndex;
-            const char* resName;
+            Kind         kind;
+            int          layer;
+            int          resIndex;
+            const char*  resName;
+            juce::String stem;
         };
         std::vector<BundledPending> pending;
         pending.reserve ((size_t) BundledKitData::namedResourceListSize);
@@ -410,7 +412,7 @@ namespace aidrum
             const int vel = stripVelocitySuffix (stem);
             Kind k;
             if (! kindFromStem (stem, k)) continue;
-            pending.push_back ({ k, vel, i, resName });
+            pending.push_back ({ k, vel, i, resName, stem });
         }
 
         std::sort (pending.begin(), pending.end(),
@@ -441,6 +443,7 @@ namespace aidrum
             const int ch = juce::jmin (2, (int) reader->numChannels);
             Layer layer;
             layer.buffer.setSize (ch, len);
+            layer.stem = p.stem;
             if (! reader->read (&layer.buffer, 0, len, 0, true, ch >= 2)) continue;
 
             if (std::abs (reader->sampleRate - sr) > 1.0)
@@ -521,6 +524,25 @@ namespace aidrum
         const auto k = kindForLane (laneIdx);
         const auto& slot = data->slots[(size_t) k];
         return slot.loaded ? (int) slot.layers.size() : 0;
+    }
+
+    // v1.6.1-rc.20 — return per-layer filename stems for the SAMPLE PICKER.
+    // Stems already had the kit prefix (e.g. "Drocetti__") and velocity
+    // suffix (e.g. "_03") stripped at load time. Empty array if no kit
+    // active. The editor groups consecutive layers with the same stem
+    // sub-prefix (the part before any trailing "_NN" digits) under a
+    // single sub-menu so the user navigates "Pads -> Dark / Bright /
+    // Atmospheric" instead of a flat list of 30 sample numbers.
+    juce::StringArray SampleKit::layerNamesForLane (int laneIdx) const
+    {
+        juce::StringArray out;
+        auto data = std::atomic_load (&kit);
+        if (data == nullptr || ! data->anyLoaded) return out;
+        const auto k = kindForLane (laneIdx);
+        const auto& slot = data->slots[(size_t) k];
+        if (! slot.loaded) return out;
+        for (const auto& L : slot.layers) out.add (L.stem);
+        return out;
     }
 
     const SampleKit::Layer* SampleKit::pickLayer (const KitSlot& slot, float vel) const

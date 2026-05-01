@@ -873,7 +873,17 @@ namespace
         if (n == 42 || n == 44 || n == 46)                         return 3;
         if (n == 51 || n == 53 || n == 59)                         return 2;
         if (n == 49)                                               return 1; // L CRASH
-        return 0; // 52 / 55 / 57 — china / right crash
+        if (n == 52 || n == 55 || n == 57)                         return 0; // china / R CRASH / splash
+        // v1.6.1-rc.20-fix4 — non-drum MIDI pitches (chromatic notes
+        // placed via the FL-style piano roll) used to fall through to
+        // "return 0", which is the R CRASH / PAD lane. With the rc.20
+        // chromatic bypass in place those notes now reach shapeVelocity,
+        // and shapeVelocity reads ghostMask & (1 << lane). If the user
+        // had ghosted R CRASH, every chromatic synth/pad/phrase note
+        // got crushed to ghost velocity. Return -1 instead so the
+        // `lane >= 0` guard in shapeVelocity skips ghost-masking on
+        // non-drum notes entirely.
+        return -1;
     }
 
     // Instrument-specific fluctuation factors. Kick/snare stay stable
@@ -2291,6 +2301,85 @@ void AIDrumAudioProcessor::clearManualPattern()
     manualPattern.notes.clear();
 }
 
+// v1.6.1-rc.20 — PianoRoll API. addManualNote / removeManualNote /
+// moveManualNote sit alongside the step-grid setManualCell helpers
+// and write into the same manualPattern_. Notes are kept identifiable
+// by (noteNumber, startBeat); the half-step-tolerance match handles
+// the quantization the PianoRoll applies before calling these.
+void AIDrumAudioProcessor::addManualNote (int midiNote, double startBeat,
+                                          double lengthBeat, float velocity,
+                                          bool oneShot)
+{
+    if (startBeat < 0.0 || lengthBeat <= 0.0) return;
+    std::lock_guard<std::mutex> lock (manualMutex);
+    if (startBeat >= manualPattern.lengthInBeats) return;
+
+    const int clampedNote = juce::jlimit (0, 127, midiNote);
+
+    // v1.6.1-rc.20-fix5 — dedup mirrors setManualCellStep. Without
+    // this, a click whose raw (unsnapped) beat lands just before an
+    // existing note's start boundary misses noteAt() (raw beat <
+    // n.startBeat), but snapToStep rounds to the same beat, so
+    // onAddNote pushes a duplicate at the same (note, beat). The
+    // duplicate doubles playback velocity, and moveManualNote only
+    // touches the first match, orphaning the second.
+    for (auto& n : manualPattern.notes)
+    {
+        if (n.noteNumber == clampedNote
+            && std::abs (n.startBeat - startBeat) < 1.0e-3)
+        {
+            n.lengthBeat = juce::jmax (0.01, lengthBeat);
+            n.velocity   = juce::jlimit (0.05f, 1.0f, velocity);
+            n.oneShot    = oneShot;
+            return;
+        }
+    }
+
+    aidrum::MidiNote n;
+    n.noteNumber = clampedNote;
+    n.startBeat  = startBeat;
+    n.lengthBeat = juce::jmax (0.01, lengthBeat);
+    n.velocity   = juce::jlimit (0.05f, 1.0f, velocity);
+    n.oneShot    = oneShot;
+    manualPattern.notes.push_back (n);
+}
+
+void AIDrumAudioProcessor::removeManualNote (int midiNote, double startBeat)
+{
+    std::lock_guard<std::mutex> lock (manualMutex);
+    auto& notes = manualPattern.notes;
+    notes.erase (
+        std::remove_if (notes.begin(), notes.end(),
+                        [&] (const aidrum::MidiNote& n)
+                        {
+                            return n.noteNumber == midiNote
+                                && std::abs (n.startBeat - startBeat) < 1.0e-3;
+                        }),
+        notes.end());
+}
+
+void AIDrumAudioProcessor::moveManualNote (int oldMidiNote, double oldStartBeat,
+                                           int newMidiNote, double newStartBeat,
+                                           double newLengthBeat)
+{
+    if (newLengthBeat <= 0.0) return;
+    std::lock_guard<std::mutex> lock (manualMutex);
+    if (newStartBeat < 0.0
+        || newStartBeat >= manualPattern.lengthInBeats) return;
+
+    for (auto& n : manualPattern.notes)
+    {
+        if (n.noteNumber == oldMidiNote
+            && std::abs (n.startBeat - oldStartBeat) < 1.0e-3)
+        {
+            n.noteNumber = juce::jlimit (0, 127, newMidiNote);
+            n.startBeat  = newStartBeat;
+            n.lengthBeat = juce::jmax (0.01, newLengthBeat);
+            return;
+        }
+    }
+}
+
 aidrum::MidiPattern AIDrumAudioProcessor::getManualPattern() const
 {
     std::lock_guard<std::mutex> lock (manualMutex);
@@ -2369,6 +2458,11 @@ void AIDrumAudioProcessor::commitManualPatternAsRegion()
         remapped = manualPattern;
     }
     remapped = withActiveKitApplied (std::move (remapped));
+    // v1.6.1-rc.20-fix5 — tag the committed region so render +
+    // export skip the GM-drum whitelist for it. Without this, every
+    // chromatic synth/pad/phrase note placed via the FL piano roll
+    // would be silently scrubbed once the user leaves manual mode.
+    remapped.isManualOrigin = true;
 
     std::lock_guard<std::mutex> lock (arrangementMutex);
     arrangement.push_back (std::move (remapped));
@@ -2444,9 +2538,28 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
         constexpr int kSnareGM      = 38;
         int snareHitIdx = 0;
 
+        // v1.6.1-rc.20-fix3 — the GM-drum whitelist (rc.3) exists to
+        // scrub tambourines/shakers/claps out of the 119 STARTER
+        // seeds. Manual-mode patterns come from the FL-style piano
+        // roll which is intentionally full-chromatic (C0..B10) so
+        // the user can program melodic synth/pad/phrase voicings on
+        // top of the Drocetti trap kit. Filtering manual notes
+        // through the drum whitelist silently drops every pitch
+        // outside MIDI 35..59, defeating the entire piano-roll
+        // feature. Bypass the filter when manual mode is active.
+        // v1.6.1-rc.20-fix5 — also bypass for arrangement regions
+        // that were committed via commitManualPatternAsRegion (ADD TO
+        // ARRANGEMENT button on the piano roll). Without this, the
+        // user's chromatic notes would survive live manual playback
+        // and instantly disappear the moment they pressed ADD TO
+        // ARRANGEMENT and switched out of manual mode.
+        const bool allowAllNotes =
+            manualModeActive.load (std::memory_order_acquire)
+            || region.isManualOrigin;
+
         for (const auto& note : region.notes)
         {
-            if (! isAllowedDrumNote (note.noteNumber))
+            if (! allowAllNotes && ! isAllowedDrumNote (note.noteNumber))
                 continue;
 
             double rawOnBeat  = note.startBeat;
@@ -2515,7 +2628,13 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
 {
     std::vector<aidrum::MidiPattern> snapshot;
 
-    if (manualModeActive.load (std::memory_order_acquire))
+    // v1.6.1-rc.20-fix3 — capture once so the inner loop knows
+    // whether to bypass the GM-drum whitelist for chromatic
+    // piano-roll notes. See export-path comment for context.
+    const bool manualLive =
+        manualModeActive.load (std::memory_order_acquire);
+
+    if (manualLive)
     {
         aidrum::MidiPattern manual;
         {
@@ -2619,9 +2738,15 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
             const double rightBeatShift = ( 1.0 / 1000.0) / secondsPerBeat;
             constexpr int kSnareGM = 38;
 
+            // v1.6.1-rc.20-fix5 — per-region bypass so committed
+            // manual regions (isManualOrigin) keep their chromatic
+            // notes after the user leaves manual mode. See export-
+            // path comment for the full reasoning.
+            const bool allowAllNotes = manualLive || region.isManualOrigin;
+
             for (const auto& note : region.notes)
             {
-                if (! isAllowedDrumNote (note.noteNumber))
+                if (! allowAllNotes && ! isAllowedDrumNote (note.noteNumber))
                     continue;
 
                 double rawOnBeat  = note.startBeat;
