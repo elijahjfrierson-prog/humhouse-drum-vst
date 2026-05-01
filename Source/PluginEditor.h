@@ -193,6 +193,13 @@ private:
     // Toggle.
     juce::TextButton          halfTimeButton { "HALF-TIME" };
 
+    // v1.6.1-rc.19 — TRAP MODE toggle. When ON, the arrangement strip
+    // relabels its lanes (L Crash → SYNTH, R Crash → PAD,
+    // Ride → PHRASE, Toms → PERC, Kick → 808) and the bundled kit
+    // auto-switches to "Drocetti" so the same MIDI plays trap-flavoured
+    // one-shots without any new voice infrastructure.
+    juce::TextButton          trapModeButton { "TRAP" };
+
     // v1.6.1-rc.4 — arrangement playback speed (HALF / NORMAL / DOUBLE).
     juce::ComboBox            timeScaleBox;
     juce::Label               timeScaleLabel { {}, "TIME" };
@@ -257,6 +264,7 @@ private:
     std::unique_ptr<ComboAttachment>  roomAttachment;
     std::unique_ptr<SliderAttachment> roomAmountAttachment;
     std::unique_ptr<ButtonAttachment> halfTimeAttachment;
+    std::unique_ptr<ButtonAttachment> trapModeAttachment;
     std::unique_ptr<ComboAttachment>  timeScaleAttachment;
     std::unique_ptr<SliderAttachment> intensityAttachment;
     std::unique_ptr<SliderAttachment> fillDensityAttachment;

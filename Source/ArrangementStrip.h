@@ -70,6 +70,31 @@ namespace aidrum
             repaint();
         }
 
+        // v1.6.1-rc.19 — TRAP MODE relabel. When on, the lane labels
+        // become R CRASH→PAD, L CRASH→SYNTH, RIDE→PHRASE,
+        // SMALL TOM/FLOOR TOM→PERC. The underlying MIDI notes do not
+        // change — the kit slots they hit (China / Crash / Ride /
+        // Mid-Tom / Low-Tom) are simply re-skinned by the Drocetti
+        // bundle which puts pad / synth / phrase / perc samples in
+        // those slots. Lane colours shift to a colder cyan/violet
+        // trap palette so the user can see at a glance the strip is
+        // no longer in rock mode.
+        void setTrapMode (bool on)
+        {
+            if (trapModeOn == on) return;
+            trapModeOn = on;
+            repaint();
+        }
+        bool getTrapMode() const { return trapModeOn; }
+
+        // v1.6.1-rc.19 — right-click on a lane label opens the per-
+        // lane SAMPLE PICKER. The editor wires this to a juce::PopupMenu
+        // that lists every layer in the active kit's slot for that lane,
+        // plus an "Auto (velocity-driven)" option which clears the
+        // override.
+        std::function<void (int laneIdx, juce::Point<int> screenPos)>
+            onLanePickerRequested;
+
         // v1.6.1-rc.10 — sub-beat click resolution. 16 = 1/16, 32 = 1/32,
         // 64 = 1/64. Drives the snap step inside handleAddNote so a
         // 1/64 step-div in the editor actually lets the user place a
@@ -182,7 +207,13 @@ namespace aidrum
             // so the new (Nu Rock) 70's Yamaha kit's distinct one-shots get
             // their own dedicated lane.
             struct Lane { const char* label; juce::uint32 col; };
-            static const Lane kLanes[8] = {
+            // v1.6.1-rc.19 — two parallel lane palettes. Default = rock /
+            // metal labels + warm rose-amber-teal hues; TRAP = pad / synth
+            // / phrase / perc / 808 labels + colder cyan-violet hues so
+            // the user sees at a glance which mode the strip is in.
+            // Lane order is identical between the two so MIDI mapping
+            // stays untouched.
+            static const Lane kLanesDefault[8] = {
                 { "R CRASH",   0xfff04f7e },  // deep rose (right-side)
                 { "L CRASH",   0xffff8fa9 },  // pink rose  (left-side)
                 { "RIDE",      0xff6ec6ff },  // sky blue
@@ -192,6 +223,17 @@ namespace aidrum
                 { "SNARE",     0xffede7f6 },  // bone white
                 { "KICK",      0xff3ee0c1 },  // teal
             };
+            static const Lane kLanesTrap[8] = {
+                { "PAD",       0xff8e7bff },  // electric violet
+                { "SYNTH",     0xff52c8ff },  // bright cyan
+                { "PHRASE",    0xff39e0c4 },  // mint
+                { "HI-HAT",    0xffffc857 },  // amber (kept)
+                { "PERC",      0xffff8fcb },  // hot pink
+                { "PERC",      0xffd16bff },  // magenta (lower perc / shaker)
+                { "SNARE",     0xffede7f6 },  // bone white (kept)
+                { "808",       0xff3ee0c1 },  // teal (kick slot now 808-flavoured)
+            };
+            const Lane* kLanes = trapModeOn ? kLanesTrap : kLanesDefault;
             const int   kNumLanes = 8;
             const float laneH     = inner.getHeight() / (float) kNumLanes;
 
@@ -707,10 +749,20 @@ namespace aidrum
             // v1.6.1-rc.7 — lane label click: arms a row for the GHOST
             // button. Hit-tested before notes/grid so labels can never
             // accidentally drop a kick on bar 1.
+            // v1.6.1-rc.19 — right-click (or ctrl+click on macOS) on a
+            // lane label opens the per-lane SAMPLE PICKER popup instead
+            // of arming GHOST.
             for (int i = 0; i < (int) cachedLabelRects.size(); ++i)
             {
                 if (cachedLabelRects[(size_t) i].contains (e.position))
                 {
+                    if (e.mods.isPopupMenu() && onLanePickerRequested != nullptr)
+                    {
+                        const auto screenPos = localPointToGlobal (
+                            e.position.toInt());
+                        onLanePickerRequested (i, screenPos);
+                        return;
+                    }
                     selectedLaneIdx = i;
                     if (onLaneSelected != nullptr) onLaneSelected (i);
                     repaint();
@@ -1212,6 +1264,7 @@ namespace aidrum
         int                                ghostMask        = 0;
         int                                selectedLaneIdx  = -1;
         int                                stepsPerBar      = 16;
+        bool                               trapModeOn       = false; // v1.6.1-rc.19
         std::array<juce::Rectangle<float>, 8> cachedLabelRects {};
 
         // v1.6.1-rc.7 — rectangular hover-drag selection. The user can

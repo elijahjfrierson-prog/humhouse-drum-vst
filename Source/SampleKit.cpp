@@ -25,11 +25,23 @@ namespace aidrum
             //   NuRockYamaha__rcrash_1.wav  /  NuRockYamaha__lcrash_1.wav
             //   NuRockYamaha__floortom_1.wav / NuRockYamaha__smalltom_1.wav
             // so the routing is deterministic regardless of host.
+            //
+            // v1.6.1-rc.19 — Drocetti Trap kit. The user's pack adds
+            // sub-categories that don't exist in the rock/metal kits
+            // (synth / pad / phrase / perc / 808 / bass / vox / fx).
+            // We slot them onto the existing voice Kinds so that when
+            // TRAP MODE is on the visual lane labels rename
+            // (L Crash → Synth, R Crash → Pad, Ride → Phrase,
+            // Toms → Perc) and the same MIDI note already plays the
+            // user's trap sample. Ordering matters: `bass_808` MUST
+            // appear before `bass`, and the `_` separator stems are
+            // listed before the bare ones.
             static const Entry table[] = {
                 { "sidestick",    SampleKit::Kind::SideStick },
                 { "snare_ghost",  SampleKit::Kind::Snare     },
                 { "snare_rim",    SampleKit::Kind::Snare     },
                 { "snare",        SampleKit::Kind::Snare     },
+                { "clap",         SampleKit::Kind::Clap      },
                 { "hat_closed",   SampleKit::Kind::ClosedHat },
                 { "hat_pedal",    SampleKit::Kind::PedalHat  },
                 { "hat_open",     SampleKit::Kind::OpenHat   },
@@ -47,9 +59,12 @@ namespace aidrum
                 { "tomhigh",      SampleKit::Kind::HighTom   },
                 { "tommid",       SampleKit::Kind::MidTom    },
                 { "tomlow",       SampleKit::Kind::LowTom    },
+                { "tom",          SampleKit::Kind::LowTom    }, // rc.19: bare "tom_NN" from Drocetti
+                { "perc",         SampleKit::Kind::MidTom    }, // rc.19: TRAP perc → toms-bus
                 { "ride_bell",    SampleKit::Kind::RideBell  },
                 { "ridebell",     SampleKit::Kind::RideBell  },
                 { "ride",         SampleKit::Kind::Ride      },
+                { "phrase",       SampleKit::Kind::Ride      }, // rc.19: TRAP phrase on ride slot
                 { "china",        SampleKit::Kind::China     },
                 { "right_crash",  SampleKit::Kind::China     },
                 { "rightcrash",   SampleKit::Kind::China     },
@@ -59,6 +74,13 @@ namespace aidrum
                 { "lcrash",       SampleKit::Kind::Crash     },
                 { "splash",       SampleKit::Kind::Crash     },
                 { "crash",        SampleKit::Kind::Crash     },
+                { "synth",        SampleKit::Kind::Crash     }, // rc.19: TRAP synth on L-crash slot
+                { "pad",          SampleKit::Kind::China     }, // rc.19: TRAP pad on R-crash/china slot
+                { "vox",          SampleKit::Kind::RideBell  }, // rc.19: TRAP vocal chops on ride-bell
+                { "fx",           SampleKit::Kind::China     }, // rc.19: TRAP fx hits on china
+                { "bass_808",     SampleKit::Kind::Kick      }, // rc.19: 808 layered on kick slot
+                { "808",          SampleKit::Kind::Kick      }, // rc.19: legacy "808_*" stems
+                { "bass",         SampleKit::Kind::SideStick }, // rc.19: trap bass on sidestick (snare bus)
                 { "kick",         SampleKit::Kind::Kick      },
                 { "bd",           SampleKit::Kind::Kick      },
                 { "sd",           SampleKit::Kind::Snare     },
@@ -335,10 +357,19 @@ namespace aidrum
         // Anything else (legacy "Thrash", old "BayGrunge", empty) falls back
         // to NuRockYamaha so older save-states still load *something*
         // instead of going silent.
+        // v1.6.1-rc.19 — third bundled kit "Drocetti" (originally Drocetti — renamed 2025-04-20;
+        // renamed per user request 2025-04-20). User-original trap pack
+        // covering the full 8-lane palette PLUS new sub-categories (synth,
+        // pad, phrase, perc, 808, bass, vox, fx). When TRAP MODE is on
+        // the editor auto-selects "Drocetti" so the lane swaps
+        // (L Crash → Synth, R Crash → Pad, Ride → Phrase, Toms → Perc)
+        // already point at the right sample bank.
         juce::String kitName = kitNameIn.isEmpty()
                                  ? juce::String ("NuRockYamaha")
                                  : kitNameIn;
-        if (kitName != "NuRockYamaha" && kitName != "HeavyStudio")
+        if (kitName != "NuRockYamaha"
+         && kitName != "HeavyStudio"
+         && kitName != "Drocetti")
             kitName = "NuRockYamaha";
         const juce::String prefix  = kitName + "__";
 
@@ -452,6 +483,46 @@ namespace aidrum
        #endif
     }
 
+    int SampleKit::laneFromMidiNote (int n) noexcept
+    {
+        // Mirror of ArrangementStrip::laneFor(int) — kept here so the
+        // audio thread doesn't have to reach into the editor.
+        if (n == 35 || n == 36)                                      return 7;
+        if (n == 37 || n == 38 || n == 39 || n == 40)                return 6;
+        if (n == 41 || n == 43 || n == 45)                           return 5;
+        if (n == 47 || n == 48 || n == 50)                           return 4;
+        if (n == 42 || n == 44 || n == 46)                           return 3;
+        if (n == 51 || n == 53 || n == 59)                           return 2;
+        if (n == 49)                                                 return 1;
+        if (n == 52 || n == 55 || n == 57)                           return 0;
+        return -1;
+    }
+
+    SampleKit::Kind SampleKit::kindForLane (int laneIdx) noexcept
+    {
+        switch (laneIdx)
+        {
+            case 0: return Kind::China;     // R CRASH / PAD
+            case 1: return Kind::Crash;     // L CRASH / SYNTH
+            case 2: return Kind::Ride;      // RIDE / PHRASE
+            case 3: return Kind::ClosedHat; // HI-HAT
+            case 4: return Kind::HighTom;   // SMALL TOM / PERC
+            case 5: return Kind::LowTom;    // FLOOR TOM / PERC
+            case 6: return Kind::Snare;     // SNARE
+            case 7: return Kind::Kick;      // KICK
+            default: return Kind::Kick;
+        }
+    }
+
+    int SampleKit::numLayersForLane (int laneIdx) const noexcept
+    {
+        auto data = std::atomic_load (&kit);
+        if (data == nullptr || ! data->anyLoaded) return 0;
+        const auto k = kindForLane (laneIdx);
+        const auto& slot = data->slots[(size_t) k];
+        return slot.loaded ? (int) slot.layers.size() : 0;
+    }
+
     const SampleKit::Layer* SampleKit::pickLayer (const KitSlot& slot, float vel) const
     {
         if (! slot.loaded || slot.layers.empty()) return nullptr;
@@ -468,7 +539,27 @@ namespace aidrum
         if (data == nullptr || ! data->anyLoaded) return;
 
         const auto k = kindFromNote (midiNote);
-        const auto* layer = pickLayer (data->slots[(size_t) k], velocity);
+        const auto& slot = data->slots[(size_t) k];
+
+        // v1.6.1-rc.19 — per-lane SAMPLE PICKER override. If the user
+        // has pinned a specific layer for this lane (1..N), play that
+        // layer directly instead of the velocity-driven pick. 0 = auto
+        // = original behaviour. Override is clamped to the slot's actual
+        // layer count so an old save file referencing layer 12 on a
+        // brand-new kit with only 3 layers safely lands on layer 2.
+        const SampleKit::Layer* layer = nullptr;
+        const int lane = laneFromMidiNote (midiNote);
+        if (lane >= 0)
+        {
+            const int ov = laneOverride[(size_t) lane].load (std::memory_order_relaxed);
+            if (ov > 0 && slot.loaded && ! slot.layers.empty())
+            {
+                const int idx = juce::jlimit (0, (int) slot.layers.size() - 1, ov - 1);
+                layer = &slot.layers[(size_t) idx];
+            }
+        }
+        if (layer == nullptr)
+            layer = pickLayer (slot, velocity);
         if (layer == nullptr)
         {
             // Snare fallback for sidestick/clap if only plain snare was provided.
@@ -479,24 +570,52 @@ namespace aidrum
 
         int idx = -1;
         for (int i = 0; i < kMaxVoices; ++i)
-            if (! voices[i].active) { idx = i; break; }
+            if (! voices[(size_t) i].active) { idx = i; break; }
         if (idx < 0)
         {
             // Steal the voice with the largest playPos (nearest to end of sample).
-            int bestI = 0, bestPos = -1;
+            int bestI = 0;
+            double bestPos = -1.0;
             for (int i = 0; i < kMaxVoices; ++i)
-                if (voices[i].playPos > bestPos) { bestPos = voices[i].playPos; bestI = i; }
+                if (voices[(size_t) i].playPos > bestPos) { bestPos = voices[(size_t) i].playPos; bestI = i; }
             idx = bestI;
         }
 
-        auto& v = voices[idx];
+        auto& v = voices[(size_t) idx];
         v.active      = true;
         v.startSample = sampleOffset;
         v.velocity    = juce::jlimit (0.05f, 1.2f, velocity);
         v.kind        = k;
-        v.playPos     = 0;
+        v.playPos     = 0.0;
+        v.playRate    = 1.0;
+        v.lpAmount    = 0.0f;
+        v.lpZ         = {};
         v.kitRef      = data;
         v.layer       = layer;
+
+        // v1.6.1-rc.18 — programmatic R-hand / L-hand split for snare
+        // hits. Even-indexed snares are right-hand voicing (slightly
+        // sharp + bright), odd-indexed are left-hand voicing (slightly
+        // flat + 9 kHz one-pole roll-off so adjacent rolls breathe like
+        // two hands trading off rather than one hand machine-gunning a
+        // single sample). The ±5¢ pitch detune + the LP shelf together
+        // are what kills the "those snare rolls sound like gunshots"
+        // artefact at the source.
+        const bool isSnareLikeNote = (midiNote == 37 || midiNote == 38
+                                   || midiNote == 39 || midiNote == 40);
+        if (isSnareLikeNote)
+        {
+            const bool rightHand = ((snareHitCounter & 1) == 0);
+            // 5 cents = 2^(5/1200) ≈ 1.00289. Add a tiny per-hit jitter
+            // so even within one stick the four / five hits in a roll
+            // don't all share the same playback rate.
+            const double cents       = rightHand ?  5.0 : -5.0;
+            const double jitterCents = (((snareHitCounter * 2654435761u) % 7) - 3.0); // -3..+3 cents
+            const double semitones   = (cents + jitterCents) / 100.0;
+            v.playRate = std::pow (2.0, semitones / 12.0);
+            v.lpAmount = rightHand ? 0.0f : 0.55f;
+            ++snareHitCounter;
+        }
     }
 
     void SampleKit::renderIntoBuses (DrumBusMixer& mixer, int numSamples)
@@ -516,19 +635,48 @@ namespace aidrum
             const int start = juce::jlimit (0, numSamples, v.startSample);
             v.startSample = 0;
 
-            const float gain = v.velocity;
-            int i = start;
-            int pos = v.playPos;
-            for (; i < numSamples && pos < srcLen; ++i, ++pos)
+            const float gain     = v.velocity;
+            const double rate    = v.playRate;
+            const float  lpA     = juce::jlimit (0.0f, 0.95f, v.lpAmount);
+            const bool   doInterp = (std::abs (rate - 1.0) > 1e-5);
+            const bool   doLP     = (lpA > 1e-4f);
+
+            int   i   = start;
+            double pos = v.playPos;
+            // v1.6.1-rc.18 — Devin Review fix: tighter `srcLen - 1`
+            // bound is only required when we interpolate (the inner
+            // p0+1 fetch). For unity-rate voices (kicks, hats, toms,
+            // rides) the bound stays at `srcLen` so we never drop
+            // the final sample.
+            const double endPos = (double) (doInterp ? srcLen - 1 : srcLen);
+            for (; i < numSamples && pos < endPos; ++i, pos += rate)
             {
+                const int   p0   = (int) pos;
+                const float frac = doInterp ? (float) (pos - (double) p0) : 0.0f;
+
                 for (int c = 0; c < busChans; ++c)
                 {
-                    const int sc = juce::jmin (c, srcChans - 1);
-                    busBuf->addSample (c, i, src.getReadPointer (sc)[pos] * gain);
+                    const int sc  = juce::jmin (c, srcChans - 1);
+                    const float a = src.getReadPointer (sc)[p0];
+                    const float b = doInterp ? src.getReadPointer (sc)[p0 + 1] : 0.0f;
+                    float       s = doInterp ? (a + (b - a) * frac) : a;
+                    if (doLP)
+                    {
+                        // Simple one-pole LP: y[n] = (1-a)*x[n] + a*y[n-1].
+                        const int ci = juce::jlimit (0, 1, c);
+                        s = (1.0f - lpA) * s + lpA * v.lpZ[(size_t) ci];
+                        v.lpZ[(size_t) ci] = s;
+                    }
+                    busBuf->addSample (c, i, s * gain);
                 }
             }
             v.playPos = pos;
-            if (pos >= srcLen)
+            // v1.6.1-rc.18 — Devin Review fix (3rd pass): use the same
+            // `endPos` the loop uses, otherwise non-interpolating voices
+            // can be killed one sample early when a render block ends
+            // exactly at `srcLen - 1` because the block ran out of
+            // frames (not because the sample finished).
+            if (pos >= endPos)
             {
                 v.active = false;
                 v.kitRef.reset();

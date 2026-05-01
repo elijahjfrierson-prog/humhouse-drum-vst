@@ -48,11 +48,19 @@ namespace aidrum
         {
             sr = std::max (8000.0, sampleRate);
             for (auto& v : voices) v = Voice{};
+            // v1.6.1-rc.18 — Devin Review fix (5th pass): reset the
+            // R/L snare-hand alternation counter so the first snare
+            // after any host prepare cycle, transport reset, or
+            // session load is deterministically the R-hand voicing
+            // (bright, +5¢, no HF damping). Otherwise the initial
+            // pitch + brightness leaked across sessions.
+            snareHitCounter = 0;
         }
 
         void reset()
         {
             for (auto& v : voices) v = Voice{};
+            snareHitCounter = 0;
         }
 
         // True if a user-loaded (or bundled) sample pack is currently active.
@@ -94,6 +102,43 @@ namespace aidrum
         // Renders every active voice into its routed bus buffer on the mixer.
         void renderIntoBuses (DrumBusMixer& mixer, int numSamples);
 
+        // v1.6.1-rc.19 — per-lane SAMPLE PICKER override. Lanes follow
+        // the ArrangementStrip top→bottom order:
+        //   0 = R CRASH / PAD     1 = L CRASH / SYNTH
+        //   2 = RIDE / PHRASE     3 = HI-HAT
+        //   4 = SMALL TOM / PERC  5 = FLOOR TOM / PERC
+        //   6 = SNARE             7 = KICK
+        // layerIdxOrZero: 0 = auto (velocity-driven layer pick, current
+        // behaviour); 1..N pins layer (N-1) for that lane regardless of
+        // velocity. Out-of-range layer indices fall back to clamp().
+        // Safe to call from the message thread; the audio thread reads
+        // via std::atomic<int>.
+        static constexpr int kNumLanes = 8;
+        void setLaneOverride (int laneIdx, int layerIdxOrZero) noexcept
+        {
+            if (laneIdx < 0 || laneIdx >= kNumLanes) return;
+            laneOverride[(size_t) laneIdx].store (
+                std::max (0, layerIdxOrZero), std::memory_order_relaxed);
+        }
+        int getLaneOverride (int laneIdx) const noexcept
+        {
+            if (laneIdx < 0 || laneIdx >= kNumLanes) return 0;
+            return laneOverride[(size_t) laneIdx].load (
+                std::memory_order_relaxed);
+        }
+
+        // Number of layers currently loaded for the slot that the given
+        // arrangement lane plays. Used by the editor to size the per-lane
+        // SAMPLE PICKER popup (so we don't show 32 placeholders when the
+        // active kit only has 5 snare layers). Returns 0 if no kit is
+        // active or the slot is unloaded.
+        int numLayersForLane (int laneIdx) const noexcept;
+
+        // Maps an arrangement lane index (0..7) to the primary Kind that
+        // its MIDI notes resolve to. Public so the editor can build
+        // per-lane sample-name labels for the picker popup.
+        static Kind kindForLane (int laneIdx) noexcept;
+
     private:
         struct Layer
         {
@@ -119,7 +164,18 @@ namespace aidrum
             int   startSample = 0;
             float velocity  = 1.0f;
             Kind  kind      = Kind::Kick;
-            int   playPos   = 0;
+            // v1.6.1-rc.18 — fractional playback position so we can
+            // micro-detune snare hits (±5¢) for R/L stick differentiation.
+            // For non-snare voices playRate stays at 1.0 and the path
+            // collapses to the original integer-step render.
+            double playPos    = 0.0;
+            double playRate   = 1.0;
+            // v1.6.1-rc.18 — per-voice one-pole HF damping for the L-hand
+            // snare path (left hand on a real kit reads slightly darker —
+            // weaker stick angle, shorter snare-wire attack envelope).
+            // 0.0 = bypass, ~0.55 = audibly damped without losing snap.
+            float lpAmount    = 0.0f;
+            std::array<float, 2> lpZ {};
             // Shared_ptr to the kit that owns the buffer — ensures the buffer
             // outlives the voice even if the user swaps kits mid-playback.
             std::shared_ptr<KitData> kitRef;
@@ -134,7 +190,32 @@ namespace aidrum
         double sr = 48000.0;
         std::array<Voice, kMaxVoices> voices {};
 
+        // v1.6.1-rc.18 — running count of snare-like noteOns so consecutive
+        // hits alternate between an R-hand voicing (idx 0,2,4… → playRate
+        // 1.003 ≈ +5¢, no HF damping) and an L-hand voicing (idx 1,3,5… →
+        // playRate 0.997 ≈ −5¢, lpAmount 0.55 → ~9 kHz one-pole roll-off).
+        // The counter is mutated on the audio thread but only by noteOn(),
+        // which is also audio-thread; no atomicity needed.
+        int snareHitCounter = 0;
+
         // Atomic shared_ptr — load() publishes, audio thread atomic_loads.
         std::shared_ptr<KitData> kit;
+
+        // v1.6.1-rc.19 — per-lane SAMPLE PICKER override array.
+        // 0 = auto (velocity-driven), 1..N = pin layer (N-1).
+        std::array<std::atomic<int>, kNumLanes> laneOverride {};
+
+        // Maps a MIDI note number to an arrangement lane index in the
+        // same top→bottom order as ArrangementStrip's kLanes table:
+        //   0 = R CRASH (China / Crash 2 / 52,55,57)
+        //   1 = L CRASH (Crash 1 / 49)
+        //   2 = RIDE    (51, 53, 59)
+        //   3 = HI-HAT  (42, 44, 46)
+        //   4 = SMALL TOM (47, 48, 50)
+        //   5 = FLOOR TOM (41, 43, 45)
+        //   6 = SNARE   (37, 38, 39, 40)
+        //   7 = KICK    (35, 36)
+        // Anything else returns -1 ("no override applies").
+        static int laneFromMidiNote (int midiNote) noexcept;
     };
 }

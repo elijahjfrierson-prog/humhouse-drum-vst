@@ -40,11 +40,36 @@ FetchContent_MakeAvailable(JUCE)
 # Plugin target
 # ---------------------------------------------------------------------------
 # Build AU on macOS (alongside VST3); other platforms just build VST3 + Standalone.
-# AAX is intentionally omitted: Avid's AAX SDK is NDA-gated and distribution
-# requires PACE iLok signing. Wire it in once you have access.
+#
+# v1.6.1-rc.18 — AAX (Pro Tools) target is now wired in, but only enabled
+# when the user supplies the AAX SDK path locally. Avid's AAX SDK is
+# NDA-gated and not redistributable, so CI does NOT build AAX (the path
+# isn't set on the runner). To compile AAX locally:
+#
+#   1. Register at the Avid Developer Program and download the AAX SDK.
+#   2. Configure CMake with -DAIDRUM_AAX_SDK_PATH=/path/to/AAX_SDK_2_x_x
+#   3. Build the AAX target:
+#        cmake --build build --target AIDrumVST_AAX -j$(nproc)
+#
+# Distributing the resulting .aaxplugin to other machines requires a PACE
+# iLok signing certificate (~$295/yr) — without that the binary is
+# locally-loadable in your own Pro Tools install but won't load on
+# anyone else's. We do NOT ship AAX in the GitHub release artifacts.
 set(AIDRUM_FORMATS VST3 Standalone)
 if(APPLE)
     list(APPEND AIDRUM_FORMATS AU)
+endif()
+
+set(AIDRUM_AAX_SDK_PATH "" CACHE PATH
+    "Path to a local AAX SDK checkout (enables the AAX build target). Leave empty on CI.")
+if(AIDRUM_AAX_SDK_PATH)
+    if(EXISTS "${AIDRUM_AAX_SDK_PATH}")
+        message(STATUS "HumHouse Drums: enabling AAX target (SDK at ${AIDRUM_AAX_SDK_PATH})")
+        juce_set_aax_sdk_path("${AIDRUM_AAX_SDK_PATH}")
+        list(APPEND AIDRUM_FORMATS AAX)
+    else()
+        message(WARNING "AIDRUM_AAX_SDK_PATH (${AIDRUM_AAX_SDK_PATH}) does not exist — AAX target disabled.")
+    endif()
 endif()
 
 juce_add_plugin(AIDrumVST
@@ -61,6 +86,7 @@ juce_add_plugin(AIDrumVST
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD   FALSE
     VST3_CATEGORIES           "Instrument" "Drum"
+    AAX_CATEGORY              "AAX_EPlugInCategory_SWGenerators"
     # v1.6.1-rc.10 — HumHouse crest as the plugin / .vst3 / .component
     # bundle icon. JUCE rewrites this to .icns on macOS and embeds it as
     # the resource icon group on Windows VST3 builds.

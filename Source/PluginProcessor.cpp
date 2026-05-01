@@ -92,6 +92,31 @@ namespace
     // Drives the base velocity + per-hit fluctuation curve applied at
     // MIDI emit time. See shapeVelocity() below.
     constexpr const char* kParamIntensity       = "intensity";
+    // v1.6.1-rc.19 — TRAP MODE toggle. When true:
+    //   * arrangement strip lane labels swap
+    //     (L Crash → SYNTH, R Crash → PAD, Ride → PHRASE,
+    //      Small/Floor Tom → PERC)
+    //   * the bundled kit auto-switches to "Drocetti" so the same MIDI
+    //     notes already trigger trap-flavoured one-shots
+    //   * the sample picker tree shows trap-style sub-categories first
+    constexpr const char* kParamTrapMode        = "trapMode";
+    // v1.6.1-rc.19 — per-lane SAMPLE PICKER override. 8 ints, one per
+    // arrangement lane (top→bottom: R CRASH/PAD, L CRASH/SYNTH,
+    // RIDE/PHRASE, HI-HAT, SMALL TOM/PERC, FLOOR TOM/PERC, SNARE, KICK).
+    // Value layout: 0 = "auto" (pick by velocity within active kit's
+    // slot, current behaviour); 1..N = pin layer N-1 in the active
+    // kit's slot for that lane. Lets the user say "I want pad #5 on R
+    // CRASH, snare #3 on the snare lane" without leaving the
+    // arrangement strip. The IDs are kept stable across rc.19+ so
+    // host-saved choices round-trip.
+    constexpr const char* kParamLaneSampleRCrash    = "laneSampRCrash";
+    constexpr const char* kParamLaneSampleLCrash    = "laneSampLCrash";
+    constexpr const char* kParamLaneSampleRide      = "laneSampRide";
+    constexpr const char* kParamLaneSampleHat       = "laneSampHat";
+    constexpr const char* kParamLaneSampleSmallTom  = "laneSampSmallTom";
+    constexpr const char* kParamLaneSampleFloorTom  = "laneSampFloorTom";
+    constexpr const char* kParamLaneSampleSnare     = "laneSampSnare";
+    constexpr const char* kParamLaneSampleKick      = "laneSampKick";
 
     // v1.6.1-rc.12 — single bundled kit again. The (Bay Grunge) Yamaha
     // Maple kit was pulled in rc.12 (user: "take out the second drum
@@ -107,13 +132,26 @@ namespace
     // voices we don't have separate Heavy recordings of. Distinct timbre vs.
     // NuRockYamaha: heavier kick attack, thicker snare body, longer cymbal
     // sustain. ComboBox order MUST match SampleKit::loadBundled() recognition.
+    // v1.6.1-rc.19 — third bundled kit: "Drocetti" (originally Drocetti — renamed 2025-04-20;
+    // user requested rename 2025-04-20). User-original trap pack: 120
+    // normalised one-shots covering kicks, snares, claps, closed/open
+    // hats, perc, toms, crashes, ride PLUS new trap-only sub-categories
+    // — synth, pad, phrase, 808, bass, vox, fx — that get routed onto
+    // existing voice slots (synth → Crash, pad → China, phrase → Ride,
+    // perc → MidTom, 808 → Kick, bass → SideStick, vox → RideBell,
+    // fx → China). Selecting "Drocetti" + flipping TRAP MODE on relabels
+    // the arrangement strip lanes (L Crash → Synth, R Crash → Pad,
+    // Ride → Phrase, Toms → Perc) so the SAME MIDI now drives a
+    // trap-flavoured palette without any new voice infrastructure.
     const juce::StringArray kBundledKitChoices {
         "NuRockYamaha",
-        "HeavyStudio"
+        "HeavyStudio",
+        "Drocetti"
     };
     const juce::StringArray kBundledKitDisplayNames {
         "(Nu Rock) 70's Yamaha",
-        "(Heavy Studio) Big Room"
+        "(Heavy Studio) Big Room",
+        "(Drocetti) Trap Kit"
     };
 
     const juce::StringArray kStepDivChoices {
@@ -138,6 +176,9 @@ namespace
     // produce full 8-bar loops by default. Index 7 ("8 bars") is the new
     // default — the user explicitly asked for "FULL 8 BAR PATTERNS WITH
     // EVERY COMPOSITION".
+    // v1.6.1-rc.18 — default bumped to index 8 ("16 bars") per user spec:
+    // "THE ARRANMGENT WILL NOW BE 16 BARS INSTEAD OF 8 TO FULL ADD A NEW
+    // ONE". 8 bars still selectable from the dropdown.
     const juce::StringArray kPatternLengthChoices {
         "1/16 note", "1/8 note", "1/4 note", "1/2 bar", "1 bar", "2 bars",
         "4 bars", "8 bars", "16 bars"
@@ -172,9 +213,9 @@ double AIDrumAudioProcessor::patternLengthBeatsFromChoice (int choiceIndex)
         case 4: return 4.0;   // 1 bar
         case 5: return 8.0;   // 2 bars
         case 6: return 16.0;  // 4 bars (v1.6.1-rc.13)
-        case 7: return 32.0;  // 8 bars (v1.6.1-rc.13 — new default)
-        case 8: return 64.0;  // 16 bars (v1.6.1-rc.13)
-        default: return 32.0; // v1.6.1-rc.13: default to 8 bars (was 1 bar)
+        case 7: return 32.0;  // 8 bars (v1.6.1-rc.13)
+        case 8: return 64.0;  // 16 bars (v1.6.1-rc.18 — new default)
+        default: return 64.0; // v1.6.1-rc.18: default to 16 bars (was 8 bars)
     }
 }
 
@@ -270,6 +311,53 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
         return;
     }
 
+    // v1.6.1-rc.19 — TRAP MODE flip: swap the bundled kit to "Drocetti"
+    // when toggled ON, and back to the user-selected base kit when
+    // toggled OFF. We don't need to regenerate the arrangement; the
+    // ArrangementStrip + lane labels react to the same APVTS bool in
+    // the editor, and the underlying MIDI notes are unchanged.
+    if (id == kParamTrapMode)
+    {
+        const bool trap = apvts.getRawParameterValue (kParamTrapMode)->load() > 0.5f;
+        if (trap)
+        {
+            loadBundledKit ("Drocetti");
+        }
+        else
+        {
+            const int kitIdx = (int) apvts.getRawParameterValue (kParamBundledKit)->load();
+            if (kitIdx >= 0 && kitIdx < kBundledKitChoices.size())
+                loadBundledKit (kBundledKitChoices[kitIdx]);
+        }
+        return;
+    }
+
+    // v1.6.1-rc.19 — per-lane SAMPLE PICKER override. Wire each of the
+    // 8 lane params straight into SampleKit's atomic override array so
+    // the next noteOn picks the pinned layer. No regen needed.
+    {
+        struct LaneIdMap { const char* id; int lane; };
+        static const LaneIdMap kLaneMap[] = {
+            { kParamLaneSampleRCrash,    0 },
+            { kParamLaneSampleLCrash,    1 },
+            { kParamLaneSampleRide,      2 },
+            { kParamLaneSampleHat,       3 },
+            { kParamLaneSampleSmallTom,  4 },
+            { kParamLaneSampleFloorTom,  5 },
+            { kParamLaneSampleSnare,     6 },
+            { kParamLaneSampleKick,      7 },
+        };
+        for (const auto& m : kLaneMap)
+        {
+            if (id == m.id)
+            {
+                const int v = (int) apvts.getRawParameterValue (m.id)->load();
+                sampleKit.setLaneOverride (m.lane, v);
+                return;
+            }
+        }
+    }
+
     // Every other generator-facing parameter triggers a live regen of
     // the last region so the user hears their tweak immediately. Pattern
     // length / genre / drumKit / room changes also re-emit — all cheap
@@ -300,10 +388,19 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
         return;
     }
 
+    // v1.6.1-rc.18 — Devin Review fix (4th pass): the FILL UI was
+    // hidden in this RC (button + knob + dropdown all 0-sized) but
+    // the underlying APVTS parameter `kParamFillsProb` is still
+    // exposed for DAW automation. It is not consumed anywhere in the
+    // current generation pipeline, so any automation event was
+    // falling through to `regenerateCurrentRegion()` and destroying
+    // the user's pattern. Same class of bug as `kParamFillComplexity`
+    // above — skip regen.
     if (id == kParamStepDiv || id == kParamTimeScale
      || id == kParamIntensity
      || id == kParamFillComplexity
-     || id == kParamFillDensity)
+     || id == kParamFillDensity
+     || id == kParamFillsProb)
         return;
 
     regenerateCurrentRegion();
@@ -409,7 +506,7 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamPatternLength, 1 }, "Pattern Length",
-        kPatternLengthChoices, 7)); // v1.6.1-rc.13 default: 8 bars (was 1 bar)
+        kPatternLengthChoices, 8)); // v1.6.1-rc.18 default: 16 bars (was 8 bars)
 
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamGenre, 1 }, "Genre",
@@ -503,6 +600,36 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamTimeScale, 1 }, "Time Scale",
         kTimeScaleChoices, 1)); // default: NORMAL
+
+    // v1.6.1-rc.19 — TRAP MODE bool. See declaration comment above.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { kParamTrapMode, 1 }, "Trap Mode", false));
+
+    // v1.6.1-rc.19 — 8 per-lane SAMPLE PICKER overrides. 0 = auto
+    // (current behaviour: velocity-driven layer pick). 1..N pins
+    // a specific layer index in that lane's slot. Range capped at 32
+    // — generous enough for the bundled kits' largest slot
+    // (Drocetti hat_closed = 10) plus headroom for future kits.
+    {
+        const juce::StringArray laneIds {
+            kParamLaneSampleRCrash,   kParamLaneSampleLCrash,
+            kParamLaneSampleRide,     kParamLaneSampleHat,
+            kParamLaneSampleSmallTom, kParamLaneSampleFloorTom,
+            kParamLaneSampleSnare,    kParamLaneSampleKick
+        };
+        const juce::StringArray laneNames {
+            "Lane R-Crash Sample", "Lane L-Crash Sample",
+            "Lane Ride Sample",    "Lane Hat Sample",
+            "Lane Small-Tom Sample", "Lane Floor-Tom Sample",
+            "Lane Snare Sample",   "Lane Kick Sample"
+        };
+        for (int i = 0; i < laneIds.size(); ++i)
+        {
+            params.push_back (std::make_unique<juce::AudioParameterInt> (
+                juce::ParameterID { laneIds[i].toRawUTF8(), 1 },
+                laneNames[i], 0, 32, 0));
+        }
+    }
 
     return { params.begin(), params.end() };
 }
@@ -761,8 +888,15 @@ namespace
         {
             // Kick
             case 35: case 36:                                return 0.55f;
-            // Snare / side-stick
-            case 37: case 38: case 39: case 40:              return 0.50f;
+            // Snare / side-stick — v1.6.1-rc.18: widened from 0.50 to 1.65
+            // so consecutive snares span ~14% of the velocity range
+            // instead of ~2.5%. This is the fix for the user feedback
+            // "those snare rolls sound like gunshots" — adjacent hits
+            // were collapsing into a single perceived velocity, so the
+            // ear couldn't separate them. Combined with the L/R stick
+            // multipliers (×0.93 / ×1.04) and the 8 ms timing jitter,
+            // every snare in a roll now lands at a distinct velocity.
+            case 37: case 38: case 39: case 40:              return 1.65f;
             // Toms
             case 41: case 43: case 45: case 47: case 48: case 50: return 0.75f;
             // Hi-hat family (breathes)
@@ -806,8 +940,16 @@ namespace
         // Per-hit jitter, in MIDI velocity units, scaled by ~5% of full
         // range. Asymmetric: -4% to +1% (matches user's 56..61 example
         // from a 60% knob).
-        const float lowPct   = -4.0f * factor;
-        const float highPct  =  1.0f * factor;
+        // v1.6.1-rc.18 — snare-like notes (37/38/39/40) get a much wider
+        // SYMMETRIC jitter band (-22% to +12% of full range) on top of
+        // the already-larger fluctuation factor so back-to-back snares
+        // in a roll land at obviously-distinct velocities, eliminating
+        // the "gunshot" fusion artefact. Other voices keep the original
+        // tight, asymmetric ±5% feel.
+        const bool isSnareLike = (noteNumber == 37 || noteNumber == 38
+                               || noteNumber == 39 || noteNumber == 40);
+        const float lowPct   = isSnareLike ? -22.0f : -4.0f * factor;
+        const float highPct  = isSnareLike ?  12.0f :  1.0f * factor;
         const float pctJit   = lowPct + (float) rng.nextDouble() * (highPct - lowPct);
         const float jitter   = pctJit * 1.27f; // 1% of 127
 
@@ -854,21 +996,15 @@ void AIDrumAudioProcessor::appendRegion (aidrum::GenerationMode requestedMode)
         }
     }
 
-    // v1.6.0 — 8-bar phrase cap is the ONLY place we auto-promote a region
-    // to a Fill. Between caps the fillsProb knob is still available.
-    const bool phraseCap = (req.phraseBar % 8) == 7;
-    if (requestedMode == aidrum::GenerationMode::Groove)
-    {
-        if (phraseCap)
-            req.mode = aidrum::GenerationMode::Fill;
-        else if (req.fillsProb > 0.0f)
-        {
-            std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
-            std::uniform_real_distribution<float> unit (0.0f, 1.0f);
-            if (unit (rng) < req.fillsProb)
-                req.mode = aidrum::GenerationMode::Fill;
-        }
-    }
+    // v1.6.1-rc.18 — REMOVED: phrase-cap auto-promotion to Fill, and
+    // the fillsProb random promotion. The COMPOSE / (+) button used to
+    // silently flip every 8th region (phraseBar % 8 == 7) into a
+    // Fill-only region, which the user reports as "FIX THE REGION
+    // COMPOSE BUTTON AND + BUTTON IT ADDS DILLS INSTEAD OF MT FULL
+    // GROOVES". Fills are now embedded *inside* every groove via
+    // spliceMandatoryFillIntoRegion(); the (+) button always appends
+    // a full groove pattern, never a fill-only region.
+    (void) requestedMode;
 
     // v1.6.0 — Groove regions appended via `+` duplicate the previous
     // region's pattern so the arrangement stays cohesive across bars
@@ -1075,12 +1211,19 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
     if (! hadExisting)
     {
         // v1.6.1-rc.13 — first click: tile the chosen groove out to a
-        // full 8-bar region (32 beats) so the user immediately gets a
-        // playable 8-bar loop with the closing fill on bar 8, instead
-        // of a 1- or 2-bar nub. Matches the user's spec: "GENERATE FULL
-        // 8 BAR PATTERNS WITH EVERY COMPOSITION".
-        result = expandGrooveToEightBars (lib[(size_t) libIdx].pattern,
-                                          static_cast<std::uint64_t> (counter) ^ 0xA110ULL);
+        // full region with the closing fill on the last bar, instead
+        // of a 1- or 2-bar nub.
+        // v1.6.1-rc.18 — Devin Review fix: read the APVTS pattern-
+        // length choice (default is 16 bars) so COMPOSE doesn't shrink
+        // a 16-bar default back to 8. The choice index drives both the
+        // arrangement region length and the expansion target.
+        const double targetBeats = patternLengthBeatsFromChoice (
+            (int) apvts.getRawParameterValue (kParamPatternLength)->load());
+        const int targetBars = juce::jlimit (1, 64,
+            (int) std::lround (targetBeats / 4.0));
+        result = expandGrooveToTargetBars (lib[(size_t) libIdx].pattern,
+                                           static_cast<std::uint64_t> (counter) ^ 0xA110ULL,
+                                           targetBars);
         applyIntensityCrashHatBalance (result,
                                        static_cast<std::uint64_t> (counter) ^ 0x5151ULL);
         spliceMandatoryFillIntoRegion (result, (int) counter);
@@ -1184,9 +1327,17 @@ void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
             savedRegionInt = arrangement.back().regionIntensity;
     }
 
-    aidrum::MidiPattern result = expandGrooveToEightBars (
+    // v1.6.1-rc.18 — Devin Review fix: RANDOMIZE was hard-coded to
+    // 8 bars and shrinking the new 16-bar default. Read the APVTS
+    // pattern-length choice so RANDOMIZE preserves region length.
+    const double targetBeats = patternLengthBeatsFromChoice (
+        (int) apvts.getRawParameterValue (kParamPatternLength)->load());
+    const int targetBars = juce::jlimit (1, 64,
+        (int) std::lround (targetBeats / 4.0));
+    aidrum::MidiPattern result = expandGrooveToTargetBars (
         lib[(size_t) libIdx].pattern,
-        static_cast<std::uint64_t> (libIdx) ^ 0xC0FFEEULL);
+        static_cast<std::uint64_t> (libIdx) ^ 0xC0FFEEULL,
+        targetBars);
     applyIntensityCrashHatBalance (result,
                                    static_cast<std::uint64_t> (libIdx) ^ 0xBEEFULL);
     spliceMandatoryFillIntoRegion (result, libIdx);
@@ -1280,18 +1431,23 @@ aidrum::MidiPattern AIDrumAudioProcessor::makeAutoFillForKit (int /*kitIndex*/,
 //     7 (lead-in to the closing fill on bar 8).
 // The closing bar (bar 8) is left untouched here — spliceMandatory-
 // FillIntoRegion writes the actual fill there.
-aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToEightBars (
-    const aidrum::MidiPattern& src, std::uint64_t seed) const
+aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToTargetBars (
+    const aidrum::MidiPattern& src, std::uint64_t seed, int targetBars) const
 {
     constexpr double kBeatsPerBar = 4.0;
-    constexpr double kTarget      = 8.0 * kBeatsPerBar; // 32 beats
+    // v1.6.1-rc.18 — Devin Review fix: was hard-coded to 8 bars. The
+    // APVTS default is now 16 bars, so we honour whatever the caller
+    // passes (COMPOSE / RANDOMIZE both read kParamPatternLength now).
+    const int    barsTarget = juce::jlimit (1, 64, targetBars);
+    const double kTarget    = (double) barsTarget * kBeatsPerBar;
 
     aidrum::MidiPattern out;
     out.lengthInBeats = kTarget;
 
     const double srcLen = (src.lengthInBeats > 1e-6 ? src.lengthInBeats : kBeatsPerBar);
 
-    // Tile the source groove out to 32 beats.
+    // Tile the source groove out to the target length (32 beats for an
+    // 8-bar region, 64 beats for the new 16-bar default, etc.).
     for (double tileOffset = 0.0; tileOffset < kTarget - 1e-6; tileOffset += srcLen)
     {
         for (const auto& n : src.notes)
@@ -1333,9 +1489,15 @@ aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToEightBars (
         return false;
     };
 
+    // v1.6.1-rc.18 — flourish loops now scale with `barsTarget` so
+    // a 16-bar region gets a properly populated 16-bar bed (was
+    // collapsing back to 8). The closing bar (`barsTarget - 1`,
+    // 0-indexed) is always left to spliceMandatoryFillIntoRegion.
+    const int kLastBar = barsTarget - 1;
+
     // Ghost-snare drags between backbeats on every other bar, skipping
-    // bar 8 (which the fill owns).
-    for (int bar = 1; bar < 7; bar += 2)
+    // the closing fill bar.
+    for (int bar = 1; bar < kLastBar; bar += 2)
     {
         const double base = bar * kBeatsPerBar;
         // ghost on the "e" of 2 (1.25) and the "ah" of 4 (3.75)
@@ -1343,9 +1505,10 @@ aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToEightBars (
         if (roll() < 0.70f) add (kSnare, base + 3.75, 0.30f + roll() * 0.10f);
     }
 
-    // Hat ostinato breathing — turn a couple of 16th hats on bars 2/4/6
-    // into 32nd doubles so the hat doesn't feel like a click track.
-    for (int bar : { 1, 3, 5 })
+    // Hat ostinato breathing — turn a couple of 16th hats on every
+    // odd bar (1, 3, 5, 7, 9, 11, 13, ...) into 32nd doubles so the
+    // hat doesn't feel like a click track. Skip the closing bar.
+    for (int bar = 1; bar < kLastBar; bar += 2)
     {
         const double base = bar * kBeatsPerBar;
         for (double off : { 1.0, 2.5 })
@@ -1353,25 +1516,34 @@ aidrum::MidiPattern AIDrumAudioProcessor::expandGrooveToEightBars (
                 add (kClosedHat, base + off + 0.125, 0.40f + roll() * 0.08f);
     }
 
-    // Kick syncopation on the "e" / "and" of beats across bars 2 / 4 / 6
-    // so the pocket walks instead of stomping on every quarter.
-    for (int bar : { 2, 4, 6 })
+    // Kick syncopation on the "e" / "and" across every even bar (2, 4,
+    // 6, 8, 10, 12, 14, ...) so the pocket walks instead of stomping.
+    for (int bar = 2; bar < kLastBar; bar += 2)
     {
         const double base = bar * kBeatsPerBar;
         if (roll() < 0.55f) add (kKick, base + 1.75, 0.78f);   // and-of-2
         if (roll() < 0.45f) add (kKick, base + 3.25, 0.72f);   // e-of-4
     }
 
-    // Tom drops on phrase endings — mid-phrase (end of bar 4) and
-    // pre-fill (end of bar 7). Three-tom descent into the next bar.
+    // Tom drops on phrase endings — mid-phrase (end of every 4th bar)
+    // and pre-fill (the bar just before the closing fill). Three-tom
+    // descent into the next bar.
     auto tomDrop = [&] (double startBeat)
     {
         add (kHighTom,  startBeat + 0.00, 0.78f);
         add (kLowTom,   startBeat + 0.25, 0.82f);
         add (kFloorTom, startBeat + 0.50, 0.86f);
     };
-    if (roll() < 0.65f) tomDrop (3.0 * kBeatsPerBar + 3.25); // bar 4 e-of-4
-    if (roll() < 0.95f) tomDrop (6.0 * kBeatsPerBar + 3.25); // bar 7 e-of-4 → leads into the fill
+    for (int bar = 3; bar < kLastBar; bar += 4)
+    {
+        if (roll() < 0.65f) tomDrop ((double) bar * kBeatsPerBar + 3.25);
+    }
+    if (kLastBar >= 1)
+    {
+        const int preFillBar = kLastBar - 1;
+        if (roll() < 0.95f)
+            tomDrop ((double) preFillBar * kBeatsPerBar + 3.25); // pre-fill lead-in
+    }
 
     std::sort (out.notes.begin(), out.notes.end(),
                [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
@@ -1774,6 +1946,36 @@ void AIDrumAudioProcessor::applyIntensityCrashHatBalance (
             const double accent = bar * 4.0 + 3.25;
             const int    note   = ((bar / 2) & 1) ? kCrashR : kCrashL;
             place (note, accent, 0.65f + 0.20f * intensity);
+        }
+    }
+
+    // v1.6.1-rc.18 — RIDE re-injection on the metal/sludge band.
+    // User feedback verbatim: "WDF HAPPENED TO THE RIDES BRING ALL OF
+    // THOSE BACK". Rides went sparse because the hat-removal pass above
+    // thinned the time-keeping voice across the 0.55-0.92 band, leaving
+    // long stretches with no shimmer between the crashes. Restore the
+    // ride 8th-note pulse on bars 2 and 4 of every 4-bar block (the
+    // sludge / Sabbath ride placement) so the high-end re-engages
+    // between L↔R crash slams. Skipped above 0.85 because that band is
+    // CRASH-MODE-only by spec. RideBell punctuation on phrase tops at
+    // 0.75+ for the chest-thumping metal "ding" lead-ins.
+    if (intensity >= 0.55f && intensity <= 0.85f)
+    {
+        constexpr int kRideBell = 53;
+        const float velRide   = 0.62f + 0.18f * intensity;
+        const float velBell   = 0.78f + 0.12f * intensity;
+        for (int bar = 0; bar < totalBars; ++bar)
+        {
+            const bool rideBar = (bar % 4 == 1) || (bar % 4 == 3);
+            if (! rideBar) continue;
+            const double anchor = bar * 4.0;
+            for (int eighth = 0; eighth < 8; ++eighth)
+            {
+                const double pos = anchor + eighth * 0.5;
+                place (kRide, pos, velRide);
+            }
+            if (intensity >= 0.75f && (bar % 4 == 3))
+                place (kRideBell, anchor, velBell);
         }
     }
 

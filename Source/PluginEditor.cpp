@@ -662,6 +662,96 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         arrangementStrip.setSelectedLane (laneIdx);
     };
 
+    // v1.6.1-rc.19 — right-click on a lane label opens the per-lane
+    // SAMPLE PICKER popup. Lists every layer in the active kit's slot
+    // for that lane, plus an "Auto (velocity-driven)" option which
+    // clears the override. Selecting a layer pins it for that lane on
+    // every subsequent noteOn, regardless of velocity. Lets the user
+    // dial in "I want pad #5 on R CRASH, snare #3 on the snare lane"
+    // without leaving the arrangement strip.
+    arrangementStrip.onLanePickerRequested =
+        [this] (int laneIdx, juce::Point<int> screenPos)
+    {
+        static const std::array<const char*, 8> kLaneParamIds {
+            "laneSampRCrash", "laneSampLCrash",
+            "laneSampRide",   "laneSampHat",
+            "laneSampSmallTom","laneSampFloorTom",
+            "laneSampSnare",  "laneSampKick"
+        };
+        static const std::array<const char*, 8> kLaneNamesDefault {
+            "R CRASH", "L CRASH", "RIDE", "HI-HAT",
+            "SMALL TOM", "FLOOR TOM", "SNARE", "KICK"
+        };
+        static const std::array<const char*, 8> kLaneNamesTrap {
+            "PAD", "SYNTH", "PHRASE", "HI-HAT",
+            "PERC (HI)", "PERC (LO)", "SNARE", "808"
+        };
+
+        if (laneIdx < 0 || laneIdx >= 8) return;
+
+        auto& kit = processorRef.getSampleKit();
+        const int numLayers = kit.numLayersForLane (laneIdx);
+        const bool trap = arrangementStrip.getTrapMode();
+        const auto* paramId = kLaneParamIds[(size_t) laneIdx];
+        const juce::String laneName =
+            (trap ? kLaneNamesTrap : kLaneNamesDefault)[(size_t) laneIdx];
+
+        auto* p = processorRef.getAPVTS().getParameter (paramId);
+        const int currentOverride = p != nullptr
+            ? (int) ((juce::AudioParameterInt*) p)->get()
+            : 0;
+
+        juce::PopupMenu menu;
+        menu.addSectionHeader (laneName + " — sample picker");
+        menu.addItem (1, "Auto (velocity-driven)",
+                      true, currentOverride == 0);
+        menu.addSeparator();
+
+        if (numLayers <= 0)
+        {
+            menu.addItem (-1,
+                "(no kit loaded — pick a Bundled Kit first)",
+                false, false);
+        }
+        else
+        {
+            for (int i = 0; i < numLayers; ++i)
+            {
+                const int itemId = 2 + i; // 1 reserved for "Auto"
+                const bool ticked = (currentOverride == i + 1);
+                menu.addItem (itemId,
+                    juce::String ("Sample ") + juce::String (i + 1),
+                    true, ticked);
+            }
+        }
+
+        juce::PopupMenu::Options opts;
+        opts = opts.withTargetScreenArea (
+            juce::Rectangle<int> (screenPos.x, screenPos.y, 1, 1));
+
+        menu.showMenuAsync (opts,
+            [this, laneIdx, paramId] (int chosen)
+            {
+                if (chosen <= 0) return;
+                auto* pp = processorRef.getAPVTS().getParameter (paramId);
+                if (pp == nullptr) return;
+
+                const int newOverride = (chosen == 1) ? 0 : (chosen - 1);
+                const float norm = pp->convertTo0to1 ((float) newOverride);
+                pp->beginChangeGesture();
+                pp->setValueNotifyingHost (norm);
+                pp->endChangeGesture();
+                // SampleKit::setLaneOverride is also called via the
+                // processor's parameterChanged listener — duplicate
+                // call here is cheap (atomic store) and guarantees
+                // the change is visible even if the listener is
+                // momentarily blocked.
+                processorRef.getSampleKit()
+                            .setLaneOverride (laneIdx, newOverride);
+                arrangementStrip.repaint();
+            });
+    };
+
     // v1.6.1-rc.14 — per-region INTENSITY drag-strip. Click + drag the
     // gold bar at the bottom of any region tile to set that region's
     // velocity vibe (soft pre-chorus → slammed chorus → somber bridge);
@@ -906,8 +996,14 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // hits the right WAV-prefix bucket.
     // v1.6.1-rc.17 — second bundled kit added (HeavyStudio). Display order
     // MUST match kBundledKitChoices in PluginProcessor.cpp.
+    // v1.6.1-rc.19 — third bundled kit added (Drocetti — user trap pack).
+    // Order still MUST match kBundledKitChoices in PluginProcessor.cpp,
+    // otherwise the ComboBoxAttachment to "bundledKit" silently misroutes
+    // index 2 (Drocetti) to whatever sits in the editor's slot 2.
     drumKitBox.addItemList (
-        juce::StringArray { "(Nu Rock) 70's Yamaha", "(Heavy Studio) Big Room" }, 1);
+        juce::StringArray { "(Nu Rock) 70's Yamaha",
+                            "(Heavy Studio) Big Room",
+                            "(Drocetti) Trap Kit" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
     // NB: drumKitBox.onChange is wired up further down, AFTER the APVTS
     // ComboBoxAttachment is created — the attachment ctor steals
@@ -947,6 +1043,25 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     halfTimeButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
     halfTimeButton.setTooltip ("HALF-TIME — backbeat moves to 3 instead of 2 & 4, giving every groove a slower, heavier feel.");
     addAndMakeVisible (halfTimeButton);
+
+    // v1.6.1-rc.19 — TRAP MODE toggle. Same visual style as HALF-TIME
+    // so it slots naturally next to it on the right combos column.
+    trapModeButton.setClickingTogglesState (true);
+    trapModeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
+    trapModeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
+    trapModeButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kMuted));
+    trapModeButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
+    trapModeButton.setTooltip (
+        "TRAP MODE — relabels arrangement lanes (L Crash → SYNTH, "
+        "R Crash → PAD, Ride → PHRASE, Toms → PERC, Kick → 808) and "
+        "auto-selects the Drocetti trap kit so the same MIDI plays "
+        "trap-flavoured one-shots. Right-click any lane label for a "
+        "per-lane sample picker.");
+    addAndMakeVisible (trapModeButton);
+    trapModeButton.onClick = [this]
+    {
+        arrangementStrip.setTrapMode (trapModeButton.getToggleState());
+    };
 
     // v1.6.1-rc.4 — TIME SCALE: HALF / NORMAL / DOUBLE playback speed.
     // v1.6.1-rc.7 — combo hidden; three dedicated buttons drive the
@@ -1009,7 +1124,8 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         fillSelectorTitle.setColour (juce::Label::textColourId,
                                      juce::Colour (Palette::kMuted));
         fillSelectorTitle.setJustificationType (juce::Justification::centred);
-        addAndMakeVisible (fillSelectorTitle);
+        // v1.6.1-rc.18 — fill selector hidden (fills are embedded in grooves).
+        fillSelectorTitle.setVisible (false);
 
         const auto fillNames = processorRef.getAllFillNames();
         fillSelectorBox.clear (juce::dontSendNotification);
@@ -1035,7 +1151,8 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
             if (sel >= 0)
                 processorRef.setFillIndex (sel);
         };
-        addAndMakeVisible (fillSelectorBox);
+        // v1.6.1-rc.18 — fill selector hidden (fills are embedded in grooves).
+        fillSelectorBox.setVisible (false);
     }
 
     // v1.6.1-rc.7 — GHOST button. Workflow: user clicks a row label on
@@ -1423,6 +1540,13 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     roomAttachment          = std::make_unique<ComboAttachment>  (apvts, "room",          roomBox);
     roomAmountAttachment    = std::make_unique<SliderAttachment> (apvts, "roomAmount",    roomAmountSlider);
     halfTimeAttachment      = std::make_unique<ButtonAttachment> (apvts, "halfTime",      halfTimeButton);
+    trapModeAttachment      = std::make_unique<ButtonAttachment> (apvts, "trapMode",      trapModeButton);
+    // v1.6.1-rc.19 — sync the strip with the persisted trapMode value.
+    // ButtonAttachment fires our onClick the first time the host pushes
+    // a saved value; we still call setTrapMode here so the very first
+    // paint after a reload shows the correct labels even before the
+    // user toggles the button.
+    arrangementStrip.setTrapMode (trapModeButton.getToggleState());
     timeScaleAttachment     = std::make_unique<ComboAttachment>   (apvts, "timeScale",     timeScaleBox);
     intensityAttachment     = std::make_unique<SliderAttachment>  (apvts, "intensity",     intensitySlider);
     fillDensityAttachment   = std::make_unique<SliderAttachment>  (apvts, "fillDensity",   fillDensitySlider);
@@ -1598,15 +1722,22 @@ void AIDrumAudioProcessorEditor::resized()
     placeCombo (stepDivBox);
     placeCombo (timeScaleBox);
     halfTimeButton.setBounds (rightCombos.removeFromTop (28).reduced (0, 2));
+    // v1.6.1-rc.19 — TRAP MODE toggle sits directly under HALF-TIME.
+    trapModeButton.setBounds (rightCombos.removeFromTop (28).reduced (0, 2));
 
     area.removeFromTop (8);
 
     // ----- Knobs row: Variation | Humanize | Swing | Fills | Intensity | Fill Density | Room Amount -----
-    // v1.6.1-rc.14 — divisor MUST match the number of placeKnob calls
-    // below. rc.14 added FILL DENSITY → 7 knobs total. Devin Review
-    // caught a /6 leftover that gave roomAmountSlider an empty cell.
+    // v1.6.1-rc.18 — FILLS knob hidden. The user removed the FILL
+    // button entirely ("ALL PATTERNS SHALL HAVE FILL BUILT IN NO MORE
+    // FILL BUTTON, IT IS RUINING THE ARRANGMENT"). Fills are now
+    // exclusively embedded inside grooves via
+    // spliceMandatoryFillIntoRegion(); the standalone fillsProb knob
+    // and fill selector dropdown have no role to play. We keep the
+    // APVTS parameter alive so saved sessions still load — we just
+    // never expose it in the UI.
     auto knobsRow = area.removeFromTop (108).reduced (4, 6);
-    const int knobW = knobsRow.getWidth() / 7;
+    const int knobW = knobsRow.getWidth() / 6;
     auto placeKnob = [&knobsRow, knobW] (juce::Slider& s)
     {
         auto cell = knobsRow.removeFromLeft (knobW).reduced (6, 10);
@@ -1615,13 +1746,12 @@ void AIDrumAudioProcessorEditor::resized()
     placeKnob (variationSlider);
     placeKnob (humanizeSlider);
     placeKnob (swingSlider);
-    placeKnob (fillsSlider);
-    // v1.6.1-rc.7 — fillComplexitySlider is hidden; the slot is now
-    // owned by INTENSITY (0..127 displayed). The fill selector lives
-    // in its own bar above the arrangement grid (see below).
     placeKnob (intensitySlider);
     placeKnob (fillDensitySlider);
     placeKnob (roomAmountSlider);
+
+    fillsSlider.setBounds (0, 0, 0, 0);
+    fillsLabel .setBounds (0, 0, 0, 0);
 
     // Hidden controls still need bounds so attachment writes don't
     // touch unrealised peers.
@@ -1704,19 +1834,13 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (4);
 
-    // v1.6.1-rc.7 — bar above the arrangement grid: FILL ‹ name › on
-    // the left, HALF / NORMAL / DOUBLE in the centre, GHOST on the
-    // right. Replaces the old fill-complexity knob behaviour and
-    // surfaces the time-scale toggle the user asked for.
+    // v1.6.1-rc.18 — FILL selector dropdown hidden. The bar above the
+    // arrangement grid now hosts only GHOST on the right; everything
+    // related to standalone fills was removed at the user's request.
     auto rc7Bar = area.removeFromTop (32);
     {
-        // v1.6.1-rc.13 — Fill selector cluster: title + ComboBox dropdown.
-        auto fillCluster = rc7Bar.removeFromLeft (260).reduced (2);
-        fillSelectorTitle.setBounds (fillCluster.removeFromLeft (40));
-        fillCluster.removeFromLeft (4);
-        fillSelectorBox.setBounds (fillCluster);
-
-        rc7Bar.removeFromLeft (12);
+        fillSelectorTitle.setBounds (0, 0, 0, 0);
+        fillSelectorBox  .setBounds (0, 0, 0, 0);
 
         // v1.6.1-rc.9 — HALF / NORMAL / DOUBLE transport buttons removed
         // (the playback-rate switch was triggering the wrong-kit bug).
@@ -1724,8 +1848,6 @@ void AIDrumAudioProcessorEditor::resized()
         normalButton.setBounds ({});
         doubleButton.setBounds ({});
 
-
-        // Ghost button on the far right of the bar.
         ghostButton.setBounds (rc7Bar.removeFromRight (96).reduced (2));
     }
 
