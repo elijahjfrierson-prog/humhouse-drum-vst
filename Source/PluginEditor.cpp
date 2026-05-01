@@ -1230,8 +1230,12 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         fillSelectorTitle.setColour (juce::Label::textColourId,
                                      juce::Colour (Palette::kMuted));
         fillSelectorTitle.setJustificationType (juce::Justification::centred);
-        // v1.6.1-rc.18 — fill selector hidden (fills are embedded in grooves).
-        fillSelectorTitle.setVisible (false);
+        // v1.6.1-rc.21 — FILL dropdown restored at user request. Fills still
+        // auto-splice on bar 8 of every 8-bar block (driven by COMPLEXITY ×
+        // INTENSITY); the dropdown picks the SEED archetype that the auto-
+        // fill scheduler lerps from. Selecting a tom-centric fill biases
+        // every auto-fill toward floor-tom flares / tom-roll cascades.
+        fillSelectorTitle.setVisible (true);
 
         const auto fillNames = processorRef.getAllFillNames();
         fillSelectorBox.clear (juce::dontSendNotification);
@@ -1257,8 +1261,8 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
             if (sel >= 0)
                 processorRef.setFillIndex (sel);
         };
-        // v1.6.1-rc.18 — fill selector hidden (fills are embedded in grooves).
-        fillSelectorBox.setVisible (false);
+        // v1.6.1-rc.21 — FILL dropdown restored at user request.
+        fillSelectorBox.setVisible (true);
     }
 
     // v1.6.1-rc.7 — GHOST button. Workflow: user clicks a row label on
@@ -2010,13 +2014,14 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (4);
 
-    // v1.6.1-rc.18 — FILL selector dropdown hidden. The bar above the
-    // arrangement grid now hosts only GHOST on the right; everything
-    // related to standalone fills was removed at the user's request.
+    // v1.6.1-rc.21 — FILL dropdown restored on the bar above the
+    // arrangement grid. Title sits left-of-dropdown, dropdown takes ~220 px,
+    // GHOST stays anchored on the right. Auto-fills still splice on bar 8
+    // of every 8-bar block; the dropdown picks the seed archetype.
     auto rc7Bar = area.removeFromTop (32);
     {
-        fillSelectorTitle.setBounds (0, 0, 0, 0);
-        fillSelectorBox  .setBounds (0, 0, 0, 0);
+        fillSelectorTitle.setBounds (rc7Bar.removeFromLeft (54).reduced (2));
+        fillSelectorBox  .setBounds (rc7Bar.removeFromLeft (220).reduced (2));
 
         // v1.6.1-rc.9 — HALF / NORMAL / DOUBLE transport buttons removed
         // (the playback-rate switch was triggering the wrong-kit bug).

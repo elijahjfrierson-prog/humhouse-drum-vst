@@ -307,6 +307,109 @@ namespace aidrum
                 p.notes.push_back ({ 43, 0.455f, 1.875, 0.25 });
                 v.push_back ({ "HR FIll 100 Intensity 2", 100, std::move (p) });
             }
+            // v1.6.1-rc.21 — tom-focused fill bases added at user request
+            // ("a few more bases around toms"). Hand-authored MIDI patterns
+            // using canonical tom mapping: low=43, mid=45, high=48; snare=38,
+            // kick=36, crash=49. All 4-beat patterns @ 16th-grid, isFill=true.
+            {
+                // 1. "Tom Cascade Roll" — descending high→mid→low 16th roll
+                // with snare bookends. Mid-intensity classic rock fill.
+                MidiPattern p;
+                p.lengthInBeats = 4.00;
+                p.isFill = true;
+                p.notes.push_back ({ 38, 0.75f, 0.0,  0.25 });
+                p.notes.push_back ({ 48, 0.62f, 0.25, 0.25 });
+                p.notes.push_back ({ 48, 0.55f, 0.5,  0.25 });
+                p.notes.push_back ({ 45, 0.65f, 0.75, 0.25 });
+                p.notes.push_back ({ 45, 0.58f, 1.0,  0.25 });
+                p.notes.push_back ({ 43, 0.68f, 1.25, 0.25 });
+                p.notes.push_back ({ 43, 0.60f, 1.5,  0.25 });
+                p.notes.push_back ({ 38, 0.78f, 1.75, 0.25 });
+                p.notes.push_back ({ 36, 0.85f, 2.0,  0.5  });
+                p.notes.push_back ({ 49, 0.90f, 2.0,  0.5  });
+                v.push_back ({ "Tom Cascade Roll", 55, std::move (p) });
+            }
+            {
+                // 2. "Floor Tom Flam" — doubled low-tom flams with kick on
+                // downbeats and snare backbeat. Heavier sludge/metal flavour.
+                MidiPattern p;
+                p.lengthInBeats = 4.00;
+                p.isFill = true;
+                p.notes.push_back ({ 36, 0.85f, 0.0,   0.25 });
+                p.notes.push_back ({ 43, 0.55f, 0.125, 0.25 }); // grace note
+                p.notes.push_back ({ 43, 0.80f, 0.25,  0.25 });
+                p.notes.push_back ({ 38, 0.75f, 0.5,   0.25 });
+                p.notes.push_back ({ 43, 0.55f, 0.875, 0.25 }); // grace note
+                p.notes.push_back ({ 43, 0.82f, 1.0,   0.25 });
+                p.notes.push_back ({ 36, 0.78f, 1.25,  0.25 });
+                p.notes.push_back ({ 43, 0.60f, 1.375, 0.25 }); // grace note
+                p.notes.push_back ({ 43, 0.85f, 1.5,   0.25 });
+                p.notes.push_back ({ 38, 0.78f, 1.75,  0.25 });
+                p.notes.push_back ({ 43, 0.65f, 1.875, 0.25 }); // grace note
+                p.notes.push_back ({ 43, 0.88f, 2.0,   0.5  });
+                p.notes.push_back ({ 49, 0.88f, 2.0,   0.5  });
+                v.push_back ({ "Floor Tom Flam", 75, std::move (p) });
+            }
+            {
+                // 3. "Tom Triplet Roll" — 16th-note triplet feel across all
+                // three toms. 12 evenly-spaced tom hits with crescendo.
+                MidiPattern p;
+                p.lengthInBeats = 4.00;
+                p.isFill = true;
+                const double tripletStep = 4.0 / 12.0; // 12 triplet 8ths in 4 beats
+                const int    pitches[12] = { 48, 48, 45, 45, 45, 43, 43, 43, 43, 43, 43, 38 };
+                for (int i = 0; i < 12; ++i)
+                {
+                    const float vel = 0.45f + (float) i * 0.04f; // crescendo 0.45 → 0.89
+                    p.notes.push_back ({ pitches[i], vel, (double) i * tripletStep, 0.25 });
+                }
+                p.notes.push_back ({ 36, 0.92f, 3.5, 0.5 });
+                p.notes.push_back ({ 49, 0.92f, 3.5, 0.5 });
+                v.push_back ({ "Tom Triplet Roll", 65, std::move (p) });
+            }
+            {
+                // 4. "Tom-to-Snare Climb" — ascending low→mid→high tom run
+                // with snare doubles, ending on a kick+crash stab. Light to
+                // mid intensity build.
+                MidiPattern p;
+                p.lengthInBeats = 4.00;
+                p.isFill = true;
+                p.notes.push_back ({ 43, 0.55f, 0.0,  0.25 });
+                p.notes.push_back ({ 43, 0.60f, 0.25, 0.25 });
+                p.notes.push_back ({ 45, 0.62f, 0.5,  0.25 });
+                p.notes.push_back ({ 45, 0.66f, 0.75, 0.25 });
+                p.notes.push_back ({ 48, 0.70f, 1.0,  0.25 });
+                p.notes.push_back ({ 48, 0.74f, 1.25, 0.25 });
+                p.notes.push_back ({ 38, 0.72f, 1.5,  0.25 });
+                p.notes.push_back ({ 38, 0.78f, 1.75, 0.25 });
+                p.notes.push_back ({ 38, 0.80f, 2.0,  0.25 });
+                p.notes.push_back ({ 38, 0.83f, 2.25, 0.25 });
+                p.notes.push_back ({ 36, 0.88f, 2.5,  0.5  });
+                p.notes.push_back ({ 49, 0.88f, 2.5,  0.5  });
+                v.push_back ({ "Tom-to-Snare Climb", 45, std::move (p) });
+            }
+            {
+                // 5. "Double Tom Stab" — punctuated low-tom doubles separated
+                // by hat 8ths. Pop / new-wave flavour, mid-low intensity.
+                MidiPattern p;
+                p.lengthInBeats = 4.00;
+                p.isFill = true;
+                p.notes.push_back ({ 42, 0.38f, 0.0,  0.25 });
+                p.notes.push_back ({ 43, 0.78f, 0.25, 0.25 });
+                p.notes.push_back ({ 43, 0.72f, 0.375, 0.25 });
+                p.notes.push_back ({ 42, 0.36f, 0.5,  0.25 });
+                p.notes.push_back ({ 45, 0.78f, 0.75, 0.25 });
+                p.notes.push_back ({ 45, 0.72f, 0.875, 0.25 });
+                p.notes.push_back ({ 42, 0.36f, 1.0,  0.25 });
+                p.notes.push_back ({ 48, 0.80f, 1.25, 0.25 });
+                p.notes.push_back ({ 48, 0.74f, 1.375, 0.25 });
+                p.notes.push_back ({ 38, 0.82f, 1.5,  0.25 });
+                p.notes.push_back ({ 43, 0.78f, 1.75, 0.25 });
+                p.notes.push_back ({ 43, 0.70f, 1.875, 0.25 });
+                p.notes.push_back ({ 36, 0.88f, 2.0,  0.5  });
+                p.notes.push_back ({ 49, 0.88f, 2.0,  0.5  });
+                v.push_back ({ "Double Tom Stab", 35, std::move (p) });
+            }
             return v;
         }();
         return kFills;
