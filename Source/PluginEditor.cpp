@@ -726,21 +726,20 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
 
             auto subcat = [] (juce::String stem) -> juce::String
             {
-                // v1.6.1-rc.20-fix — velocity suffix (`_NN`) is already
-                // stripped at load time by SampleKit::stripVelocitySuffix,
-                // so the original second-pass digit strip here was wrong:
-                // it ate meaningful trailing numbers (e.g. "bass_808" →
-                // "bass") and conflated distinct categories. Use the
-                // segment BEFORE the last underscore as the group key
-                // instead, so "pad_dark" + "pad_bright" land under one
-                // "pad" sub-menu, while "kick" / "bass_808" stay intact
-                // as their own keys.
+                // v1.6.1-rc.20-fix2 — velocity suffix is already stripped
+                // at load time by SampleKit::stripVelocitySuffix, so we
+                // can use the stem itself (post leading kit-prefix strip)
+                // as the group key. Splitting at the last underscore was
+                // wrong: it conflated "bass_808" with "bass" and produced
+                // misleading sub-menu titles. Distinct stems naturally
+                // form distinct groups; identical stems (the velocity
+                // ladder of one sample, e.g. all 12 "kick" layers) all
+                // land in one bucket and we label the items with their
+                // velocity index below.
                 const int dd = stem.indexOf ("__");
                 if (dd >= 0) stem = stem.substring (dd + 2);
                 if (stem.isEmpty()) return "(default)";
-                const int us = stem.lastIndexOfChar ('_');
-                if (us <= 0) return stem;
-                return stem.substring (0, us);
+                return stem;
             };
 
             std::map<juce::String, std::vector<int>> groups;
@@ -760,14 +759,28 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
                 const auto& idxs = groups[key];
                 juce::PopupMenu sub;
                 juce::PopupMenu* target = flat ? &menu : &sub;
+                // v1.6.1-rc.20-fix2 — number layers within a group so the
+                // user can tell apart 12 velocity layers that all share
+                // the same post-strip stem (e.g. kick layers 1..12 in
+                // the Drocetti kit). Numbering is per-group / 1-based
+                // so the first kick is "kick (1)", the second is
+                // "kick (2)", etc. — reads as "soft → hard".
+                int withinGroup = 0;
                 for (int i : idxs)
                 {
+                    ++withinGroup;
                     const int itemId = 2 + i; // 1 reserved for "Auto"
                     const bool ticked = (currentOverride == i + 1);
                     const auto stem = (i < names.size() ? names[i] : juce::String());
-                    const auto label = stem.isNotEmpty()
-                        ? stem
-                        : juce::String ("Sample ") + juce::String (i + 1);
+                    juce::String label;
+                    if (idxs.size() == 1)
+                        label = stem.isNotEmpty()
+                                ? stem
+                                : juce::String ("Sample ") + juce::String (i + 1);
+                    else if (stem.isNotEmpty())
+                        label = stem + " (" + juce::String (withinGroup) + ")";
+                    else
+                        label = juce::String ("Sample ") + juce::String (i + 1);
                     target->addItem (itemId, label, true, ticked);
                 }
                 if (! flat)
