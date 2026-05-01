@@ -873,7 +873,17 @@ namespace
         if (n == 42 || n == 44 || n == 46)                         return 3;
         if (n == 51 || n == 53 || n == 59)                         return 2;
         if (n == 49)                                               return 1; // L CRASH
-        return 0; // 52 / 55 / 57 — china / right crash
+        if (n == 52 || n == 55 || n == 57)                         return 0; // china / R CRASH / splash
+        // v1.6.1-rc.20-fix4 — non-drum MIDI pitches (chromatic notes
+        // placed via the FL-style piano roll) used to fall through to
+        // "return 0", which is the R CRASH / PAD lane. With the rc.20
+        // chromatic bypass in place those notes now reach shapeVelocity,
+        // and shapeVelocity reads ghostMask & (1 << lane). If the user
+        // had ghosted R CRASH, every chromatic synth/pad/phrase note
+        // got crushed to ghost velocity. Return -1 instead so the
+        // `lane >= 0` guard in shapeVelocity skips ghost-masking on
+        // non-drum notes entirely.
+        return -1;
     }
 
     // Instrument-specific fluctuation factors. Kick/snare stay stable
