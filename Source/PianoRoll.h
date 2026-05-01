@@ -473,7 +473,11 @@ namespace aidrum
         void mouseMove (const juce::MouseEvent& e) override
         {
             if (! provider) return;
-            const auto pattern = provider();
+            // v1.6.1-rc.20-fix3 — noteAt() already calls provider() once,
+            // which acquires manualMutex and deep-copies the whole
+            // MidiPattern. The redundant provider() call here doubled
+            // mutex contention + heap allocation on every mouseMove,
+            // for a copy that was never read.
             const int  m   = midiForY (e.position.y);
             const auto beat = beatForX (e.position.x);
             if (m < 0) { setMouseCursor (juce::MouseCursor::CrosshairCursor); return; }
