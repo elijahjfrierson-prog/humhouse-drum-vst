@@ -2502,9 +2502,21 @@ bool AIDrumAudioProcessor::writeArrangementAsMidiFile (const juce::File& dest) c
         constexpr int kSnareGM      = 38;
         int snareHitIdx = 0;
 
+        // v1.6.1-rc.20-fix3 — the GM-drum whitelist (rc.3) exists to
+        // scrub tambourines/shakers/claps out of the 119 STARTER
+        // seeds. Manual-mode patterns come from the FL-style piano
+        // roll which is intentionally full-chromatic (C0..B10) so
+        // the user can program melodic synth/pad/phrase voicings on
+        // top of the Drocetti trap kit. Filtering manual notes
+        // through the drum whitelist silently drops every pitch
+        // outside MIDI 35..59, defeating the entire piano-roll
+        // feature. Bypass the filter when manual mode is active.
+        const bool allowAllNotes =
+            manualModeActive.load (std::memory_order_acquire);
+
         for (const auto& note : region.notes)
         {
-            if (! isAllowedDrumNote (note.noteNumber))
+            if (! allowAllNotes && ! isAllowedDrumNote (note.noteNumber))
                 continue;
 
             double rawOnBeat  = note.startBeat;
@@ -2573,7 +2585,13 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
 {
     std::vector<aidrum::MidiPattern> snapshot;
 
-    if (manualModeActive.load (std::memory_order_acquire))
+    // v1.6.1-rc.20-fix3 — capture once so the inner loop knows
+    // whether to bypass the GM-drum whitelist for chromatic
+    // piano-roll notes. See export-path comment for context.
+    const bool allowAllNotes =
+        manualModeActive.load (std::memory_order_acquire);
+
+    if (allowAllNotes)
     {
         aidrum::MidiPattern manual;
         {
@@ -2679,7 +2697,7 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
 
             for (const auto& note : region.notes)
             {
-                if (! isAllowedDrumNote (note.noteNumber))
+                if (! allowAllNotes && ! isAllowedDrumNote (note.noteNumber))
                     continue;
 
                 double rawOnBeat  = note.startBeat;

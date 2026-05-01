@@ -465,6 +465,13 @@ namespace aidrum
             }
             else
             {
+                // v1.6.1-rc.20-fix3 — guard against horizontal-only
+                // trackpad gestures (deltaX != 0, deltaY == 0): the
+                // ternary below evaluates to -1 for deltaY == 0 and
+                // would scroll the keyboard down 3 semitones every
+                // time the user nudged sideways. Ignore zero-Y
+                // wheel events instead.
+                if (std::abs (w.deltaY) < 0.001f) return;
                 const int step = (w.deltaY > 0.0f) ? 1 : -1;
                 setVerticalScroll (verticalScroll + step * 3);
             }
