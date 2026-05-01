@@ -1252,9 +1252,10 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         fillSelectorBox.setColour (juce::ComboBox::arrowColourId,
                                    juce::Colour (Palette::kBone));
         fillSelectorBox.setTooltip (
-            "FILL — pick any of the 22 fills (gentle \u2192 sludge). "
-            "Selection is the seed; auto-fills on the closing bar of every "
-            "8-bar block lerp from here based on COMPLEXITY \u00d7 INTENSITY.");
+            "FILL — pick any fill archetype (gentle \u2192 sludge, with "
+            "tom-focused bases at the heavy end). Selection is the seed; "
+            "auto-fills on the closing bar of every 8-bar block lerp from "
+            "here based on COMPLEXITY \u00d7 INTENSITY.");
         fillSelectorBox.onChange = [this]
         {
             const int sel = fillSelectorBox.getSelectedId() - 1;
