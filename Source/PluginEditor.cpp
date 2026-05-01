@@ -907,6 +907,10 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         pianoRoll.repaint();
     };
     pianoRoll.setNumBars (processorRef.getManualNumBars());
+    // v1.6.1-rc.20 — mirror the active step division (16/32/64) so the
+    // piano roll's grid lines and snap resolution stay in lock-step with
+    // the manual grid + arrangement strip from the moment it's shown.
+    pianoRoll.setStepsPerBar (manualGrid.getStepsPerBar());
     pianoRoll.setTooltip ("PIANO ROLL — FL-Studio-style chromatic editor "
                           "(C0..B10, 132 keys). Click empty area to drop a "
                           "note, drag the right edge to extend, drag the "
@@ -1707,6 +1711,11 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
             const int spb = (idx == 2 ? 64 : idx == 1 ? 32 : 16);
             manualGrid.setStepsPerBar (spb);
             arrangementStrip.setStepsPerBar (spb);
+            // v1.6.1-rc.20 — keep the piano roll's grid + snap resolution
+            // in lock-step with the step grid, otherwise notes dropped
+            // via the piano roll snap to 1/16 even when the user picked
+            // 1/32 or 1/64 in the STEP DIV combo.
+            pianoRoll.setStepsPerBar (spb);
         };
     }
     {
