@@ -25,11 +25,23 @@ namespace aidrum
             //   NuRockYamaha__rcrash_1.wav  /  NuRockYamaha__lcrash_1.wav
             //   NuRockYamaha__floortom_1.wav / NuRockYamaha__smalltom_1.wav
             // so the routing is deterministic regardless of host.
+            //
+            // v1.6.1-rc.19 — Drocetti Trap kit. The user's pack adds
+            // sub-categories that don't exist in the rock/metal kits
+            // (synth / pad / phrase / perc / 808 / bass / vox / fx).
+            // We slot them onto the existing voice Kinds so that when
+            // TRAP MODE is on the visual lane labels rename
+            // (L Crash → Synth, R Crash → Pad, Ride → Phrase,
+            // Toms → Perc) and the same MIDI note already plays the
+            // user's trap sample. Ordering matters: `bass_808` MUST
+            // appear before `bass`, and the `_` separator stems are
+            // listed before the bare ones.
             static const Entry table[] = {
                 { "sidestick",    SampleKit::Kind::SideStick },
                 { "snare_ghost",  SampleKit::Kind::Snare     },
                 { "snare_rim",    SampleKit::Kind::Snare     },
                 { "snare",        SampleKit::Kind::Snare     },
+                { "clap",         SampleKit::Kind::Clap      },
                 { "hat_closed",   SampleKit::Kind::ClosedHat },
                 { "hat_pedal",    SampleKit::Kind::PedalHat  },
                 { "hat_open",     SampleKit::Kind::OpenHat   },
@@ -47,9 +59,12 @@ namespace aidrum
                 { "tomhigh",      SampleKit::Kind::HighTom   },
                 { "tommid",       SampleKit::Kind::MidTom    },
                 { "tomlow",       SampleKit::Kind::LowTom    },
+                { "tom",          SampleKit::Kind::LowTom    }, // rc.19: bare "tom_NN" from Drocetti
+                { "perc",         SampleKit::Kind::MidTom    }, // rc.19: TRAP perc → toms-bus
                 { "ride_bell",    SampleKit::Kind::RideBell  },
                 { "ridebell",     SampleKit::Kind::RideBell  },
                 { "ride",         SampleKit::Kind::Ride      },
+                { "phrase",       SampleKit::Kind::Ride      }, // rc.19: TRAP phrase on ride slot
                 { "china",        SampleKit::Kind::China     },
                 { "right_crash",  SampleKit::Kind::China     },
                 { "rightcrash",   SampleKit::Kind::China     },
@@ -59,6 +74,13 @@ namespace aidrum
                 { "lcrash",       SampleKit::Kind::Crash     },
                 { "splash",       SampleKit::Kind::Crash     },
                 { "crash",        SampleKit::Kind::Crash     },
+                { "synth",        SampleKit::Kind::Crash     }, // rc.19: TRAP synth on L-crash slot
+                { "pad",          SampleKit::Kind::China     }, // rc.19: TRAP pad on R-crash/china slot
+                { "vox",          SampleKit::Kind::RideBell  }, // rc.19: TRAP vocal chops on ride-bell
+                { "fx",           SampleKit::Kind::China     }, // rc.19: TRAP fx hits on china
+                { "bass_808",     SampleKit::Kind::Kick      }, // rc.19: 808 layered on kick slot
+                { "808",          SampleKit::Kind::Kick      }, // rc.19: legacy "808_*" stems
+                { "bass",         SampleKit::Kind::SideStick }, // rc.19: trap bass on sidestick (snare bus)
                 { "kick",         SampleKit::Kind::Kick      },
                 { "bd",           SampleKit::Kind::Kick      },
                 { "sd",           SampleKit::Kind::Snare     },
@@ -335,10 +357,19 @@ namespace aidrum
         // Anything else (legacy "Thrash", old "BayGrunge", empty) falls back
         // to NuRockYamaha so older save-states still load *something*
         // instead of going silent.
+        // v1.6.1-rc.19 — third bundled kit "Drocetti" (originally Drocetti — renamed 2025-04-20;
+        // renamed per user request 2025-04-20). User-original trap pack
+        // covering the full 8-lane palette PLUS new sub-categories (synth,
+        // pad, phrase, perc, 808, bass, vox, fx). When TRAP MODE is on
+        // the editor auto-selects "Drocetti" so the lane swaps
+        // (L Crash → Synth, R Crash → Pad, Ride → Phrase, Toms → Perc)
+        // already point at the right sample bank.
         juce::String kitName = kitNameIn.isEmpty()
                                  ? juce::String ("NuRockYamaha")
                                  : kitNameIn;
-        if (kitName != "NuRockYamaha" && kitName != "HeavyStudio")
+        if (kitName != "NuRockYamaha"
+         && kitName != "HeavyStudio"
+         && kitName != "Drocetti")
             kitName = "NuRockYamaha";
         const juce::String prefix  = kitName + "__";
 
@@ -452,6 +483,46 @@ namespace aidrum
        #endif
     }
 
+    int SampleKit::laneFromMidiNote (int n) noexcept
+    {
+        // Mirror of ArrangementStrip::laneFor(int) — kept here so the
+        // audio thread doesn't have to reach into the editor.
+        if (n == 35 || n == 36)                                      return 7;
+        if (n == 37 || n == 38 || n == 39 || n == 40)                return 6;
+        if (n == 41 || n == 43 || n == 45)                           return 5;
+        if (n == 47 || n == 48 || n == 50)                           return 4;
+        if (n == 42 || n == 44 || n == 46)                           return 3;
+        if (n == 51 || n == 53 || n == 59)                           return 2;
+        if (n == 49)                                                 return 1;
+        if (n == 52 || n == 55 || n == 57)                           return 0;
+        return -1;
+    }
+
+    SampleKit::Kind SampleKit::kindForLane (int laneIdx) noexcept
+    {
+        switch (laneIdx)
+        {
+            case 0: return Kind::China;     // R CRASH / PAD
+            case 1: return Kind::Crash;     // L CRASH / SYNTH
+            case 2: return Kind::Ride;      // RIDE / PHRASE
+            case 3: return Kind::ClosedHat; // HI-HAT
+            case 4: return Kind::HighTom;   // SMALL TOM / PERC
+            case 5: return Kind::LowTom;    // FLOOR TOM / PERC
+            case 6: return Kind::Snare;     // SNARE
+            case 7: return Kind::Kick;      // KICK
+            default: return Kind::Kick;
+        }
+    }
+
+    int SampleKit::numLayersForLane (int laneIdx) const noexcept
+    {
+        auto data = std::atomic_load (&kit);
+        if (data == nullptr || ! data->anyLoaded) return 0;
+        const auto k = kindForLane (laneIdx);
+        const auto& slot = data->slots[(size_t) k];
+        return slot.loaded ? (int) slot.layers.size() : 0;
+    }
+
     const SampleKit::Layer* SampleKit::pickLayer (const KitSlot& slot, float vel) const
     {
         if (! slot.loaded || slot.layers.empty()) return nullptr;
@@ -468,7 +539,27 @@ namespace aidrum
         if (data == nullptr || ! data->anyLoaded) return;
 
         const auto k = kindFromNote (midiNote);
-        const auto* layer = pickLayer (data->slots[(size_t) k], velocity);
+        const auto& slot = data->slots[(size_t) k];
+
+        // v1.6.1-rc.19 — per-lane SAMPLE PICKER override. If the user
+        // has pinned a specific layer for this lane (1..N), play that
+        // layer directly instead of the velocity-driven pick. 0 = auto
+        // = original behaviour. Override is clamped to the slot's actual
+        // layer count so an old save file referencing layer 12 on a
+        // brand-new kit with only 3 layers safely lands on layer 2.
+        const SampleKit::Layer* layer = nullptr;
+        const int lane = laneFromMidiNote (midiNote);
+        if (lane >= 0)
+        {
+            const int ov = laneOverride[(size_t) lane].load (std::memory_order_relaxed);
+            if (ov > 0 && slot.loaded && ! slot.layers.empty())
+            {
+                const int idx = juce::jlimit (0, (int) slot.layers.size() - 1, ov - 1);
+                layer = &slot.layers[(size_t) idx];
+            }
+        }
+        if (layer == nullptr)
+            layer = pickLayer (slot, velocity);
         if (layer == nullptr)
         {
             // Snare fallback for sidestick/clap if only plain snare was provided.

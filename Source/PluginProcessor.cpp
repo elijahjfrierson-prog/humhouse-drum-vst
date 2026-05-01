@@ -92,6 +92,31 @@ namespace
     // Drives the base velocity + per-hit fluctuation curve applied at
     // MIDI emit time. See shapeVelocity() below.
     constexpr const char* kParamIntensity       = "intensity";
+    // v1.6.1-rc.19 — TRAP MODE toggle. When true:
+    //   * arrangement strip lane labels swap
+    //     (L Crash → SYNTH, R Crash → PAD, Ride → PHRASE,
+    //      Small/Floor Tom → PERC)
+    //   * the bundled kit auto-switches to "Drocetti" so the same MIDI
+    //     notes already trigger trap-flavoured one-shots
+    //   * the sample picker tree shows trap-style sub-categories first
+    constexpr const char* kParamTrapMode        = "trapMode";
+    // v1.6.1-rc.19 — per-lane SAMPLE PICKER override. 8 ints, one per
+    // arrangement lane (top→bottom: R CRASH/PAD, L CRASH/SYNTH,
+    // RIDE/PHRASE, HI-HAT, SMALL TOM/PERC, FLOOR TOM/PERC, SNARE, KICK).
+    // Value layout: 0 = "auto" (pick by velocity within active kit's
+    // slot, current behaviour); 1..N = pin layer N-1 in the active
+    // kit's slot for that lane. Lets the user say "I want pad #5 on R
+    // CRASH, snare #3 on the snare lane" without leaving the
+    // arrangement strip. The IDs are kept stable across rc.19+ so
+    // host-saved choices round-trip.
+    constexpr const char* kParamLaneSampleRCrash    = "laneSampRCrash";
+    constexpr const char* kParamLaneSampleLCrash    = "laneSampLCrash";
+    constexpr const char* kParamLaneSampleRide      = "laneSampRide";
+    constexpr const char* kParamLaneSampleHat       = "laneSampHat";
+    constexpr const char* kParamLaneSampleSmallTom  = "laneSampSmallTom";
+    constexpr const char* kParamLaneSampleFloorTom  = "laneSampFloorTom";
+    constexpr const char* kParamLaneSampleSnare     = "laneSampSnare";
+    constexpr const char* kParamLaneSampleKick      = "laneSampKick";
 
     // v1.6.1-rc.12 — single bundled kit again. The (Bay Grunge) Yamaha
     // Maple kit was pulled in rc.12 (user: "take out the second drum
@@ -107,13 +132,26 @@ namespace
     // voices we don't have separate Heavy recordings of. Distinct timbre vs.
     // NuRockYamaha: heavier kick attack, thicker snare body, longer cymbal
     // sustain. ComboBox order MUST match SampleKit::loadBundled() recognition.
+    // v1.6.1-rc.19 — third bundled kit: "Drocetti" (originally Drocetti — renamed 2025-04-20;
+    // user requested rename 2025-04-20). User-original trap pack: 120
+    // normalised one-shots covering kicks, snares, claps, closed/open
+    // hats, perc, toms, crashes, ride PLUS new trap-only sub-categories
+    // — synth, pad, phrase, 808, bass, vox, fx — that get routed onto
+    // existing voice slots (synth → Crash, pad → China, phrase → Ride,
+    // perc → MidTom, 808 → Kick, bass → SideStick, vox → RideBell,
+    // fx → China). Selecting "Drocetti" + flipping TRAP MODE on relabels
+    // the arrangement strip lanes (L Crash → Synth, R Crash → Pad,
+    // Ride → Phrase, Toms → Perc) so the SAME MIDI now drives a
+    // trap-flavoured palette without any new voice infrastructure.
     const juce::StringArray kBundledKitChoices {
         "NuRockYamaha",
-        "HeavyStudio"
+        "HeavyStudio",
+        "Drocetti"
     };
     const juce::StringArray kBundledKitDisplayNames {
         "(Nu Rock) 70's Yamaha",
-        "(Heavy Studio) Big Room"
+        "(Heavy Studio) Big Room",
+        "(Drocetti) Trap Kit"
     };
 
     const juce::StringArray kStepDivChoices {
@@ -271,6 +309,53 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
         if (idx >= 0 && idx < kBundledKitChoices.size())
             loadBundledKit (kBundledKitChoices[idx]);
         return;
+    }
+
+    // v1.6.1-rc.19 — TRAP MODE flip: swap the bundled kit to "Drocetti"
+    // when toggled ON, and back to the user-selected base kit when
+    // toggled OFF. We don't need to regenerate the arrangement; the
+    // ArrangementStrip + lane labels react to the same APVTS bool in
+    // the editor, and the underlying MIDI notes are unchanged.
+    if (id == kParamTrapMode)
+    {
+        const bool trap = apvts.getRawParameterValue (kParamTrapMode)->load() > 0.5f;
+        if (trap)
+        {
+            loadBundledKit ("Drocetti");
+        }
+        else
+        {
+            const int kitIdx = (int) apvts.getRawParameterValue (kParamBundledKit)->load();
+            if (kitIdx >= 0 && kitIdx < kBundledKitChoices.size())
+                loadBundledKit (kBundledKitChoices[kitIdx]);
+        }
+        return;
+    }
+
+    // v1.6.1-rc.19 — per-lane SAMPLE PICKER override. Wire each of the
+    // 8 lane params straight into SampleKit's atomic override array so
+    // the next noteOn picks the pinned layer. No regen needed.
+    {
+        struct LaneIdMap { const char* id; int lane; };
+        static const LaneIdMap kLaneMap[] = {
+            { kParamLaneSampleRCrash,    0 },
+            { kParamLaneSampleLCrash,    1 },
+            { kParamLaneSampleRide,      2 },
+            { kParamLaneSampleHat,       3 },
+            { kParamLaneSampleSmallTom,  4 },
+            { kParamLaneSampleFloorTom,  5 },
+            { kParamLaneSampleSnare,     6 },
+            { kParamLaneSampleKick,      7 },
+        };
+        for (const auto& m : kLaneMap)
+        {
+            if (id == m.id)
+            {
+                const int v = (int) apvts.getRawParameterValue (m.id)->load();
+                sampleKit.setLaneOverride (m.lane, v);
+                return;
+            }
+        }
     }
 
     // Every other generator-facing parameter triggers a live regen of
@@ -515,6 +600,36 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamTimeScale, 1 }, "Time Scale",
         kTimeScaleChoices, 1)); // default: NORMAL
+
+    // v1.6.1-rc.19 — TRAP MODE bool. See declaration comment above.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { kParamTrapMode, 1 }, "Trap Mode", false));
+
+    // v1.6.1-rc.19 — 8 per-lane SAMPLE PICKER overrides. 0 = auto
+    // (current behaviour: velocity-driven layer pick). 1..N pins
+    // a specific layer index in that lane's slot. Range capped at 32
+    // — generous enough for the bundled kits' largest slot
+    // (Drocetti hat_closed = 10) plus headroom for future kits.
+    {
+        const juce::StringArray laneIds {
+            kParamLaneSampleRCrash,   kParamLaneSampleLCrash,
+            kParamLaneSampleRide,     kParamLaneSampleHat,
+            kParamLaneSampleSmallTom, kParamLaneSampleFloorTom,
+            kParamLaneSampleSnare,    kParamLaneSampleKick
+        };
+        const juce::StringArray laneNames {
+            "Lane R-Crash Sample", "Lane L-Crash Sample",
+            "Lane Ride Sample",    "Lane Hat Sample",
+            "Lane Small-Tom Sample", "Lane Floor-Tom Sample",
+            "Lane Snare Sample",   "Lane Kick Sample"
+        };
+        for (int i = 0; i < laneIds.size(); ++i)
+        {
+            params.push_back (std::make_unique<juce::AudioParameterInt> (
+                juce::ParameterID { laneIds[i].toRawUTF8(), 1 },
+                laneNames[i], 0, 32, 0));
+        }
+    }
 
     return { params.begin(), params.end() };
 }

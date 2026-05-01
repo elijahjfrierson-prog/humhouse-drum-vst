@@ -102,6 +102,43 @@ namespace aidrum
         // Renders every active voice into its routed bus buffer on the mixer.
         void renderIntoBuses (DrumBusMixer& mixer, int numSamples);
 
+        // v1.6.1-rc.19 — per-lane SAMPLE PICKER override. Lanes follow
+        // the ArrangementStrip top→bottom order:
+        //   0 = R CRASH / PAD     1 = L CRASH / SYNTH
+        //   2 = RIDE / PHRASE     3 = HI-HAT
+        //   4 = SMALL TOM / PERC  5 = FLOOR TOM / PERC
+        //   6 = SNARE             7 = KICK
+        // layerIdxOrZero: 0 = auto (velocity-driven layer pick, current
+        // behaviour); 1..N pins layer (N-1) for that lane regardless of
+        // velocity. Out-of-range layer indices fall back to clamp().
+        // Safe to call from the message thread; the audio thread reads
+        // via std::atomic<int>.
+        static constexpr int kNumLanes = 8;
+        void setLaneOverride (int laneIdx, int layerIdxOrZero) noexcept
+        {
+            if (laneIdx < 0 || laneIdx >= kNumLanes) return;
+            laneOverride[(size_t) laneIdx].store (
+                std::max (0, layerIdxOrZero), std::memory_order_relaxed);
+        }
+        int getLaneOverride (int laneIdx) const noexcept
+        {
+            if (laneIdx < 0 || laneIdx >= kNumLanes) return 0;
+            return laneOverride[(size_t) laneIdx].load (
+                std::memory_order_relaxed);
+        }
+
+        // Number of layers currently loaded for the slot that the given
+        // arrangement lane plays. Used by the editor to size the per-lane
+        // SAMPLE PICKER popup (so we don't show 32 placeholders when the
+        // active kit only has 5 snare layers). Returns 0 if no kit is
+        // active or the slot is unloaded.
+        int numLayersForLane (int laneIdx) const noexcept;
+
+        // Maps an arrangement lane index (0..7) to the primary Kind that
+        // its MIDI notes resolve to. Public so the editor can build
+        // per-lane sample-name labels for the picker popup.
+        static Kind kindForLane (int laneIdx) noexcept;
+
     private:
         struct Layer
         {
@@ -163,5 +200,22 @@ namespace aidrum
 
         // Atomic shared_ptr — load() publishes, audio thread atomic_loads.
         std::shared_ptr<KitData> kit;
+
+        // v1.6.1-rc.19 — per-lane SAMPLE PICKER override array.
+        // 0 = auto (velocity-driven), 1..N = pin layer (N-1).
+        std::array<std::atomic<int>, kNumLanes> laneOverride {};
+
+        // Maps a MIDI note number to an arrangement lane index in the
+        // same top→bottom order as ArrangementStrip's kLanes table:
+        //   0 = R CRASH (China / Crash 2 / 52,55,57)
+        //   1 = L CRASH (Crash 1 / 49)
+        //   2 = RIDE    (51, 53, 59)
+        //   3 = HI-HAT  (42, 44, 46)
+        //   4 = SMALL TOM (47, 48, 50)
+        //   5 = FLOOR TOM (41, 43, 45)
+        //   6 = SNARE   (37, 38, 39, 40)
+        //   7 = KICK    (35, 36)
+        // Anything else returns -1 ("no override applies").
+        static int laneFromMidiNote (int midiNote) noexcept;
     };
 }
