@@ -139,10 +139,25 @@ namespace aidrum
         // per-lane sample-name labels for the picker popup.
         static Kind kindForLane (int laneIdx) noexcept;
 
+        // v1.6.1-rc.20 — per-layer filename stems (the prefix-stripped,
+        // velocity-suffix-stripped name as parsed at load time, e.g.
+        // "pad_dark", "synth_lead", "kick", "snare_rim"). One entry per
+        // layer in slot order, matching the index used by setLaneOverride.
+        // Used by the editor's SAMPLE PICKER to group layers into folder
+        // sub-menus by sub-category. Returns an empty array if no kit is
+        // active or the slot is unloaded.
+        juce::StringArray layerNamesForLane (int laneIdx) const;
+
     private:
         struct Layer
         {
             juce::AudioBuffer<float> buffer;  // 1 or 2 channels
+            // v1.6.1-rc.20 — original filename stem (Drocetti prefix and
+            // velocity suffix already stripped). Surfaced through
+            // layerNamesForLane() so the SAMPLE PICKER popup can group
+            // related layers under "Pads → Dark / Bright / Atmospheric"
+            // sub-menus instead of a flat "Sample 1..N" list.
+            juce::String stem;
         };
 
         struct KitSlot

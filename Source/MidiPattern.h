@@ -11,6 +11,16 @@ namespace aidrum
         float   velocity   = 0.8f; // 0..1
         double  startBeat  = 0.0;  // quarter notes
         double  lengthBeat = 0.25; // quarter notes
+
+        // v1.6.1-rc.20 — one-shot flag (set by the PianoRoll's "ONE-SHOT"
+        // toggle when the note is placed). Drum samples are already played
+        // as full-length one-shots by SampleKit, but a melodic synth /
+        // pad / phrase note may want the SAME guarantee even if the user
+        // draws a 1/64-length head — the sample plays through to its end
+        // regardless of how short the MIDI note is. Flag round-trips with
+        // host save state via writeArrangementAsMidiFile (encoded as a
+        // text marker in the .mid). Default false = standard MIDI gating.
+        bool    oneShot    = false;
     };
 
     struct MidiPattern

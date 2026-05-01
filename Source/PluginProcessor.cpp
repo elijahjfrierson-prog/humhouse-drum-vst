@@ -2291,6 +2291,64 @@ void AIDrumAudioProcessor::clearManualPattern()
     manualPattern.notes.clear();
 }
 
+// v1.6.1-rc.20 — PianoRoll API. addManualNote / removeManualNote /
+// moveManualNote sit alongside the step-grid setManualCell helpers
+// and write into the same manualPattern_. Notes are kept identifiable
+// by (noteNumber, startBeat); the half-step-tolerance match handles
+// the quantization the PianoRoll applies before calling these.
+void AIDrumAudioProcessor::addManualNote (int midiNote, double startBeat,
+                                          double lengthBeat, float velocity,
+                                          bool oneShot)
+{
+    if (startBeat < 0.0 || lengthBeat <= 0.0) return;
+    std::lock_guard<std::mutex> lock (manualMutex);
+    if (startBeat >= manualPattern.lengthInBeats) return;
+
+    aidrum::MidiNote n;
+    n.noteNumber = juce::jlimit (0, 127, midiNote);
+    n.startBeat  = startBeat;
+    n.lengthBeat = juce::jmax (0.01, lengthBeat);
+    n.velocity   = juce::jlimit (0.05f, 1.0f, velocity);
+    n.oneShot    = oneShot;
+    manualPattern.notes.push_back (n);
+}
+
+void AIDrumAudioProcessor::removeManualNote (int midiNote, double startBeat)
+{
+    std::lock_guard<std::mutex> lock (manualMutex);
+    auto& notes = manualPattern.notes;
+    notes.erase (
+        std::remove_if (notes.begin(), notes.end(),
+                        [&] (const aidrum::MidiNote& n)
+                        {
+                            return n.noteNumber == midiNote
+                                && std::abs (n.startBeat - startBeat) < 1.0e-3;
+                        }),
+        notes.end());
+}
+
+void AIDrumAudioProcessor::moveManualNote (int oldMidiNote, double oldStartBeat,
+                                           int newMidiNote, double newStartBeat,
+                                           double newLengthBeat)
+{
+    if (newLengthBeat <= 0.0) return;
+    std::lock_guard<std::mutex> lock (manualMutex);
+    if (newStartBeat < 0.0
+        || newStartBeat >= manualPattern.lengthInBeats) return;
+
+    for (auto& n : manualPattern.notes)
+    {
+        if (n.noteNumber == oldMidiNote
+            && std::abs (n.startBeat - oldStartBeat) < 1.0e-3)
+        {
+            n.noteNumber = juce::jlimit (0, 127, newMidiNote);
+            n.startBeat  = newStartBeat;
+            n.lengthBeat = juce::jmax (0.01, newLengthBeat);
+            return;
+        }
+    }
+}
+
 aidrum::MidiPattern AIDrumAudioProcessor::getManualPattern() const
 {
     std::lock_guard<std::mutex> lock (manualMutex);

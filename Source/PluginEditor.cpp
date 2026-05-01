@@ -715,13 +715,64 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         }
         else
         {
+            // v1.6.1-rc.20 — folder-tree subsector picker. Group layers
+            // by the part of their filename stem that comes before the
+            // trailing "_NN" velocity index. So "pad_dark_01",
+            // "pad_dark_02", "pad_atmos_01" become two sub-menus
+            // ("Pad / Dark", "Pad / Atmos"). Stems without an obvious
+            // sub-category (e.g. plain "kick" or "snare") fall under a
+            // synthesised "(Default)" group so they still render.
+            const auto names = kit.layerNamesForLane (laneIdx);
+
+            auto subcat = [] (juce::String stem) -> juce::String
+            {
+                // Strip leading "<kit>__" if present.
+                const int dd = stem.indexOf ("__");
+                if (dd >= 0) stem = stem.substring (dd + 2);
+                // Strip trailing "_NN" digit run.
+                int end = stem.length();
+                int digits = 0;
+                while (end > 0 && juce::CharacterFunctions::isDigit (stem[end - 1]))
+                { --end; ++digits; }
+                if (digits > 0 && end > 0 && stem[end - 1] == '_')
+                    stem = stem.substring (0, end - 1);
+                if (stem.isEmpty()) return "(default)";
+                return stem;
+            };
+
+            std::map<juce::String, std::vector<int>> groups;
+            std::vector<juce::String> orderedKeys;
             for (int i = 0; i < numLayers; ++i)
             {
-                const int itemId = 2 + i; // 1 reserved for "Auto"
-                const bool ticked = (currentOverride == i + 1);
-                menu.addItem (itemId,
-                    juce::String ("Sample ") + juce::String (i + 1),
-                    true, ticked);
+                const auto stem = (i < names.size() ? names[i] : juce::String());
+                const auto key  = subcat (stem);
+                if (groups.find (key) == groups.end())
+                    orderedKeys.push_back (key);
+                groups[key].push_back (i);
+            }
+
+            const bool flat = (orderedKeys.size() <= 1);
+            for (const auto& key : orderedKeys)
+            {
+                const auto& idxs = groups[key];
+                juce::PopupMenu sub;
+                juce::PopupMenu* target = flat ? &menu : &sub;
+                for (int i : idxs)
+                {
+                    const int itemId = 2 + i; // 1 reserved for "Auto"
+                    const bool ticked = (currentOverride == i + 1);
+                    const auto stem = (i < names.size() ? names[i] : juce::String());
+                    const auto label = stem.isNotEmpty()
+                        ? stem
+                        : juce::String ("Sample ") + juce::String (i + 1);
+                    target->addItem (itemId, label, true, ticked);
+                }
+                if (! flat)
+                {
+                    auto pretty = key.replaceCharacter ('_', ' ');
+                    pretty = pretty.toLowerCase();
+                    menu.addSubMenu (pretty, sub);
+                }
             }
         }
 
@@ -831,6 +882,41 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
                            "Works across all 16 bars; DRUM KIT remaps the timbre in your sampler.");
     manualGrid.setVisible (false);
     addChildComponent (manualGrid);
+
+    // v1.6.1-rc.20 — FL-Studio-style piano roll. Edits the same
+    // manualPattern_ as the step grid, but exposes the full chromatic
+    // C0..B10 range so the user can program melodic synth / pad /
+    // phrase voicings on the Drocetti trap kit's tonal slots.
+    pianoRoll.provider     = [this] { return processorRef.getManualPattern(); };
+    pianoRoll.onAddNote    = [this] (int note, double startBeat,
+                                     double lengthBeat, float vel)
+    {
+        processorRef.addManualNote (note, startBeat, lengthBeat, vel,
+                                    pianoRoll.getOneShotMode());
+        pianoRoll.repaint();
+    };
+    pianoRoll.onRemoveNote = [this] (int note, double startBeat)
+    {
+        processorRef.removeManualNote (note, startBeat);
+        pianoRoll.repaint();
+    };
+    pianoRoll.onMoveNote   = [this] (int oldN, double oldS,
+                                     int newN, double newS, double newL)
+    {
+        processorRef.moveManualNote (oldN, oldS, newN, newS, newL);
+        pianoRoll.repaint();
+    };
+    pianoRoll.setNumBars (processorRef.getManualNumBars());
+    pianoRoll.setTooltip ("PIANO ROLL — FL-Studio-style chromatic editor "
+                          "(C0..B10, 132 keys). Click empty area to drop a "
+                          "note, drag the right edge to extend, drag the "
+                          "body to move, alt-click or right-click to delete. "
+                          "Mouse-wheel scrolls octaves; Ctrl/\u2318+wheel "
+                          "zooms horizontally. Edits the SAME manual pattern "
+                          "the drum grid edits, so drums + melody live on "
+                          "the same canvas.");
+    pianoRoll.setVisible (false);
+    addChildComponent (pianoRoll);
 
     xyPad.bind (&complexitySlider, &velocitySlider);
     addAndMakeVisible (xyPad);
@@ -1322,9 +1408,13 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         const bool on = manualButton.getToggleState();
         processorRef.setManualMode (on);
         arrangementStrip.setVisible (! on);
-        manualGrid      .setVisible (on);
+        const bool pr = on && pianoRollButton.getToggleState();
+        manualGrid      .setVisible (on && ! pr);
+        pianoRoll       .setVisible (pr);
         clearManualButton  .setVisible (on);
         commitManualButton .setVisible (on);
+        pianoRollButton    .setVisible (on);
+        oneShotButton      .setVisible (pr);
         undoButton  .setVisible (! on);
         clearButton .setVisible (! on);
         plusHelper.setText (on ? "MANUAL" : "COMPOSE", juce::dontSendNotification);
@@ -1344,6 +1434,50 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     addAndMakeVisible (manualButton);
     addChildComponent (clearManualButton);   // hidden until MANUAL is on
     addChildComponent (commitManualButton);
+
+    // v1.6.1-rc.20 — PIANO ROLL toggle. Only visible while MANUAL is on;
+    // when ON, the FL-Studio-style PianoRoll component swaps in for the
+    // drum step grid. Both views edit the same manualPattern_, so notes
+    // dropped in the piano roll appear in the grid (within the 8 drum
+    // rows it shows) and vice-versa.
+    styleSmallBtn (pianoRollButton);
+    pianoRollButton.setClickingTogglesState (true);
+    pianoRollButton.setTooltip ("PIANO ROLL — toggle to a full-chromatic "
+                                "C0..B10 piano roll for the manual pattern. "
+                                "Lets you draw melodic synth / pad / phrase "
+                                "voicings on the Drocetti trap kit's tonal "
+                                "slots. Drums laid in the step grid still "
+                                "play; the two views share one canvas.");
+    pianoRollButton.onClick = [this]
+    {
+        const bool pr = pianoRollButton.getToggleState();
+        const bool man = manualButton.getToggleState();
+        manualGrid.setVisible (man && ! pr);
+        pianoRoll .setVisible (man && pr);
+        oneShotButton.setVisible (man && pr);
+        resized();
+        repaint();
+    };
+    addChildComponent (pianoRollButton);
+
+    // v1.6.1-rc.20 — ONE-SHOT toggle. Only visible while PIANO ROLL is on.
+    // When ON, every note dropped via the piano roll is flagged so the
+    // SampleKit voice plays the underlying layer through to its end
+    // regardless of MIDI note length.
+    styleSmallBtn (oneShotButton);
+    oneShotButton.setClickingTogglesState (true);
+    oneShotButton.setTooltip ("ONE-SHOT — when ON, notes you drop in the "
+                              "piano roll lock to their full sample length "
+                              "(SampleKit ignores noteOff and lets the "
+                              "underlying layer play through to its end). "
+                              "Useful for synth swells / pad washes / vox "
+                              "chops where you want the whole sample to "
+                              "speak even if the MIDI note is short.");
+    oneShotButton.onClick = [this]
+    {
+        pianoRoll.setOneShotMode (oneShotButton.getToggleState());
+    };
+    addChildComponent (oneShotButton);
 
     // v1.1.0 — MIXER toggle: slides the per-drum mixer over the arrangement.
     styleSmallBtn (mixerButton);
@@ -1819,6 +1953,13 @@ void AIDrumAudioProcessorEditor::resized()
     auto manualBar = area.removeFromTop (30);
     manualButton   .setBounds (manualBar.removeFromLeft (120).reduced (2));
     manualBar.removeFromLeft (4);
+    // v1.6.1-rc.20 — PIANO ROLL + ONE-SHOT toggles live next to MANUAL.
+    // setVisible() in the click handlers controls whether they actually
+    // appear, so we always lay out their bounds.
+    pianoRollButton.setBounds (manualBar.removeFromLeft (110).reduced (2));
+    manualBar.removeFromLeft (4);
+    oneShotButton  .setBounds (manualBar.removeFromLeft (95) .reduced (2));
+    manualBar.removeFromLeft (4);
     mixerButton    .setBounds (manualBar.removeFromLeft (90) .reduced (2));
     manualBar.removeFromLeft (4);
     loadKitButton  .setBounds (manualBar.removeFromLeft (90) .reduced (2));
@@ -1853,9 +1994,10 @@ void AIDrumAudioProcessorEditor::resized()
 
     area.removeFromTop (4);
 
-    // Arrangement strip / manual grid share the remaining area.
+    // Arrangement strip / manual grid / piano roll share the remaining area.
     arrangementStrip.setBounds (area);
     manualGrid      .setBounds (area);
+    pianoRoll       .setBounds (area);
     mixerPanel      .setBounds (area);
 }
 

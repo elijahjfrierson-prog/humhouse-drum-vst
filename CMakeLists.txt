@@ -146,6 +146,7 @@ target_sources(AIDrumVST PRIVATE
     Source/PatternStrip.h
     Source/ArrangementStrip.h
     Source/ManualGrid.h
+    Source/PianoRoll.h
 )
 
 target_compile_definitions(AIDrumVST PUBLIC
