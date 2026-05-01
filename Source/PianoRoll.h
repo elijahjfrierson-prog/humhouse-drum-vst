@@ -363,6 +363,15 @@ namespace aidrum
                 return;
             }
 
+            // v1.6.1-rc.20 — right-click / alt-click on empty space is a
+            // no-op (matches ManualGrid's clear-cell semantics + the class
+            // header's documented behaviour: alt/right is the delete
+            // gesture, plain left-click is the create gesture). Without
+            // this an alt/right-click on empty space would drop a fresh
+            // note and arm a Resize drag, which is the exact opposite of
+            // what the user asked for.
+            if (altOrRight) return;
+
             // Empty area → drop a fresh note. Snap to the current step.
             // v1.6.1-rc.20 — clamp to the same range the processor stores
             // (note 0..127, start within pattern length) so drag.orig*

@@ -726,18 +726,21 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
 
             auto subcat = [] (juce::String stem) -> juce::String
             {
-                // Strip leading "<kit>__" if present.
+                // v1.6.1-rc.20-fix — velocity suffix (`_NN`) is already
+                // stripped at load time by SampleKit::stripVelocitySuffix,
+                // so the original second-pass digit strip here was wrong:
+                // it ate meaningful trailing numbers (e.g. "bass_808" →
+                // "bass") and conflated distinct categories. Use the
+                // segment BEFORE the last underscore as the group key
+                // instead, so "pad_dark" + "pad_bright" land under one
+                // "pad" sub-menu, while "kick" / "bass_808" stay intact
+                // as their own keys.
                 const int dd = stem.indexOf ("__");
                 if (dd >= 0) stem = stem.substring (dd + 2);
-                // Strip trailing "_NN" digit run.
-                int end = stem.length();
-                int digits = 0;
-                while (end > 0 && juce::CharacterFunctions::isDigit (stem[end - 1]))
-                { --end; ++digits; }
-                if (digits > 0 && end > 0 && stem[end - 1] == '_')
-                    stem = stem.substring (0, end - 1);
                 if (stem.isEmpty()) return "(default)";
-                return stem;
+                const int us = stem.lastIndexOfChar ('_');
+                if (us <= 0) return stem;
+                return stem.substring (0, us);
             };
 
             std::map<juce::String, std::vector<int>> groups;
