@@ -364,12 +364,21 @@ namespace aidrum
             }
 
             // Empty area → drop a fresh note. Snap to the current step.
-            const double snapped = snapToStep (beat);
-            const double len     = stepBeats();
-            const float  vel     = 0.85f;
-            if (onAddNote) onAddNote (m, snapped, len, vel);
+            // v1.6.1-rc.20 — clamp to the same range the processor stores
+            // (note 0..127, start within pattern length) so drag.orig*
+            // matches what addManualNote actually persists. Without this
+            // a click on a row above MIDI 127 (FL exposes up to B10/143)
+            // would leave the drag state pointing at a note that doesn't
+            // exist in the processor, breaking the immediate resize drag.
+            const double maxStart = juce::jmax (0.0,
+                (double) totalSteps() * stepBeats() - stepBeats());
+            const int    storedNote  = juce::jlimit (0, 127, m);
+            const double snapped     = juce::jlimit (0.0, maxStart, snapToStep (beat));
+            const double len         = stepBeats();
+            const float  vel         = 0.85f;
+            if (onAddNote) onAddNote (storedNote, snapped, len, vel);
             drag.active        = true;
-            drag.origNote      = m;
+            drag.origNote      = storedNote;
             drag.origStartBeat = snapped;
             drag.origLengthBeat= len;
             drag.origVelocity  = vel;
@@ -387,10 +396,22 @@ namespace aidrum
             if (m < 0) return;
             const double beat = beatForX (pos.x);
 
+            // v1.6.1-rc.20 — clamp to the same range the processor stores
+            // BEFORE calling onMoveNote, then mirror the clamped values
+            // into drag.orig*. Otherwise out-of-range moves get silently
+            // dropped by moveManualNote() while the PianoRoll's drag state
+            // moves on, so subsequent drag events search for a note key
+            // that no longer matches and the gesture goes dead.
+            const double maxStart = juce::jmax (0.0,
+                (double) totalSteps() * stepBeats() - stepBeats());
+
             if (drag.mode == DragMode::Resize)
             {
-                const double newLen = juce::jmax (stepBeats() * 0.5,
-                                       snapToStep (beat - drag.origStartBeat));
+                const double maxLen = juce::jmax (stepBeats() * 0.5,
+                    (double) totalSteps() * stepBeats() - drag.origStartBeat);
+                const double newLen = juce::jlimit (
+                    stepBeats() * 0.5, maxLen,
+                    snapToStep (beat - drag.origStartBeat));
                 if (onMoveNote)
                     onMoveNote (drag.origNote, drag.origStartBeat,
                                 drag.origNote, drag.origStartBeat, newLen);
@@ -398,8 +419,9 @@ namespace aidrum
             }
             else
             {
-                const int    newNote   = m - drag.grabPitchOffset;
-                const double newStart  = juce::jmax (0.0,
+                const int    newNote   = juce::jlimit (0, 127,
+                                            m - drag.grabPitchOffset);
+                const double newStart  = juce::jlimit (0.0, maxStart,
                                             snapToStep (beat - drag.grabBeatOffset));
                 if (onMoveNote)
                     onMoveNote (drag.origNote, drag.origStartBeat,

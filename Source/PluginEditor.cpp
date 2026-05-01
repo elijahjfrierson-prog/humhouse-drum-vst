@@ -1424,7 +1424,11 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     clearManualButton.onClick = [this]
     {
         processorRef.clearManualPattern();
+        // v1.6.1-rc.20 — repaint BOTH views so CLEAR GRID flushes the
+        // piano roll display whether the user is on the step grid or
+        // on the piano roll when they hit it.
         manualGrid.repaint();
+        pianoRoll.repaint();
     };
     commitManualButton.onClick = [this]
     {
@@ -1749,6 +1753,12 @@ void AIDrumAudioProcessorEditor::timerCallback()
     plusButton.tickGlow();
     if (manualGrid.isVisible())
         manualGrid.repaint();
+    // v1.6.1-rc.20 — same playhead/pattern refresh tick for the piano
+    // roll, so external pattern edits (CLEAR GRID, paste, randomize,
+    // host-driven note removal) show up without the user having to
+    // click into the roll first.
+    if (pianoRoll.isVisible())
+        pianoRoll.repaint();
 
     // Drain hit-event counters and pulse the matching drum in the visualizer.
     auto& synth = processorRef.getDrumSynth();
