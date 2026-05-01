@@ -333,8 +333,18 @@ namespace aidrum
         void mouseDown (const juce::MouseEvent& e) override
         {
             const auto pos = e.position;
-            const int  m   = midiForY (pos.y);
+            int        m   = midiForY (pos.y);
             if (m < 0) return;
+            // v1.6.1-rc.20-fix4 — the FL panel exposes MIDI 12..143
+            // (C0..B10) but addManualNote clamps stored notes to
+            // 0..127. If we let the unclamped m reach noteAt(), every
+            // click on rows MIDI 128..143 looks up a note that's
+            // never there (it was stored at 127), so each click drops
+            // a fresh duplicate, alt-click delete becomes a no-op, and
+            // drag/resize never engages on those rows. Clamp once,
+            // up-front, so every downstream lookup uses the same key
+            // the processor stores.
+            m = juce::jlimit (0, 127, m);
             const double beat = beatForX (pos.x);
 
             const bool  altOrRight = e.mods.isAltDown() || e.mods.isPopupMenu();
@@ -401,8 +411,13 @@ namespace aidrum
         {
             if (! drag.active) return;
             const auto pos = e.position;
-            const int  m   = midiForY (pos.y);
+            int        m   = midiForY (pos.y);
             if (m < 0) return;
+            // v1.6.1-rc.20-fix4 — same clamp as mouseDown so move-
+            // mode drags from rows that midiForY reports as 128..143
+            // can still resolve correctly against the processor's
+            // 0..127 storage. (Resize-mode never reads m for pitch.)
+            m = juce::jlimit (0, 127, m);
             const double beat = beatForX (pos.x);
 
             // v1.6.1-rc.20 — clamp to the same range the processor stores
@@ -485,7 +500,11 @@ namespace aidrum
             // MidiPattern. The redundant provider() call here doubled
             // mutex contention + heap allocation on every mouseMove,
             // for a copy that was never read.
-            const int  m   = midiForY (e.position.y);
+            // v1.6.1-rc.20-fix4 — clamp the same way mouseDown does so
+            // hover-state cursor changes also work on the high MIDI
+            // rows (otherwise the cursor never switches to drag/resize
+            // for notes that the user just placed via mouseDown).
+            int        m   = juce::jlimit (0, 127, midiForY (e.position.y));
             const auto beat = beatForX (e.position.x);
             if (m < 0) { setMouseCursor (juce::MouseCursor::CrosshairCursor); return; }
 
