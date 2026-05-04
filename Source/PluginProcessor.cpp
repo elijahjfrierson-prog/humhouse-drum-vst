@@ -568,7 +568,13 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
     // 0..1 so old save files where fillComplexity = 0.35 simply round
     // to fill #7 instead of being orphaned.
     {
-        const int numFills = std::max (1, (int) aidrum::fillLibrary().size());
+        // v1.6.1-rc.21 — step size driven by the procedural archetype
+        // count (27 in rc.21) so the parameter quantisation matches the
+        // FILL dropdown's index space exactly. fillLibrary().size() and
+        // the procedural archetype count must remain aligned, otherwise
+        // setFillIndex / getCurrentFillIndex / req.fillIndex compute
+        // diverging indices for the same APVTS value.
+        const int numFills = std::max (1, (int) aidrum::fillgen::kArchetypeCount);
         const float step   = 1.0f / (float) std::max (1, numFills - 1);
         params.push_back (std::make_unique<juce::AudioParameterFloat> (
             juce::ParameterID { kParamFillComplexity, 1 }, "Fill Selector",
@@ -721,10 +727,16 @@ void AIDrumAudioProcessor::setUiScale (float s)
 
 int AIDrumAudioProcessor::getFillLibrarySize() const
 {
-    // v1.6.1-rc.14 — 22 procedural archetypes. fillLibrary() is kept
-    // for state round-trip but the UI dropdown reads from the
-    // procedural archetype name table now.
-    return 22;
+    // v1.6.1-rc.14 — procedural archetypes. fillLibrary() is kept for
+    // state round-trip but the UI dropdown reads from the procedural
+    // archetype name table.
+    // v1.6.1-rc.21 — grew from 22 → 27 (5 tom-focused bases added).
+    // This is THE single source of truth for the fill index space —
+    // parameter step (createParameterLayout), getCurrentFillIndex,
+    // setFillIndex, getAllFillNames, AIBackend::buildRequestForMode
+    // and spliceMandatoryFillIntoRegion all key off this constant so
+    // the FILL dropdown / parameter / engine stay in lock-step.
+    return aidrum::fillgen::kArchetypeCount;
 }
 
 int AIDrumAudioProcessor::getCurrentFillIndex() const
@@ -752,8 +764,9 @@ void AIDrumAudioProcessor::cycleFillSelector (int direction)
 }
 
 // v1.6.1-rc.13 — direct fill-index setter for the dropdown UI. The
-// dropdown shows all 22 fills by name and lets the user pick one
-// directly instead of cycling through with prev/next buttons.
+// dropdown shows every fill by name (22 originals + 5 tom bases in
+// rc.21) and lets the user pick one directly instead of cycling
+// through with prev/next buttons.
 void AIDrumAudioProcessor::setFillIndex (int idx)
 {
     const int n = getFillLibrarySize();
@@ -773,7 +786,9 @@ void AIDrumAudioProcessor::setFillIndex (int idx)
 juce::StringArray AIDrumAudioProcessor::getAllFillNames() const
 {
     juce::StringArray names;
-    for (int i = 0; i < 22; ++i)
+    const int n = getFillLibrarySize();
+    names.ensureStorageAllocated (n);
+    for (int i = 0; i < n; ++i)
         names.add (juce::String (aidrum::fillgen::archetypeName (i)));
     return names;
 }
@@ -823,7 +838,13 @@ AIDrumAudioProcessor::buildRequestForMode (aidrum::GenerationMode mode) const
     // that exact MIDI pattern verbatim.
     const float fcValue = apvts.getRawParameterValue (kParamFillComplexity)->load();
     req.fillComplexity = fcValue;
-    const int numFills = (int) aidrum::fillLibrary().size();
+    // v1.6.1-rc.21 — use getFillLibrarySize() (the procedural archetype
+    // count) as the index space, NOT fillLibrary().size(). The two used
+    // to be the same; rc.21 added 5 procedural tom archetypes plus 5
+    // matching fillLibrary entries, and we key the parameter step off
+    // the procedural count. AIBackend::makeFill() already wraps with
+    // `% lib.size()` so out-of-range indices fall back gracefully.
+    const int numFills = getFillLibrarySize();
     req.fillIndex      = (numFills > 0)
         ? juce::jlimit (0, numFills - 1,
                         static_cast<int> (std::round (fcValue * (float) (numFills - 1))))
@@ -1626,7 +1647,7 @@ void AIDrumAudioProcessor::spliceMandatoryFillIntoRegion (
     // bar — fixes the "fill leaving a whole other bar left behind"
     // workflow blocker). The 22 archetypes are ordered light → sludge
     // and the dropdown / cycler index maps directly into them.
-    constexpr int kNumArchetypes = 22;
+    constexpr int kNumArchetypes = aidrum::fillgen::kArchetypeCount;
 
     const float density      = juce::jlimit (0.0f, 1.0f,
                                    apvts.getRawParameterValue (kParamComplexity)->load());
