@@ -70,22 +70,13 @@ namespace aidrum
             repaint();
         }
 
-        // v1.6.1-rc.19 — TRAP MODE relabel. When on, the lane labels
-        // become R CRASH→PAD, L CRASH→SYNTH, RIDE→PHRASE,
-        // SMALL TOM/FLOOR TOM→PERC. The underlying MIDI notes do not
-        // change — the kit slots they hit (China / Crash / Ride /
-        // Mid-Tom / Low-Tom) are simply re-skinned by the Drocetti
-        // bundle which puts pad / synth / phrase / perc samples in
-        // those slots. Lane colours shift to a colder cyan/violet
-        // trap palette so the user can see at a glance the strip is
-        // no longer in rock mode.
-        void setTrapMode (bool on)
-        {
-            if (trapModeOn == on) return;
-            trapModeOn = on;
-            repaint();
-        }
-        bool getTrapMode() const { return trapModeOn; }
+        // v1.6.1-rc.22 — TRAP MODE removed (user: "take out trap mode for cpu
+        // too i dont even see it honestly"). The setter / getter are kept
+        // so PluginEditor (and any saved-state ButtonAttachment) still
+        // links cleanly; both are now no-ops and the strip always renders
+        // the rock palette.
+        void setTrapMode (bool /*on*/) {}
+        bool getTrapMode() const { return false; }
 
         // v1.6.1-rc.19 — right-click on a lane label opens the per-
         // lane SAMPLE PICKER. The editor wires this to a juce::PopupMenu
@@ -207,12 +198,8 @@ namespace aidrum
             // so the new (Nu Rock) 70's Yamaha kit's distinct one-shots get
             // their own dedicated lane.
             struct Lane { const char* label; juce::uint32 col; };
-            // v1.6.1-rc.19 — two parallel lane palettes. Default = rock /
-            // metal labels + warm rose-amber-teal hues; TRAP = pad / synth
-            // / phrase / perc / 808 labels + colder cyan-violet hues so
-            // the user sees at a glance which mode the strip is in.
-            // Lane order is identical between the two so MIDI mapping
-            // stays untouched.
+            // v1.6.1-rc.22 — single rock palette. The cyan/violet TRAP
+            // palette shipped in rc.19 was pulled with TRAP MODE.
             static const Lane kLanesDefault[8] = {
                 { "R CRASH",   0xfff04f7e },  // deep rose (right-side)
                 { "L CRASH",   0xffff8fa9 },  // pink rose  (left-side)
@@ -223,17 +210,7 @@ namespace aidrum
                 { "SNARE",     0xffede7f6 },  // bone white
                 { "KICK",      0xff3ee0c1 },  // teal
             };
-            static const Lane kLanesTrap[8] = {
-                { "PAD",       0xff8e7bff },  // electric violet
-                { "SYNTH",     0xff52c8ff },  // bright cyan
-                { "PHRASE",    0xff39e0c4 },  // mint
-                { "HI-HAT",    0xffffc857 },  // amber (kept)
-                { "PERC",      0xffff8fcb },  // hot pink
-                { "PERC",      0xffd16bff },  // magenta (lower perc / shaker)
-                { "SNARE",     0xffede7f6 },  // bone white (kept)
-                { "808",       0xff3ee0c1 },  // teal (kick slot now 808-flavoured)
-            };
-            const Lane* kLanes = trapModeOn ? kLanesTrap : kLanesDefault;
+            const Lane* kLanes = kLanesDefault;
             const int   kNumLanes = 8;
             const float laneH     = inner.getHeight() / (float) kNumLanes;
 
@@ -1264,7 +1241,7 @@ namespace aidrum
         int                                ghostMask        = 0;
         int                                selectedLaneIdx  = -1;
         int                                stepsPerBar      = 16;
-        bool                               trapModeOn       = false; // v1.6.1-rc.19
+        // v1.6.1-rc.19 — trapModeOn flag removed in rc.22 along with TRAP MODE.
         std::array<juce::Rectangle<float>, 8> cachedLabelRects {};
 
         // v1.6.1-rc.7 — rectangular hover-drag selection. The user can

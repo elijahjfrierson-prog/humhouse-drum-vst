@@ -691,10 +691,12 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
 
         auto& kit = processorRef.getSampleKit();
         const int numLayers = kit.numLayersForLane (laneIdx);
-        const bool trap = arrangementStrip.getTrapMode();
+        // v1.6.1-rc.22 — TRAP MODE removed; always use rock palette names.
+        // kLaneNamesTrap is dead but kept as static data so a future trap
+        // expansion has the names ready without re-hunting the palette.
+        juce::ignoreUnused (kLaneNamesTrap);
         const auto* paramId = kLaneParamIds[(size_t) laneIdx];
-        const juce::String laneName =
-            (trap ? kLaneNamesTrap : kLaneNamesDefault)[(size_t) laneIdx];
+        const juce::String laneName = kLaneNamesDefault[(size_t) laneIdx];
 
         auto* p = processorRef.getAPVTS().getParameter (paramId);
         const int currentOverride = p != nullptr
@@ -1106,10 +1108,14 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // Order still MUST match kBundledKitChoices in PluginProcessor.cpp,
     // otherwise the ComboBoxAttachment to "bundledKit" silently misroutes
     // index 2 (Drocetti) to whatever sits in the editor's slot 2.
+    // v1.6.1-rc.22 — single bundled kit ("(Nu Rock) 70's Yamaha"). User
+    // pulled HeavyStudio + Drocetti ("just keep the first kit"). The
+    // ComboBox is still rendered for visual continuity (the label slot
+    // makes the top-bar layout legible) but it now has exactly one
+    // entry, so picking it is a no-op.
     drumKitBox.addItemList (
-        juce::StringArray { "(Nu Rock) 70's Yamaha",
-                            "(Heavy Studio) Big Room",
-                            "(Drocetti) Trap Kit" }, 1);
+        juce::StringArray { "(Nu Rock) 70's Yamaha" }, 1);
+    drumKitBox.setEnabled (false);
     styleCombo (drumKitBox, drumKitLabel);
     // NB: drumKitBox.onChange is wired up further down, AFTER the APVTS
     // ComboBoxAttachment is created — the attachment ctor steals
@@ -1150,24 +1156,13 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     halfTimeButton.setTooltip ("HALF-TIME — backbeat moves to 3 instead of 2 & 4, giving every groove a slower, heavier feel.");
     addAndMakeVisible (halfTimeButton);
 
-    // v1.6.1-rc.19 — TRAP MODE toggle. Same visual style as HALF-TIME
-    // so it slots naturally next to it on the right combos column.
-    trapModeButton.setClickingTogglesState (true);
-    trapModeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (Palette::kPanel));
-    trapModeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (Palette::kAccentDeep));
-    trapModeButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (Palette::kMuted));
-    trapModeButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (Palette::kBone));
-    trapModeButton.setTooltip (
-        "TRAP MODE — relabels arrangement lanes (L Crash → SYNTH, "
-        "R Crash → PAD, Ride → PHRASE, Toms → PERC, Kick → 808) and "
-        "auto-selects the Drocetti trap kit so the same MIDI plays "
-        "trap-flavoured one-shots. Right-click any lane label for a "
-        "per-lane sample picker.");
-    addAndMakeVisible (trapModeButton);
-    trapModeButton.onClick = [this]
-    {
-        arrangementStrip.setTrapMode (trapModeButton.getToggleState());
-    };
+    // v1.6.1-rc.22 — TRAP MODE button removed (user: "take out trap mode
+    // for cpu too i dont even see it honestly"). The button member is
+    // kept so the ButtonAttachment to "trapMode" still links cleanly
+    // and any saved-state value round-trips, but the button is never
+    // added to the editor and the click handler is gone. APVTS param
+    // stays defined as a hidden-default-false bool in the processor
+    // for backwards compat with rc.19–rc.21 sessions.
 
     // v1.6.1-rc.4 — TIME SCALE: HALF / NORMAL / DOUBLE playback speed.
     // v1.6.1-rc.7 — combo hidden; three dedicated buttons drive the
@@ -1703,13 +1698,10 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     roomAttachment          = std::make_unique<ComboAttachment>  (apvts, "room",          roomBox);
     roomAmountAttachment    = std::make_unique<SliderAttachment> (apvts, "roomAmount",    roomAmountSlider);
     halfTimeAttachment      = std::make_unique<ButtonAttachment> (apvts, "halfTime",      halfTimeButton);
+    // v1.6.1-rc.22 — trapModeAttachment kept so the APVTS param has a
+    // listener target that round-trips a saved-state bool, but the strip
+    // never reads it (always rock palette).
     trapModeAttachment      = std::make_unique<ButtonAttachment> (apvts, "trapMode",      trapModeButton);
-    // v1.6.1-rc.19 — sync the strip with the persisted trapMode value.
-    // ButtonAttachment fires our onClick the first time the host pushes
-    // a saved value; we still call setTrapMode here so the very first
-    // paint after a reload shows the correct labels even before the
-    // user toggles the button.
-    arrangementStrip.setTrapMode (trapModeButton.getToggleState());
     timeScaleAttachment     = std::make_unique<ComboAttachment>   (apvts, "timeScale",     timeScaleBox);
     intensityAttachment     = std::make_unique<SliderAttachment>  (apvts, "intensity",     intensitySlider);
     fillDensityAttachment   = std::make_unique<SliderAttachment>  (apvts, "fillDensity",   fillDensitySlider);
@@ -1896,8 +1888,10 @@ void AIDrumAudioProcessorEditor::resized()
     placeCombo (stepDivBox);
     placeCombo (timeScaleBox);
     halfTimeButton.setBounds (rightCombos.removeFromTop (28).reduced (0, 2));
-    // v1.6.1-rc.19 — TRAP MODE toggle sits directly under HALF-TIME.
-    trapModeButton.setBounds (rightCombos.removeFromTop (28).reduced (0, 2));
+    // v1.6.1-rc.22 — TRAP MODE button slot reclaimed. Button member
+    // still exists for ButtonAttachment, but is never added to the
+    // editor so this slot stays clean.
+    trapModeButton.setBounds (juce::Rectangle<int> ());
 
     area.removeFromTop (8);
 

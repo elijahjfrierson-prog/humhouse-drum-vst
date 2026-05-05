@@ -358,19 +358,15 @@ namespace aidrum
         // Anything else (legacy "Thrash", old "BayGrunge", empty) falls back
         // to NuRockYamaha so older save-states still load *something*
         // instead of going silent.
-        // v1.6.1-rc.19 — third bundled kit "Drocetti" (originally Drocetti — renamed 2025-04-20;
-        // renamed per user request 2025-04-20). User-original trap pack
-        // covering the full 8-lane palette PLUS new sub-categories (synth,
-        // pad, phrase, perc, 808, bass, vox, fx). When TRAP MODE is on
-        // the editor auto-selects "Drocetti" so the lane swaps
-        // (L Crash → Synth, R Crash → Pad, Ride → Phrase, Toms → Perc)
-        // already point at the right sample bank.
+        // v1.6.1-rc.22 — single bundled kit again. HeavyStudio + Drocetti
+        // were pulled at the user's request ("just keep the first kit").
+        // Any saved-state requesting one of the removed prefixes routes
+        // back to NuRockYamaha so projects still load instead of going
+        // silent. Empty / unrecognised names land on NuRockYamaha as well.
         juce::String kitName = kitNameIn.isEmpty()
                                  ? juce::String ("NuRockYamaha")
                                  : kitNameIn;
-        if (kitName != "NuRockYamaha"
-         && kitName != "HeavyStudio"
-         && kitName != "Drocetti")
+        if (kitName != "NuRockYamaha")
             kitName = "NuRockYamaha";
         const juce::String prefix  = kitName + "__";
 
@@ -615,27 +611,30 @@ namespace aidrum
         v.kitRef      = data;
         v.layer       = layer;
 
-        // v1.6.1-rc.18 — programmatic R-hand / L-hand split for snare
-        // hits. Even-indexed snares are right-hand voicing (slightly
-        // sharp + bright), odd-indexed are left-hand voicing (slightly
-        // flat + 9 kHz one-pole roll-off so adjacent rolls breathe like
-        // two hands trading off rather than one hand machine-gunning a
-        // single sample). The ±5¢ pitch detune + the LP shelf together
-        // are what kills the "those snare rolls sound like gunshots"
-        // artefact at the source.
+        // v1.6.1-rc.18 — programmatic R-hand / L-hand split for snare hits.
+        // Even-indexed snares are R-hand (clean), odd are L-hand (one-pole
+        // ~9 kHz roll-off) so adjacent rolls breathe like two hands trading
+        // off rather than one hand machine-gunning a single sample.
+        //
+        // v1.6.1-rc.22 — removed the ±5¢ pitch detune (rc.18 also added a
+        // playRate jitter ±5¢ to the L/R split). User feedback verbatim:
+        // "those snares sound a bit weird and droned/doubled on the pad
+        // at times". Two adjacent snare hits with ±5¢ detune produce a
+        // sub-2 Hz beat frequency on a 200-600 Hz fundamental — exactly
+        // the perceived "drone/wobble". On the manual pad the user is
+        // hammering the same MIDI note repeatedly, so the audible artefact
+        // is amplified. Real drummers don't change pitch between hands;
+        // they change attack envelope and stick angle. The L-hand LPF
+        // damp models that timbral hand-shading without introducing the
+        // detune beating, and the R-hand path stays bone-stock so the
+        // fundamental note is always the sample's natural pitch.
         const bool isSnareLikeNote = (midiNote == 37 || midiNote == 38
                                    || midiNote == 39 || midiNote == 40);
         if (isSnareLikeNote)
         {
             const bool rightHand = ((snareHitCounter & 1) == 0);
-            // 5 cents = 2^(5/1200) ≈ 1.00289. Add a tiny per-hit jitter
-            // so even within one stick the four / five hits in a roll
-            // don't all share the same playback rate.
-            const double cents       = rightHand ?  5.0 : -5.0;
-            const double jitterCents = (((snareHitCounter * 2654435761u) % 7) - 3.0); // -3..+3 cents
-            const double semitones   = (cents + jitterCents) / 100.0;
-            v.playRate = std::pow (2.0, semitones / 12.0);
-            v.lpAmount = rightHand ? 0.0f : 0.55f;
+            v.playRate = 1.0;                          // no pitch detune
+            v.lpAmount = rightHand ? 0.0f : 0.55f;     // L-hand only: ~9 kHz roll-off
             ++snareHitCounter;
         }
     }
