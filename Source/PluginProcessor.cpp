@@ -2892,13 +2892,33 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // this BEFORE the shouldPlay gate too, so the user can audition
     // notes from the DAW even when the plugin's internal transport is
     // stopped (matches every other commercial drum sampler).
-    for (const auto meta : midi)
+    //
+    // v1.6.1-rc.25 — FL Studio Mac crash fix. The previous loop called
+    // `meta.getMessage()` which constructs a juce::MidiMessage from the
+    // raw bytes — for sysex / MTC quarter-frame / MMC messages (which
+    // FL Studio routinely sprays on every block) that constructor
+    // allocates a heap buffer. Heap allocation on the audio thread is
+    // a realtime-safety violation that ATS can promote to a crash on
+    // macOS. Filter at the raw-byte level instead: skip anything that
+    // isn't a 3-byte channel-voice noteOn with non-zero velocity. Also
+    // bail early on empty blocks (FL probes plugins with 0-sample
+    // blocks during scan / project load).
+    if (buffer.getNumSamples() > 0)
     {
-        const auto msg = meta.getMessage();
-        if (! msg.isNoteOn()) continue;
-        fireHostMidiNote (msg.getNoteNumber(),
-                          msg.getFloatVelocity(),
-                          meta.samplePosition);
+        for (const auto meta : midi)
+        {
+            if (meta.numBytes != 3 || meta.data == nullptr) continue;
+            const auto* d = meta.data;
+            // 0x90 = noteOn, low nibble = channel. Running-status
+            // noteOff is encoded as noteOn with velocity 0 — skip.
+            if ((d[0] & 0xF0) != 0x90) continue;
+            const int   note = (int) (d[1] & 0x7F);
+            const int   v7   = (int) (d[2] & 0x7F);
+            if (v7 == 0) continue;
+            fireHostMidiNote (note,
+                              (float) v7 / 127.0f,
+                              meta.samplePosition);
+        }
     }
 
     // Don't echo host MIDI back out as our plugin's MIDI output. The
