@@ -4,7 +4,6 @@
 #include "DrumKit.h"
 #include "GothicLookAndFeel.h"
 #include "ManualGrid.h"
-#include "PianoRoll.h"
 #include "MixerPanel.h"
 #include "PluginProcessor.h"
 
@@ -118,13 +117,12 @@ private:
 
     aidrum::ArrangementStrip  arrangementStrip;
     aidrum::ManualGrid        manualGrid;
-    // v1.6.1-rc.20 — FL-Studio-style piano roll (full chromatic
-    // C0..B10 = 132 keys). Shown when MANUAL is on AND PIANO ROLL is
-    // on, swapping out the drum step grid. Edits the SAME manualPattern_
-    // the step grid edits, so the user can lay drums on the grid and
-    // overdub melodic synth/pad/phrase notes from the piano roll on
-    // the same canvas.
-    aidrum::PianoRoll         pianoRoll;
+    // v1.6.1-rc.24 — the FL-Studio-style chromatic piano roll was
+    // removed. The user couldn't find it during normal use and the
+    // step grid + DAW host MIDI capture (rc.24) cover both manual
+    // editing and chromatic input. The arrangement-strip MidiDragHandle
+    // (rc.18) still exports compositions to the host's piano roll
+    // where they can be edited natively.
     KitVisualizer             kitVisualizer;
     XYPad                     xyPad;
 
@@ -239,14 +237,8 @@ private:
     juce::TextButton          clearManualButton { "CLEAR GRID" };
     juce::TextButton          commitManualButton { "ADD TO ARRANGEMENT" };
 
-    // v1.6.1-rc.20 — toggles inside MANUAL view.
-    //   PIANO ROLL: swaps the 8-row step grid for the FL-Studio piano
-    //               roll (full chromatic C0..B10).
-    //   ONE-SHOT  : when ON, every note dropped in the piano roll is
-    //               flagged so SampleKit plays the underlying layer
-    //               through to its end regardless of MIDI length.
-    juce::TextButton          pianoRollButton  { "PIANO ROLL" };
-    juce::TextButton          oneShotButton    { "ONE-SHOT" };
+    // v1.6.1-rc.20 — PIANO ROLL + ONE-SHOT buttons removed in rc.24
+    // (the FL-style chromatic piano-roll component was retired).
 
     // v1.1.0 Mixer
     juce::TextButton          mixerButton    { "MIXER" };

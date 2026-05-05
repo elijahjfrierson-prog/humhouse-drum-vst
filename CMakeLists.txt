@@ -72,11 +72,19 @@ if(AIDRUM_AAX_SDK_PATH)
     endif()
 endif()
 
+# v1.6.1-rc.24 — fresh plugin identity codes. Logic Pro's AU validation
+# cache (and FL Studio's plugin DB) was holding the old "HumHouse Drums"
+# manufacturer/plugin pair (Humh/Hhdr) and silently mismatching the new
+# Drummer-track + host-MIDI-capture wiring. Bumping BUNDLE_ID +
+# PLUGIN_MANUFACTURER_CODE + PLUGIN_CODE forces every host to register
+# rc.24 as a fresh plugin entry. PRODUCT_NAME / COMPANY_NAME stay stable
+# so the packaging pipeline (macOS .pkg/.dmg, Windows .exe, CI artifact
+# names) doesn't have to change in lockstep with every identity bump.
 juce_add_plugin(AIDrumVST
     COMPANY_NAME              "HumHouse"
-    BUNDLE_ID                 "com.humhouse.humhousedrums"
-    PLUGIN_MANUFACTURER_CODE  Humh
-    PLUGIN_CODE               Hhdr
+    BUNDLE_ID                 "com.humhouse.humhousedrums.mk2"
+    PLUGIN_MANUFACTURER_CODE  Hhm2
+    PLUGIN_CODE               Hh24
     FORMATS                   ${AIDRUM_FORMATS}
     PRODUCT_NAME              "HumHouse Drums"
     IS_SYNTH                  TRUE
@@ -146,7 +154,6 @@ target_sources(AIDrumVST PRIVATE
     Source/PatternStrip.h
     Source/ArrangementStrip.h
     Source/ManualGrid.h
-    Source/PianoRoll.h
 )
 
 target_compile_definitions(AIDrumVST PUBLIC
