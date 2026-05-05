@@ -161,69 +161,70 @@ namespace aidrum
             f.closeCrash (0.85f, 0.65f);
         }
 
-        // 2 — Eighth Snare Roll: snare-led but with hat 16ths under it,
-        // ride accents on phrase tops, and a tom drop on beat 4 so the
-        // last quarter routes off the snare. Density >=0.55 doubles the
-        // 16ths between the snare 8ths.
+        // 2 — Eighth Tom Roll (rc.23, replaces snare-led variant):
+        // 8th-note tom run cycling H→M→L→F→H→M→L→F across the bar so
+        // every voice fires twice, with snare on backbeats for the
+        // band-fill spine. Closed-hat 16ths under it for forward motion.
         inline void eighthSnareRoll (FillCtx& f)
         {
-            for (int s = 0; s < 6; ++s)  // first 3 beats snare on 8ths
-                f.add (kSnare, s * 0.5, 0.55f + 0.05f * (s % 2));
-            // Closed-hat 16ths under the snare — keeps the bar busy.
+            const int tomOrder[8] = { kHighTom, kMidTom, kLowTom, kFloorTom,
+                                       kHighTom, kMidTom, kLowTom, kFloorTom };
+            for (int s = 0; s < 8; ++s)
+            {
+                const float v = 0.62f + 0.08f * (s % 2 == 0)
+                              + 0.06f * (s % 4 == 0);
+                f.add (tomOrder[s], s * 0.5, v);
+            }
+            // Closed-hat 16ths under the toms — keeps the bar busy.
             for (int s = 0; s < 12; ++s)
                 f.add (kClosedHat, s * 0.25, 0.28f + 0.08f * (s % 4 == 0));
-            // Ride bell on beat 1 and 3.
+            // Snare on backbeats — band-fill spine, not a roll.
+            f.add (kSnare, 1.0, 0.78f);
+            f.add (kSnare, 3.0, 0.85f);
             f.add (kRide, 0.0, 0.55f);
             f.add (kRide, 2.0, 0.55f);
-            // Beat 4 — swap snare for a high→mid→low→floor 16th descent.
-            f.add (kHighTom, 3.00, 0.78f);
-            f.add (kMidTom,  3.25, 0.80f);
-            f.add (kLowTom,  3.50, 0.85f);
-            f.add (kFloorTom,3.75, 0.92f);
-            if (f.density >= 0.55f)
-                for (int s = 0; s < 6; ++s)
-                    f.add (kSnare, s * 0.5 + 0.25, 0.35f);
-            f.closeCrash (0.92f, 0.72f);
+            // Beat 4 — floor tom doublet leading into close.
+            f.add (kFloorTom, 3.50, 0.88f);
+            f.add (kFloorTom, 3.75, 0.96f);
+            f.closeCrash (0.92f, 0.78f);
         }
 
-        // 3 — Sixteenth Snare Roll: snare 16ths across beats 1–2, then
-        // beat 3 hands off to mid+low toms and beat 4 closes with a
-        // floor-tom doublet → crash. Open-hat sizzle on the "e" of every
-        // beat keeps it lively and not snare-only.
+        // 3 — Sixteenth Tom Roll (rc.23, replaces snare-led variant):
+        // 16ths split evenly across all four toms so every beat is a
+        // different voice. Snare on the "e" of every beat keeps motion
+        // without becoming a snare roll. Open-hat splash on the "and".
         inline void sixteenthSnareRoll (FillCtx& f)
         {
-            for (int s = 0; s < 8; ++s)  // beats 1–2 snare 16ths
-                f.add (kSnare, s * 0.25,
-                       (s % 4 == 0 ? 0.78f : (s % 2 == 0 ? 0.62f : 0.50f)));
-            // Beat 3 — mid→low tom 16ths.
-            f.add (kMidTom, 2.00, 0.78f);
-            f.add (kMidTom, 2.25, 0.72f);
-            f.add (kLowTom, 2.50, 0.82f);
-            f.add (kLowTom, 2.75, 0.78f);
-            // Beat 4 — floor tom doublet leading into close.
-            f.add (kFloorTom, 3.00, 0.85f);
-            f.add (kFloorTom, 3.25, 0.78f);
-            f.add (kSnare,    3.50, 0.78f);
-            f.add (kFloorTom, 3.75, 0.95f);
-            // Open-hat splash on the "e" of every beat.
+            const int tomOrder[4] = { kHighTom, kMidTom, kLowTom, kFloorTom };
+            for (int s = 0; s < 16; ++s)
+            {
+                const int beat = s / 4;
+                const float accent = (s % 4 == 0) ? 0.20f : 0.0f;
+                f.add (tomOrder[beat], s * 0.25, 0.62f + accent);
+            }
+            // Snare on the "e" of every beat — band-fill spine.
             for (int b = 0; b < 4; ++b)
-                f.add (kOpenHat, b + 0.25, 0.30f);
-            if (f.density >= 0.80f)
-                for (int s = 0; s < 16; ++s)
-                    f.add (kSnare, s * 0.125 + 0.0625, 0.28f);
-            f.closeCrash (0.95f, 0.80f);
+                f.add (kSnare, b + 0.125, 0.55f);
+            // Open-hat splash on the "and" of every beat.
+            for (int b = 0; b < 4; ++b)
+                f.add (kOpenHat, b + 0.5, 0.32f);
+            // Beat 4 — floor tom doublet leading into close.
+            f.add (kFloorTom, 3.50, 0.88f);
+            f.add (kFloorTom, 3.75, 0.98f);
+            f.closeCrash (0.95f, 0.85f);
         }
 
-        // 4 — Snare Crescendo: 16ths with a real velocity ramp
-        // (0.42 → 1.0). Cymbal swell underneath — closed hat on the
-        // first half, open hat on the back half, ride bell on every
-        // downbeat. Toms break in on beat 4 so the climax isn't all snare.
+        // 4 — Tom Crescendo (rc.23, replaces snare-led variant): tom
+        // 16ths with a real velocity ramp (0.42 → 1.0). Toms cycle
+        // H→M→L→F across each beat so the crescendo descends as it
+        // climbs in volume. Cymbal swell underneath, snare on backbeats.
         inline void snareCrescendo (FillCtx& f)
         {
-            for (int s = 0; s < 12; ++s) // beats 1–3 snare crescendo
+            const int tomOrder[4] = { kHighTom, kMidTom, kLowTom, kFloorTom };
+            for (int s = 0; s < 12; ++s) // beats 1–3 tom crescendo
             {
-                const float t = (float) s / 11.0f; // rc.16: divisor matches loop bound so velocity ramps to 1.0
-                f.add (kSnare, s * 0.25, 0.42f + t * 0.55f);
+                const float t = (float) s / 11.0f;
+                f.add (tomOrder[s % 4], s * 0.25, 0.42f + t * 0.55f);
             }
             // Closed hat under beats 1–2, open hat under beat 3 (swell).
             // rc.16: extended to 12 hits (s<12) so the open-hat swell on
@@ -234,15 +235,15 @@ namespace aidrum
             f.add (kRide, 0.0, 0.55f);
             f.add (kRide, 1.0, 0.62f);
             f.add (kRide, 2.0, 0.72f);
-            // Beat 4 — high→mid→low→floor tom 16ths into the crash.
+            // Snare backbeats hold the spine through the climb.
+            f.add (kSnare, 1.0, 0.65f);
+            f.add (kSnare, 3.0, 0.85f);
+            // Beat 4 — full four-tom 16th descent into the crash.
             f.add (kHighTom, 3.00, 0.85f);
             f.add (kMidTom,  3.25, 0.88f);
             f.add (kLowTom,  3.50, 0.92f);
             f.add (kFloorTom,3.75, 1.00f);
-            if (f.density >= 0.55f)
-                for (int s = 0; s < 12; ++s)
-                    f.add (kSnare, s * 0.25 + 0.125, 0.30f + 0.50f * (s / 11.0f));
-            f.closeCrash (0.98f, 0.85f);
+            f.closeCrash (0.98f, 0.92f);
         }
 
         // 5 — Tom Descent: real four-tom descent (high → mid → low →
@@ -336,21 +337,28 @@ namespace aidrum
             f.closeCrash (0.95f, 0.82f);
         }
 
-        // 9 — Snare 32nd Roll: snare 32nds for beats 1–3, beat 4 hands
-        // off to a four-tom 16th descent. Open-hat sizzle on every
-        // backbeat for the swell, ride bell on each downbeat.
+        // 9 — Tom 32nd Storm (rc.23, replaces snare-led variant):
+        // tom 32nds for beats 1–3 cycling across all 4 voices, beat 4
+        // hands off to a tight four-tom 16th descent. Ride bell on
+        // downbeats, open-hat splash on the swell.
         inline void snare32ndRoll (FillCtx& f)
         {
+            const int tomOrder[4] = { kHighTom, kMidTom, kLowTom, kFloorTom };
             for (int s = 0; s < 24; ++s) // beats 1–3 only
             {
-                const float v = 0.45f + 0.30f * (s / 23.0f); // rc.16: divisor matches loop bound
-                f.add (kSnare, s * 0.125, v + (s % 4 == 0 ? 0.10f : 0.0f));
+                const float v = 0.45f + 0.30f * (s / 23.0f);
+                f.add (tomOrder[s % 4], s * 0.125,
+                       v + (s % 4 == 0 ? 0.10f : 0.0f));
             }
             // Beat 4 = full four-tom 16th descent.
             f.add (kHighTom, 3.00, 0.85f);
             f.add (kMidTom,  3.25, 0.88f);
             f.add (kLowTom,  3.50, 0.92f);
             f.add (kFloorTom,3.75, 1.00f);
+            // Snare on every downbeat — keeps the rapid tom run from
+            // turning into mush.
+            for (int b = 0; b < 3; ++b)
+                f.add (kSnare, (double) b, 0.62f + 0.08f * b);
             // Ride bell + open-hat splash for the swell.
             f.add (kRide,   0.0, 0.65f);
             f.add (kRide,   1.0, 0.70f);
@@ -360,51 +368,60 @@ namespace aidrum
             f.closeCrash (1.0f, 0.92f);
         }
 
-        // 10 — Snare 64th Crescendo: snare 8ths for the first half,
-        // 64th cascade in beat 3, beat 4 hands off to a tom triplet
-        // descent into the crash. Hat 16ths under the early bars.
+        // 10 — Tom 64th Cascade (rc.23, replaces snare-led variant):
+        // tom 8ths first half, 64th tom cascade across the four voices
+        // on beat 3, tom triplet descent on beat 4. Hat 16ths glue.
         inline void snare64thCrescendo (FillCtx& f)
         {
-            for (int s = 0; s < 4; ++s)
-                f.add (kSnare, s * 0.5, 0.55f);
+            // Tom 8ths beats 1–2: H, M, L, F.
+            f.add (kHighTom, 0.0, 0.62f);
+            f.add (kMidTom,  0.5, 0.66f);
+            f.add (kLowTom,  1.0, 0.70f);
+            f.add (kFloorTom,1.5, 0.74f);
             // Hat 16ths under beats 1–2 glue.
             for (int s = 0; s < 8; ++s)
                 f.add (kClosedHat, s * 0.25, 0.30f + 0.06f * (s % 4 == 0));
-            // 64th cascade on beat 3 — 16 hits in 1 beat.
+            // 64th tom cascade on beat 3 — 16 hits split across 4 toms.
+            const int tomOrder[4] = { kHighTom, kMidTom, kLowTom, kFloorTom };
             for (int s = 0; s < 16; ++s)
-                f.add (kSnare, 2.0 + s * 0.0625, 0.70f + 0.25f * (s / 15.0f));
-            // Beat 4 — tom triplet descent (4 voices, 4 hits).
+                f.add (tomOrder[s / 4], 2.0 + s * 0.0625,
+                       0.70f + 0.25f * (s / 15.0f));
+            // Beat 4 — tom triplet descent.
             f.add (kHighTom, 3.00, 0.85f);
             f.add (kMidTom,  3.20, 0.88f);
             f.add (kLowTom,  3.40, 0.92f);
             f.add (kFloorTom,3.60, 0.98f);
             f.add (kFloorTom,3.80, 1.00f);
-            f.closeCrash (1.0f, 0.92f);
+            // Snare on the backbeat — band-fill spine.
+            f.add (kSnare, 1.0, 0.72f);
+            f.closeCrash (1.0f, 0.95f);
         }
 
-        // 11 — Triplet Snare Roll: snare 8th-note triplets for beats
-        // 1–3, beat 4 hands off to a four-tom triplet descent so it
-        // doesn't sound like a snare drum solo.
+        // 11 — Tom Triplet Storm (rc.23, replaces snare-led variant):
+        // 9 tom triplets cycling across H→M→L→F→H→M→L→F→H, beat 4 hands
+        // off to a tom triplet descent for the close. Snare on every
+        // downbeat anchors the 3-against-4 feel.
         inline void tripletSnareRoll (FillCtx& f)
         {
-            // 9 triplets across beats 1–3.
+            const int tomOrder[4] = { kHighTom, kMidTom, kLowTom, kFloorTom };
+            // 9 triplets across beats 1–3, cycling toms.
             for (int s = 0; s < 9; ++s)
             {
                 const double beat = s * (1.0 / 3.0);
-                f.add (kSnare, beat, 0.55f + 0.10f * (s % 3 == 0));
+                f.add (tomOrder[s % 4], beat, 0.65f + 0.10f * (s % 3 == 0));
             }
-            // Hat triplets under beats 1–2 — fattens the snare line.
+            // Hat triplets under beats 1–2 — fattens the tom line.
             for (int s = 0; s < 6; ++s)
                 f.add (kClosedHat, s * (1.0 / 3.0) + (1.0 / 6.0), 0.30f);
+            // Snare on every downbeat — band-fill anchor.
+            for (int b = 0; b < 3; ++b)
+                f.add (kSnare, (double) b, 0.62f + 0.08f * b);
             // Beat 4 = tom triplets across 4 voices.
             f.add (kHighTom, 3.00, 0.82f);
             f.add (kMidTom,  3.00 + 1.0 / 3.0, 0.86f);
             f.add (kLowTom,  3.00 + 2.0 / 3.0, 0.90f);
             f.add (kFloorTom,3.95, 0.95f);
-            if (f.density >= 0.55f)
-                for (int s = 0; s < 18; ++s)
-                    f.add (kSnare, s * (1.0 / 6.0) + (1.0 / 12.0), 0.32f);
-            f.closeCrash (0.95f, 0.82f);
+            f.closeCrash (0.95f, 0.92f);
         }
 
         // 12 — Tom Triplet Descent: 12 triplets across FOUR toms now
@@ -432,11 +449,15 @@ namespace aidrum
         // on beat 4.
         inline void buzzRoll (FillCtx& f)
         {
-            for (int s = 0; s < 24; ++s) // beats 1–3 buzz
+            // rc.23 — replaced snare 32nd buzz with a floor-tom 32nd buzz
+            // anchored by mid-tom downbeats. Same chaotic-roll energy,
+            // but rooted in toms instead of being a 3-beat snare drum solo.
+            for (int s = 0; s < 24; ++s) // beats 1–3 floor-tom buzz
             {
                 const double beat = s * 0.125;
                 const float  v    = 0.30f + f.roll() * 0.30f;
-                f.add (kSnare, beat, v + 0.15f * (s % 4 == 0));
+                const int    note = (s % 4 == 0) ? kMidTom : kFloorTom;
+                f.add (note, beat, v + 0.15f * (s % 4 == 0));
             }
             for (int b = 0; b < 3; ++b)
             {
@@ -834,20 +855,20 @@ namespace aidrum
             static const char* kNames[27] = {
                 "Ghost Roll",            // 0
                 "Half-Time Snare",       // 1
-                "Eighth Snare Roll",     // 2
-                "Sixteenth Snare Roll",  // 3
-                "Snare Crescendo",       // 4
+                "Eighth Tom Roll",       // 2 (rc.23, was Eighth Snare Roll)
+                "Sixteenth Tom Roll",    // 3 (rc.23, was Sixteenth Snare Roll)
+                "Tom Crescendo",         // 4 (rc.23, was Snare Crescendo)
                 "Tom Descent",           // 5
                 "Tom Roll Down",         // 6
                 "Tom-Snare Alternate",   // 7
                 "Flam Roll",             // 8
-                "Snare 32nd Roll",       // 9
-                "Snare 64th Crescendo",  // 10
-                "Triplet Snare Roll",    // 11
+                "Tom 32nd Storm",        // 9 (rc.23, was Snare 32nd Roll)
+                "Tom 64th Cascade",      // 10 (rc.23, was Snare 64th Crescendo)
+                "Tom Triplet Storm",     // 11 (rc.23, was Triplet Snare Roll)
                 "Tom Triplet Descent",   // 12
-                "Buzz Roll",             // 13
+                "Floor-Tom Buzz",        // 13 (rc.23, was snare Buzz Roll)
                 "Snare-Tom-Crash",       // 14
-                "Doubled Snare",         // 15
+                "Doubled Snare + Toms",  // 15
                 "Sludge Tom Flare",      // 16
                 "Kick Buildup",          // 17
                 "Kick-Tom Buildup",      // 18

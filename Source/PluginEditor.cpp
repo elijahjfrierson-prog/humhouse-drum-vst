@@ -1264,6 +1264,13 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         };
         // v1.6.1-rc.21 — FILL dropdown restored at user request.
         fillSelectorBox.setVisible (true);
+        // v1.6.1-rc.23 — Devin Review regression fix: the dropdown was
+        // configured + setVisible (true) + setBounds called, but never
+        // added to the editor's component tree. JUCE only paints
+        // children that have been addAndMakeVisible'd; without these
+        // calls the FILL dropdown silently disappeared after rc.21.
+        addAndMakeVisible (fillSelectorTitle);
+        addAndMakeVisible (fillSelectorBox);
     }
 
     // v1.6.1-rc.7 — GHOST button. Workflow: user clicks a row label on

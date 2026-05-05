@@ -1138,9 +1138,25 @@ void AIDrumAudioProcessor::appendStarterGroove (int index)
     if (index < 0 || index >= static_cast<int> (lib.size()))
         return;
 
-    aidrum::MidiPattern pat = lib[(size_t) index].pattern;
-    // Force tempo onto the pattern so the arrangement strip sees a length
-    // that matches what the user hears.
+    // v1.6.1-rc.23 — STARTER picker + Scripter-style COMPOSE cycler
+    // used to push the raw 1- or 2-bar library pattern straight onto
+    // the arrangement with no fill splice. Match the RANDOMIZE path:
+    // expand to the user's target pattern length, balance crash/hat
+    // against intensity, then splice the mandatory bar-8 fill so every
+    // intelligence-pad / starter / cycler region gets a closing-bar
+    // fill just like RANDOMIZE / + (mold-around) regions do.
+    const double targetBeats = patternLengthBeatsFromChoice (
+        (int) apvts.getRawParameterValue (kParamPatternLength)->load());
+    const int targetBars = juce::jlimit (1, 64,
+        (int) std::lround (targetBeats / 4.0));
+    aidrum::MidiPattern pat = expandGrooveToTargetBars (
+        lib[(size_t) index].pattern,
+        static_cast<std::uint64_t> (index) ^ 0xA1D3ULL,
+        targetBars);
+    applyIntensityCrashHatBalance (pat,
+                                   static_cast<std::uint64_t> (index) ^ 0xC0FEULL);
+    spliceMandatoryFillIntoRegion (pat, index);
+
     std::lock_guard<std::mutex> lock (arrangementMutex);
     arrangement.push_back (std::move (pat));
 }
@@ -2484,6 +2500,21 @@ void AIDrumAudioProcessor::commitManualPatternAsRegion()
     // chromatic synth/pad/phrase note placed via the FL piano roll
     // would be silently scrubbed once the user leaves manual mode.
     remapped.isManualOrigin = true;
+
+    // v1.6.1-rc.23 — Mandatory bar-8 fill splice on EVERY committed
+    // region, regardless of source. Previously only AI-composed paths
+    // (composeMoldAroundForKit / randomizePatternForKit) called the
+    // splice, so user-drawn manual / piano-roll / step-grid patterns
+    // were committed without the closing-bar fill. User explicitly
+    // asked: "ALL PATTERNS INCLUDING INTELLIGENCE PAD HAVE FILLS".
+    // The splice walks the region's lengthInBeats and only acts on
+    // ≥2-bar regions, so 1-bar manual sketches stay untouched.
+    {
+        const auto seed = static_cast<int> (
+            std::hash<std::size_t>{} (remapped.notes.size())
+            ^ static_cast<std::size_t> (remapped.lengthInBeats * 1000.0));
+        spliceMandatoryFillIntoRegion (remapped, seed);
+    }
 
     std::lock_guard<std::mutex> lock (arrangementMutex);
     arrangement.push_back (std::move (remapped));
