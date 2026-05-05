@@ -2494,12 +2494,6 @@ void AIDrumAudioProcessor::commitManualPatternAsRegion()
         std::lock_guard<std::mutex> lock (manualMutex);
         remapped = manualPattern;
     }
-    remapped = withActiveKitApplied (std::move (remapped));
-    // v1.6.1-rc.20-fix5 — tag the committed region so render +
-    // export skip the GM-drum whitelist for it. Without this, every
-    // chromatic synth/pad/phrase note placed via the FL piano roll
-    // would be silently scrubbed once the user leaves manual mode.
-    remapped.isManualOrigin = true;
 
     // v1.6.1-rc.23 — Mandatory bar-8 fill splice on EVERY committed
     // region, regardless of source. Previously only AI-composed paths
@@ -2509,12 +2503,29 @@ void AIDrumAudioProcessor::commitManualPatternAsRegion()
     // asked: "ALL PATTERNS INCLUDING INTELLIGENCE PAD HAVE FILLS".
     // The splice walks the region's lengthInBeats and only acts on
     // ≥2-bar regions, so 1-bar manual sketches stay untouched.
+    //
+    // Devin Review fix: splice MUST run before withActiveKitApplied.
+    // The procedural fill generator (aidrum::fillgen::generate) always
+    // emits GM note numbers (kSnare=38, kKick=36, ...). If we spliced
+    // after the kit remap, fill notes would stay in GM while user
+    // notes got pushed to kit-specific note numbers (e.g. snare
+    // GM38 → 40 on Thrash) and would also miss the per-kit
+    // velocityScale that withActiveKitApplied applies to every note.
+    // Splicing first keeps both user + fill notes in GM, then the
+    // single remap pass converts them together.
     {
         const auto seed = static_cast<int> (
             std::hash<std::size_t>{} (remapped.notes.size())
             ^ static_cast<std::size_t> (remapped.lengthInBeats * 1000.0));
         spliceMandatoryFillIntoRegion (remapped, seed);
     }
+
+    remapped = withActiveKitApplied (std::move (remapped));
+    // v1.6.1-rc.20-fix5 — tag the committed region so render +
+    // export skip the GM-drum whitelist for it. Without this, every
+    // chromatic synth/pad/phrase note placed via the FL piano roll
+    // would be silently scrubbed once the user leaves manual mode.
+    remapped.isManualOrigin = true;
 
     std::lock_guard<std::mutex> lock (arrangementMutex);
     arrangement.push_back (std::move (remapped));
