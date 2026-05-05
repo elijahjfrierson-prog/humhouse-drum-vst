@@ -1072,9 +1072,12 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // Order still MUST match kBundledKitChoices in PluginProcessor.cpp,
     // otherwise the ComboBoxAttachment to "bundledKit" silently misroutes
     // index 2 (Drocetti) to whatever sits in the editor's slot 2.
+    // v1.6.1-rc.26 — Heavy Studio pulled (user: "just the trap kit and
+    // my nu rock kit"). Two-entry combo. Order MUST stay in lockstep
+    // with kBundledKitChoices in PluginProcessor.cpp so the
+    // ComboBoxAttachment to "bundledKit" hits the right WAV-prefix.
     drumKitBox.addItemList (
         juce::StringArray { "(Nu Rock) 70's Yamaha",
-                            "(Heavy Studio) Big Room",
                             "(Drocetti) Trap Kit" }, 1);
     styleCombo (drumKitBox, drumKitLabel);
     // NB: drumKitBox.onChange is wired up further down, AFTER the APVTS

@@ -143,14 +143,19 @@ namespace
     // the arrangement strip lanes (L Crash → Synth, R Crash → Pad,
     // Ride → Phrase, Toms → Perc) so the SAME MIDI now drives a
     // trap-flavoured palette without any new voice infrastructure.
+    // v1.6.1-rc.26 — Heavy Studio dropped at user's request ("just the
+    // trap kit and my nu rock kit"). Two bundled kits remain: NuRock
+    // (default rock palette) + Drocetti (trap). Index 1 used to be
+    // HeavyStudio; saved sessions pinned to that index now resolve to
+    // Drocetti via the array order. SampleKit::loadBundled also accepts
+    // "HeavyStudio" defensively and falls back to NuRockYamaha so any
+    // host-saved-state with the old prefix still loads cleanly.
     const juce::StringArray kBundledKitChoices {
         "NuRockYamaha",
-        "HeavyStudio",
         "Drocetti"
     };
     const juce::StringArray kBundledKitDisplayNames {
         "(Nu Rock) 70's Yamaha",
-        "(Heavy Studio) Big Room",
         "(Drocetti) Trap Kit"
     };
 

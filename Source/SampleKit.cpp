@@ -365,11 +365,17 @@ namespace aidrum
         // the editor auto-selects "Drocetti" so the lane swaps
         // (L Crash → Synth, R Crash → Pad, Ride → Phrase, Toms → Perc)
         // already point at the right sample bank.
+        // v1.6.1-rc.26 — Heavy Studio dropped from the bundled set
+        // ("just the trap kit and my nu rock kit"). Two prefixes ship:
+        //   "NuRockYamaha"  (rc.8 default)
+        //   "Drocetti"      (rc.19 user trap pack)
+        // "HeavyStudio" still falls through this gate to NuRockYamaha
+        // so any saved-state from rc.17–rc.24 that pinned the kit to
+        // Heavy Studio loads cleanly instead of going silent.
         juce::String kitName = kitNameIn.isEmpty()
                                  ? juce::String ("NuRockYamaha")
                                  : kitNameIn;
         if (kitName != "NuRockYamaha"
-         && kitName != "HeavyStudio"
          && kitName != "Drocetti")
             kitName = "NuRockYamaha";
         const juce::String prefix  = kitName + "__";
