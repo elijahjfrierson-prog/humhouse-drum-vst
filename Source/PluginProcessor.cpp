@@ -1193,7 +1193,14 @@ void AIDrumAudioProcessor::appendRandomGrooveForKit (int kitIndex)
     // taps audition every groove in order, then loop. The counter is
     // per-kit (kitIndex 0..N-1) so switching kits doesn't yank the user
     // mid-cycle.
-    const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
+    // v1.6.1-rc.24 — intelligence pad / cycler now draws from SoCal-only
+    // (the imported-with-fills pool) per user direction "intelligence
+    // pad grooves only randomized grooves added" + "fills must always
+    // be in the patterns". Falls back to the full bucket if SoCal is
+    // somehow empty in a future build.
+    const auto& socal  = aidrum::socalIndicesForKit (kitIndex);
+    const auto& bucket = ! socal.empty() ? socal
+                                         : aidrum::starterIndicesForKit (kitIndex);
     if (bucket.empty())
         return;
     const int safeKit = juce::jlimit (0, (int) composeCycleIndex.size() - 1,
@@ -1216,7 +1223,13 @@ void AIDrumAudioProcessor::appendRandomGrooveForKit (int kitIndex)
 // kicks on the same downbeat.
 void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
 {
-    const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
+    // v1.6.1-rc.24 — COMPOSE / mold-around now draws from the SoCal-only
+    // (imported-with-fills) pool to match the cycler + RANDOMIZE pads.
+    // User direction: "intelligence pad grooves only randomized grooves
+    // added — those imports have fills baked in".
+    const auto& socal  = aidrum::socalIndicesForKit (kitIndex);
+    const auto& bucket = ! socal.empty() ? socal
+                                         : aidrum::starterIndicesForKit (kitIndex);
     if (bucket.empty())
         return;
 
@@ -1340,7 +1353,13 @@ void AIDrumAudioProcessor::composeMoldAroundForKit (int kitIndex)
 // or appends one if the arrangement is empty.
 void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
 {
-    const auto& bucket = aidrum::starterIndicesForKit (kitIndex);
+    // v1.6.1-rc.24 — RANDOMIZE pulls from SoCal-only (imported-with-
+    // fills) per user direction. The COMPOSE / cycler / RANDOMIZE pads
+    // now share one pool, every region landed has a fill present
+    // (either baked-in or spliced via spliceMandatoryFillIntoRegion).
+    const auto& socal  = aidrum::socalIndicesForKit (kitIndex);
+    const auto& bucket = ! socal.empty() ? socal
+                                         : aidrum::starterIndicesForKit (kitIndex);
     if (bucket.empty())
         return;
 
@@ -2338,84 +2357,11 @@ void AIDrumAudioProcessor::clearManualPattern()
     manualPattern.notes.clear();
 }
 
-// v1.6.1-rc.20 — PianoRoll API. addManualNote / removeManualNote /
-// moveManualNote sit alongside the step-grid setManualCell helpers
-// and write into the same manualPattern_. Notes are kept identifiable
-// by (noteNumber, startBeat); the half-step-tolerance match handles
-// the quantization the PianoRoll applies before calling these.
-void AIDrumAudioProcessor::addManualNote (int midiNote, double startBeat,
-                                          double lengthBeat, float velocity,
-                                          bool oneShot)
-{
-    if (startBeat < 0.0 || lengthBeat <= 0.0) return;
-    std::lock_guard<std::mutex> lock (manualMutex);
-    if (startBeat >= manualPattern.lengthInBeats) return;
-
-    const int clampedNote = juce::jlimit (0, 127, midiNote);
-
-    // v1.6.1-rc.20-fix5 — dedup mirrors setManualCellStep. Without
-    // this, a click whose raw (unsnapped) beat lands just before an
-    // existing note's start boundary misses noteAt() (raw beat <
-    // n.startBeat), but snapToStep rounds to the same beat, so
-    // onAddNote pushes a duplicate at the same (note, beat). The
-    // duplicate doubles playback velocity, and moveManualNote only
-    // touches the first match, orphaning the second.
-    for (auto& n : manualPattern.notes)
-    {
-        if (n.noteNumber == clampedNote
-            && std::abs (n.startBeat - startBeat) < 1.0e-3)
-        {
-            n.lengthBeat = juce::jmax (0.01, lengthBeat);
-            n.velocity   = juce::jlimit (0.05f, 1.0f, velocity);
-            n.oneShot    = oneShot;
-            return;
-        }
-    }
-
-    aidrum::MidiNote n;
-    n.noteNumber = clampedNote;
-    n.startBeat  = startBeat;
-    n.lengthBeat = juce::jmax (0.01, lengthBeat);
-    n.velocity   = juce::jlimit (0.05f, 1.0f, velocity);
-    n.oneShot    = oneShot;
-    manualPattern.notes.push_back (n);
-}
-
-void AIDrumAudioProcessor::removeManualNote (int midiNote, double startBeat)
-{
-    std::lock_guard<std::mutex> lock (manualMutex);
-    auto& notes = manualPattern.notes;
-    notes.erase (
-        std::remove_if (notes.begin(), notes.end(),
-                        [&] (const aidrum::MidiNote& n)
-                        {
-                            return n.noteNumber == midiNote
-                                && std::abs (n.startBeat - startBeat) < 1.0e-3;
-                        }),
-        notes.end());
-}
-
-void AIDrumAudioProcessor::moveManualNote (int oldMidiNote, double oldStartBeat,
-                                           int newMidiNote, double newStartBeat,
-                                           double newLengthBeat)
-{
-    if (newLengthBeat <= 0.0) return;
-    std::lock_guard<std::mutex> lock (manualMutex);
-    if (newStartBeat < 0.0
-        || newStartBeat >= manualPattern.lengthInBeats) return;
-
-    for (auto& n : manualPattern.notes)
-    {
-        if (n.noteNumber == oldMidiNote
-            && std::abs (n.startBeat - oldStartBeat) < 1.0e-3)
-        {
-            n.noteNumber = juce::jlimit (0, 127, newMidiNote);
-            n.startBeat  = newStartBeat;
-            n.lengthBeat = juce::jmax (0.01, newLengthBeat);
-            return;
-        }
-    }
-}
+// v1.6.1-rc.24 — PianoRoll API removed alongside the FL-style
+// chromatic piano-roll component. The step grid (setManualCellStep /
+// clearManualCellStep) is the only manual editor. Chromatic input
+// is now provided by the host's piano roll via processBlock's
+// host-MIDI capture path.
 
 aidrum::MidiPattern AIDrumAudioProcessor::getManualPattern() const
 {
@@ -2881,7 +2827,78 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
-    // Don't let incoming MIDI leak into our generated pattern output.
+    // v1.6.1-rc.24 — Logic Pro Drummer / FL Studio piano roll / any
+    // host MIDI compat. Previously midi.clear() ran first thing, which
+    // wiped every host noteOn before the sampler ever saw it — that's
+    // why the plugin sounded "muted" on a Logic Drummer track and FL
+    // Studio's piano roll couldn't drive the kit. Capture inbound host
+    // noteOns up-front and dispatch them through the active-kit GM
+    // remap into the same sampler/synth path our COMPOSE/RANDOMIZE
+    // arrangement uses, so the plugin behaves like any standard drum
+    // sampler (Battery / Superior Drummer / EZdrummer / Addictive
+    // Drums) AND keeps emitting its own arrangement on top.
+    drumSynth.setMasterGain (outputLevel.load (std::memory_order_relaxed));
+    const bool useSamples = sampleKit.isActive();
+    const auto activeKitForHost = static_cast<aidrum::DrumKit> (
+        (int) apvts.getRawParameterValue (kParamDrumKit)->load());
+    const auto& profForHost     = aidrum::drumKitProfile (activeKitForHost);
+
+    auto fireHostMidiNote = [&] (int note, float vel, int sampleOffset)
+    {
+        // Mirror withActiveKitApplied()'s GM → kit remap so the host
+        // can program with standard GM drum note numbers (kick=36,
+        // snare=38, hat=42, ride=51, etc.) and have them route to the
+        // active kit's specific slots. Kits like Thrash / Sludge / 808
+        // remap GM 38 to 40 / 39, and applying the same lookup here
+        // keeps host MIDI in sync with the COMPOSE/RANDOMIZE path.
+        constexpr int kKickGM = 36, kSnareGM = 38, kSideStickGM = 37, kClapGM = 39;
+        constexpr int kClosedHatGM = 42, kPedalHatGM = 44, kOpenHatGM = 46;
+        constexpr int kRideGM = 51, kRideBellGM = 53, kCrashGM = 49,
+                      kCrashAltGM = 57, kChinaGM = 52;
+        constexpr int kFloorTomGM = 41, kLowTomGM = 43, kMidTomGM = 45, kHighTomGM = 48;
+        if      (note == kKickGM)      note = profForHost.kick;
+        else if (note == kSnareGM)
+            note = (vel <= profForHost.ghostThreshold
+                    && profForHost.ghostSnare != profForHost.snare)
+                     ? profForHost.ghostSnare : profForHost.snare;
+        else if (note == kSideStickGM) note = profForHost.sideStick;
+        else if (note == kClapGM)      note = profForHost.clap;
+        else if (note == kClosedHatGM) note = profForHost.closedHat;
+        else if (note == kPedalHatGM)  note = profForHost.pedalHat;
+        else if (note == kOpenHatGM)   note = profForHost.openHat;
+        else if (note == kRideGM)      note = profForHost.ride;
+        else if (note == kRideBellGM)  note = profForHost.rideBell;
+        else if (note == kCrashGM)     note = profForHost.crash;
+        else if (note == kCrashAltGM)  note = profForHost.crashAlt;
+        else if (note == kChinaGM)     note = profForHost.china;
+        else if (note == kFloorTomGM)  note = profForHost.floorTom;
+        else if (note == kLowTomGM)    note = profForHost.lowTom;
+        else if (note == kMidTomGM)    note = profForHost.midTom;
+        else if (note == kHighTomGM)   note = profForHost.highTom;
+        vel = juce::jlimit (0.01f, 1.0f, vel * profForHost.velocityScale);
+
+        const float gain = vel * outputLevel.load (std::memory_order_relaxed);
+        if (useSamples) sampleKit.noteOn (note, gain, sampleOffset);
+        else            drumSynth.noteOn (note, vel, sampleOffset);
+    };
+
+    // Dispatch host noteOns BEFORE midi.clear() so the kit responds to
+    // the host's piano roll / Drummer Editor / MIDI keyboard. We do
+    // this BEFORE the shouldPlay gate too, so the user can audition
+    // notes from the DAW even when the plugin's internal transport is
+    // stopped (matches every other commercial drum sampler).
+    for (const auto meta : midi)
+    {
+        const auto msg = meta.getMessage();
+        if (! msg.isNoteOn()) continue;
+        fireHostMidiNote (msg.getNoteNumber(),
+                          msg.getFloatVelocity(),
+                          meta.samplePosition);
+    }
+
+    // Don't echo host MIDI back out as our plugin's MIDI output. The
+    // outgoing buffer is reserved for our COMPOSE/RANDOMIZE arrangement
+    // (which hosts that record plugin MIDI back to a region capture).
     midi.clear();
 
     // Try to pull tempo + host transport state.
@@ -2936,13 +2953,14 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     if (! shouldPlay)
     {
-        // Silent block. Still render existing tails through the mixer so
-        // held voices decay naturally when the user hits pause.
+        // Silent (transport-wise) block. We still render any voices in
+        // flight — including the host MIDI noteOns we just dispatched
+        // above, plus any held tails from the previous block — so the
+        // kit stays responsive to host MIDI when the plugin's internal
+        // transport is paused.
         busMixer.beginBlock (buffer.getNumSamples());
-        if (sampleKit.isActive())
-            sampleKit.renderIntoBuses (busMixer, buffer.getNumSamples());
-        else
-            drumSynth.renderIntoBuses (busMixer, buffer.getNumSamples());
+        if (useSamples) sampleKit.renderIntoBuses (busMixer, buffer.getNumSamples());
+        else            drumSynth.renderIntoBuses (busMixer, buffer.getNumSamples());
         busMixer.process (buffer);
         return;
     }
@@ -2953,10 +2971,11 @@ void AIDrumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                    bpm,
                                    hostDrivesPlayhead);
 
-    // Feed the freshly-generated MIDI notes into either the sampler
-    // (if a kit is loaded) or the physical-model synth (fallback).
-    drumSynth.setMasterGain (outputLevel.load (std::memory_order_relaxed));
-    const bool useSamples = sampleKit.isActive();
+    // Feed the freshly-generated arrangement MIDI notes into either the
+    // sampler (if a kit is loaded) or the physical-model synth fallback.
+    // These notes are already kit-remapped by renderArrangementToMidiBuffer
+    // (which calls withActiveKitApplied on each region), so we don't
+    // double-apply the GM remap here — only the master output gain.
     for (const auto meta : midi)
     {
         const auto msg = meta.getMessage();

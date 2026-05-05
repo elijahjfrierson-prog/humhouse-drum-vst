@@ -94,11 +94,22 @@ namespace aidrum
 
             // Closing crash on the very last 1/64 so the next region's
             // downbeat hosts the resolution.
+            // v1.6.1-rc.24 — R crash now ALWAYS fires (was gated on
+            // intensity > 0.55) so every fill resolves L+R together. Per
+            // user direction "add more crashes to fills". Plus a mid-bar
+            // crash splash on beat 2.5 so the bar is bookended by L
+            // crashes (start, mid, end) instead of only firing the close.
             void closeCrash (float velL = 0.95f, float velR = 0.85f)
             {
                 add (kCrashL, kBar - 1.0 / 16.0, velL, 0.5);
-                if (intensity > 0.55f)
-                    add (kCrashR, kBar - 1.0 / 16.0, velR, 0.5);
+                add (kCrashR, kBar - 1.0 / 16.0, velR, 0.5);
+                // Mid-bar L crash splash — sits on the "and" of beat 3
+                // (musically the standard pre-fill setup hit) at
+                // ghost/medium velocity so it adds energy without
+                // stealing the close. Skipped on the lightest fills
+                // where it would crowd the closing-crash dynamic.
+                if (intensity >= 0.30f)
+                    add (kCrashL, 2.5, std::clamp (velL * 0.55f, 0.45f, 0.85f), 0.4);
             }
 
             // Quarter-note kick foundation across the bar — used by
@@ -309,20 +320,28 @@ namespace aidrum
             f.closeCrash (0.95f, 0.85f);
         }
 
-        // 8 — Flam Roll: snare 16ths with grace-note flams. Beat 4
-        // breaks out into a tom flam (mid + floor together) so the bar
-        // doesn't end on yet-another snare. Hat 8ths underneath glue
-        // the flams into the pocket.
+        // 8 — Flam Roll: snare flams alternating with tom flams across
+        // the bar. v1.6.1-rc.24 — was 12 consecutive snare flams in
+        // beats 1–3 which violates the user's "kill 3+ consecutive
+        // snare hits" rule. Now: snare flams on the downbeat of each
+        // beat, tom flams (high → mid → low) on the offbeats so the bar
+        // stays a flam-driven fill but never strings 3+ snares in a
+        // row. Beat 4 still breaks out into the floor-tom climax.
         inline void flamRoll (FillCtx& f)
         {
-            for (int s = 0; s < 12; ++s) // first 3 beats snare flams
+            // Beats 1–3: alternating snare → tom → snare → tom flams.
+            // Each beat hosts one snare flam (downbeat) + one tom flam
+            // ("and"), so the longest snare run is 1, broken by toms.
+            const int tomCycle[3] = { kHighTom, kMidTom, kLowTom };
+            for (int beat = 0; beat < 3; ++beat)
             {
-                const double beat = s * 0.25;
-                // Devin Review: at s=0 the unclamped grace beat is
-                // -0.0625 which FillCtx::add silently drops, so the
-                // first hit sounded like a plain strike. Clamp at 0.
-                f.add (kSnare, std::max (0.0, beat - 1.0 / 16.0), 0.32f, 0.10);  // grace
-                f.add (kSnare, beat, 0.72f + 0.06f * (s % 4 == 0));
+                const double base = (double) beat;
+                // Snare flam on the downbeat (grace + main).
+                f.add (kSnare, std::max (0.0, base - 1.0 / 16.0), 0.32f, 0.10);
+                f.add (kSnare, base, 0.72f + 0.06f * (beat == 0 ? 1.0f : 0.0f));
+                // Tom flam on the "and" (grace + main).
+                f.add (tomCycle[beat], base + 0.5 - 1.0 / 16.0, 0.30f, 0.10);
+                f.add (tomCycle[beat], base + 0.5,             0.74f);
             }
             // Hat ostinato on every 8th — keeps the flams in the pocket.
             for (int s = 0; s < 6; ++s)
@@ -722,7 +741,13 @@ namespace aidrum
         }
 
         // 25 — Tom-to-Snare Climb: ascending floor → low → mid → high
-        // tom run, snare doubles, ending on kick+crash (rc.21).
+        // tom run, snare doubles broken by tom hits, ending on
+        // kick+crash (rc.21).
+        // v1.6.1-rc.24 — the snare 16ths at 2.0/2.25/2.5/2.75 were 4
+        // consecutive snares (violates the user's "kill 3+ consecutive
+        // snare hits" rule). Replaced 2.5 + 2.75 with mid-tom + crashL
+        // so the climb peaks on a tom-cymbal stab, not yet-another
+        // snare. Snare run is now 2 in a row at most.
         inline void tomToSnareClimb (FillCtx& f)
         {
             f.add (kFloorTom, 0.0,  0.55f);
@@ -735,8 +760,9 @@ namespace aidrum
             f.add (kHighTom,  1.75, 0.80f);
             f.add (kSnare,    2.0,  0.74f);
             f.add (kSnare,    2.25, 0.78f);
-            f.add (kSnare,    2.5,  0.82f);
-            f.add (kSnare,    2.75, 0.86f);
+            f.add (kMidTom,   2.5,  0.82f);   // was kSnare — break run + add tom
+            f.add (kCrashL,   2.5,  0.78f);   // mid-bar crash stab
+            f.add (kHighTom,  2.75, 0.86f);   // was kSnare — break run + add tom
             f.add (kKick,     3.0,  0.90f);
             f.add (kFloorTom, 3.25, 0.85f);
             f.add (kKick,     3.5,  0.92f);

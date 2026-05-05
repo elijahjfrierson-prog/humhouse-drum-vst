@@ -242,24 +242,8 @@ public:
 
     void clearManualPattern();
 
-    // v1.6.1-rc.20 — PianoRoll API. The grid step sequencer only
-    // exposes the 8 drum rows; the piano roll edits arbitrary MIDI
-    // notes (full chromatic C0..B10) into the same manualPattern_.
-    // addManualNote inserts a note at the requested start/length;
-    // removeManualNote deletes the closest match (by note + start
-    // beat); moveManualNote relocates an existing note in pitch /
-    // start beat / length in a single atomic edit so the audio
-    // thread never sees a "deleted but not re-added" gap during a
-    // PianoRoll drag. oneShot flags the note so SampleKit plays
-    // the underlying layer through to its end regardless of MIDI
-    // length (for melodic synth / pad / phrase voicings).
-    void addManualNote    (int midiNote, double startBeat,
-                           double lengthBeat, float velocity,
-                           bool oneShot);
-    void removeManualNote (int midiNote, double startBeat);
-    void moveManualNote   (int oldMidiNote, double oldStartBeat,
-                           int newMidiNote, double newStartBeat,
-                           double newLengthBeat);
+    // v1.6.1-rc.24 — PianoRoll API removed alongside the FL-style
+    // chromatic piano-roll component.
 
     // Copy of the manual pattern for UI rendering (thread-safe).
     // Notes are returned with their GM note numbers (pre-kit remap)

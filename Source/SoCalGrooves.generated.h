@@ -93,7 +93,12 @@ namespace aidrum
                 sg.pattern.notes.push_back ({ 38, 0.608f, 2.9999999999999996, 0.12 });
                 sg.pattern.notes.push_back ({ 36, 0.554f, 3.4999999999999996, 0.12 });
                 sg.pattern.notes.push_back ({ 38, 0.635f, 3.9999999999999996, 0.12 });
-                sg.pattern.notes.push_back ({ 38, 0.604f, 4.999999999999999, 0.12 });
+                // v1.6.1-rc.24 — middle snare (beat 4.999) replaced with
+                // low tom (note 41) so the bar-2 backbeat run no longer
+                // strings 3 consecutive snares (3.999 / 4.999 / 5.999).
+                // Per user direction: kill 3+ consecutive snare hits +
+                // toms must always be active.
+                sg.pattern.notes.push_back ({ 41, 0.604f, 4.999999999999999, 0.12 });
                 sg.pattern.notes.push_back ({ 38, 0.604f, 5.999999999999999, 0.12 });
                 sg.pattern.notes.push_back ({ 36, 0.547f, 6.499999999999999, 0.12 });
                 sg.pattern.notes.push_back ({ 38, 0.613f, 6.999999999999999, 0.12 });

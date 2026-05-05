@@ -59,4 +59,33 @@ namespace aidrum
         } ();
         return kAllIdx;
     }
+
+    // v1.6.1-rc.24 — SoCal-only subset, used by the COMPOSE / cycler /
+    // RANDOMIZE pads. The user explicitly asked for "intelligence pad
+    // grooves only randomized grooves added" + "fills must always be in
+    // the patterns" + "those imports have fills baked in". The SoCal
+    // entries are the imported-with-fills set; analyzer + BFD palettes
+    // are basic patterns that don't carry baked-in fills. Both pads now
+    // pull from this subset so every region the user lands has a fill
+    // present (either baked-in from SoCal or spliced via
+    // spliceMandatoryFillIntoRegion). The full merged library is still
+    // exposed via starterIndicesForKit() for the explicit STARTER
+    // dropdown so the user can audition the analyzer/BFD entries
+    // manually if they want.
+    //
+    // SoCal grooves are concatenated FIRST in allStarterGrooves(), so
+    // their indices are simply [0 .. socalGrooveLibrary().size()-1].
+    inline const std::vector<int>& socalIndicesForKit (int /*kitIndex*/)
+    {
+        static const std::vector<int> kSoCalIdx = []
+        {
+            const auto& s = socalGrooveLibrary();
+            std::vector<int> v;
+            v.reserve (s.size());
+            for (int i = 0; i < static_cast<int> (s.size()); ++i)
+                v.push_back (i);
+            return v;
+        } ();
+        return kSoCalIdx;
+    }
 }
