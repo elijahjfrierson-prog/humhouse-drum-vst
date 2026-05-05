@@ -143,15 +143,19 @@ namespace
     // the arrangement strip lanes (L Crash → Synth, R Crash → Pad,
     // Ride → Phrase, Toms → Perc) so the SAME MIDI now drives a
     // trap-flavoured palette without any new voice infrastructure.
+    // v1.6.1-rc.22 — single bundled kit again. User feedback verbatim:
+    // "take out the last two kits and only keep the 'Nu Rock' kit, refine
+    // the sound and ease of use … just keep the first kit." HeavyStudio
+    // and Drocetti are pulled from the bundled set. The kit picker
+    // dropdown becomes a single-entry combo (still rendered for visual
+    // continuity, but auto-selects index 0 and stays inert). Saved
+    // sessions that picked index 1 or 2 round-trip to NuRockYamaha
+    // through the loadBundled() fallback.
     const juce::StringArray kBundledKitChoices {
-        "NuRockYamaha",
-        "HeavyStudio",
-        "Drocetti"
+        "NuRockYamaha"
     };
     const juce::StringArray kBundledKitDisplayNames {
-        "(Nu Rock) 70's Yamaha",
-        "(Heavy Studio) Big Room",
-        "(Drocetti) Trap Kit"
+        "(Nu Rock) 70's Yamaha"
     };
 
     const juce::StringArray kStepDivChoices {
@@ -311,26 +315,14 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
         return;
     }
 
-    // v1.6.1-rc.19 — TRAP MODE flip: swap the bundled kit to "Drocetti"
-    // when toggled ON, and back to the user-selected base kit when
-    // toggled OFF. We don't need to regenerate the arrangement; the
-    // ArrangementStrip + lane labels react to the same APVTS bool in
-    // the editor, and the underlying MIDI notes are unchanged.
+    // v1.6.1-rc.19 — TRAP MODE flip swapped the bundled kit to "Drocetti"
+    // and back. v1.6.1-rc.22 — TRAP MODE is gone and Drocetti is no longer
+    // bundled; this branch is now a no-op so a saved-state TrapMode=true
+    // can't try to load a kit that doesn't exist. Keeping the branch (vs
+    // deleting it) keeps the param-change dispatch table stable for any
+    // host automation lane still pointing at the param ID.
     if (id == kParamTrapMode)
-    {
-        const bool trap = apvts.getRawParameterValue (kParamTrapMode)->load() > 0.5f;
-        if (trap)
-        {
-            loadBundledKit ("Drocetti");
-        }
-        else
-        {
-            const int kitIdx = (int) apvts.getRawParameterValue (kParamBundledKit)->load();
-            if (kitIdx >= 0 && kitIdx < kBundledKitChoices.size())
-                loadBundledKit (kBundledKitChoices[kitIdx]);
-        }
         return;
-    }
 
     // v1.6.1-rc.19 — per-lane SAMPLE PICKER override. Wire each of the
     // 8 lane params straight into SampleKit's atomic override array so
@@ -548,9 +540,13 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { kParamRoom, 1 }, "Room", kRoomChoices, 0));
 
+    // v1.6.1-rc.22 — default Room Amount lowered 0.25 → 0.10. User
+    // feedback verbatim: "strip a bit more reverb because reverb can
+    // always be added but not taken away". Knob still ranges 0..1, so
+    // anyone wanting the rc.21 wash just dials it back up.
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { kParamRoomAmount, 1 }, "Room Amount",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.0001f, kKnobSkew), 0.25f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.0001f, kKnobSkew), 0.10f));
 
     // v1.6.1-rc.6 — single bundled kit (see kBundledKitChoices above).
     // The param is kept as an AudioParameterChoice (rather than deleted
@@ -608,6 +604,12 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
         kTimeScaleChoices, 1)); // default: NORMAL
 
     // v1.6.1-rc.19 — TRAP MODE bool. See declaration comment above.
+    // v1.6.1-rc.22 — TRAP MODE removed (user: "take out trap mode for cpu
+    // too i dont even see it honestly"). The APVTS param is kept (always
+    // false, hidden from the UI) so existing saved sessions still load
+    // cleanly without an unknown-parameter warning. The lane-swap and
+    // auto-kit-switch paths in parameterChanged() are now no-ops; the
+    // editor button + ButtonAttachment are deleted entirely.
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { kParamTrapMode, 1 }, "Trap Mode", false));
 

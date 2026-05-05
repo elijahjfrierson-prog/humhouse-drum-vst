@@ -636,52 +636,81 @@ namespace aidrum
         }
 
         // 22 — Tom Cascade Roll: descending high → mid → low 16th roll
-        // with snare bookends. Mid-intensity classic-rock fill (rc.21).
+        // with snare bookends. Mid-intensity classic-rock fill.
+        // v1.6.1-rc.22 — user requested "more accent change between snares
+        // on those rolls and toms and cymbals". Adjacent same-pitch hits
+        // now alternate accent vs ghost (e.g. high tom 0.55 then 0.78
+        // instead of 0.66 then 0.60), the two snare bookends are split
+        // wide (0.55 / 0.92) so they read as two distinct accents, the
+        // tom run gets a final crescendo into the floor tom, and the
+        // closing crash uses kCrashL+kChinaR doubled (via kRide as a
+        // dedicated mid-band hit) instead of L+R unison — wider stereo
+        // and tonally richer than a flat double-crash.
         inline void tomCascadeRoll (FillCtx& f)
         {
-            f.add (kSnare,    0.0,  0.78f);
-            f.add (kHighTom,  0.25, 0.66f);
-            f.add (kHighTom,  0.5,  0.60f);
-            f.add (kMidTom,   0.75, 0.68f);
-            f.add (kMidTom,   1.0,  0.62f);
-            f.add (kLowTom,   1.25, 0.70f);
-            f.add (kLowTom,   1.5,  0.66f);
-            f.add (kFloorTom, 1.75, 0.78f);
-            f.add (kSnare,    2.0,  0.78f);
-            f.add (kHighTom,  2.25, 0.66f);
-            f.add (kMidTom,   2.5,  0.70f);
-            f.add (kLowTom,   2.75, 0.74f);
-            f.add (kFloorTom, 3.0,  0.80f);
-            f.add (kFloorTom, 3.25, 0.78f);
-            f.add (kKick,     3.5,  0.88f);
+            f.add (kSnare,    0.0,  0.55f);   // ghost-ish lead-in
+            f.add (kHighTom,  0.25, 0.78f);   // accent
+            f.add (kHighTom,  0.5,  0.55f);   // ghost
+            f.add (kMidTom,   0.75, 0.82f);   // accent
+            f.add (kMidTom,   1.0,  0.58f);   // ghost
+            f.add (kLowTom,   1.25, 0.86f);   // accent
+            f.add (kLowTom,   1.5,  0.62f);   // ghost
+            f.add (kFloorTom, 1.75, 0.92f);   // peak accent
+            f.add (kSnare,    2.0,  0.92f);   // SLAM bookend (was flat 0.78)
+            f.add (kHighTom,  2.25, 0.60f);   // ghost
+            f.add (kMidTom,   2.5,  0.84f);   // accent
+            f.add (kLowTom,   2.75, 0.66f);   // ghost
+            f.add (kFloorTom, 3.0,  0.95f);   // peak accent
+            f.add (kFloorTom, 3.25, 0.72f);   // softer answer
+            f.add (kKick,     3.5,  0.90f);
+            // Crash: L crash + ride bell on the closing 1/64 instead of
+            // L+R crash unison so the splash has tonal width.
             f.add (kCrashL,   kBar - 1.0 / 16.0, 1.0f, 0.5);
-            f.add (kCrashR,   kBar - 1.0 / 16.0, 0.95f, 0.5);
+            f.add (kRide,     kBar - 1.0 / 16.0, 0.62f, 0.4);
         }
 
         // 23 — Floor Tom Flam: doubled low/floor-tom flams over kick
         // downbeats and snare backbeat. Heavier sludge/metal flavour
-        // for users who pick the heavy archetypes (rc.21).
+        // for users who pick the heavy archetypes.
+        // v1.6.1-rc.22 — accent variation per user request. Each beat
+        // now has its own grace-flam dynamic (alternating soft/loud so
+        // the flam reads as two voices rather than one velocity), the
+        // mid-beat snare answer rotates through 0.55 / 0.78 / 0.92 so
+        // the four answers don't all sit at 0.74, and the closing
+        // cymbal pair is L crash + china (instead of L+R crash) for
+        // tonal width.
         inline void floorTomFlam (FillCtx& f)
         {
             f.kickFloor (0.85f);
             for (int beat = 0; beat < 4; ++beat)
             {
                 const double base = (double) beat;
-                // grace flam (32nd before downbeat)
-                f.add (kLowTom,   base + 0.0625, 0.55f);
-                f.add (kFloorTom, base + 0.125,  0.85f);
-                // mid-beat snare answer except at beat 2 (open for fill)
-                if (beat != 1 && beat != 3)
-                    f.add (kSnare, base + 0.5, 0.74f);
-                // & of beat doubled tom hit
-                f.add (kFloorTom, base + 0.75, 0.78f);
+                const bool   even = (beat % 2 == 0);
+                // grace flam: alternate ghost / pop so each downbeat
+                // sounds like a distinct flam (not a copy-paste).
+                f.add (kLowTom,   base + 0.0625, even ? 0.42f : 0.62f);
+                f.add (kFloorTom, base + 0.125,  even ? 0.92f : 0.78f);
+                // mid-beat snare answer: each beat gets its own
+                // velocity slot (0.55 / open / 0.78 / open) so the
+                // answers don't drone.
+                if      (beat == 0) f.add (kSnare, base + 0.5, 0.55f);
+                else if (beat == 2) f.add (kSnare, base + 0.5, 0.92f);
+                // & of beat doubled tom hit — alternate accent / ghost
+                f.add (kFloorTom, base + 0.75, even ? 0.66f : 0.85f);
             }
             f.add (kCrashL, kBar - 1.0 / 16.0, 1.0f, 0.5);
-            f.add (kCrashR, kBar - 1.0 / 16.0, 0.95f, 0.5);
+            f.add (kRide,   kBar - 1.0 / 16.0, 0.55f, 0.4);  // bell ring
         }
 
         // 24 — Tom Triplet Roll: 12-step triplet feel across all four
-        // tom voices with crescendo, ending on kick + crash (rc.21).
+        // tom voices with crescendo, ending on kick + crash.
+        // v1.6.1-rc.22 — instead of a flat +0.04/step crescendo the run
+        // now uses an accent / ghost / accent triplet pattern (every
+        // first triplet of a group lands ~+0.18 louder than the two
+        // ghosts following it, plus a global crescendo). This is the
+        // classic "DAH-da-da DAH-da-da" triplet feel you'd hum out
+        // loud when explaining a 12/8 roll. Closing cymbal: L crash +
+        // ride (not L+R unison) for tonal width.
         inline void tomTripletRoll (FillCtx& f)
         {
             const double tripletStep = kBar / 12.0; // 12 triplet 8ths in 4 beats
@@ -692,46 +721,73 @@ namespace aidrum
             };
             for (int i = 0; i < 12; ++i)
             {
-                const float vel = 0.50f + 0.04f * (float) i; // crescendo
-                f.add (pitches[i], (double) i * tripletStep, vel);
+                const float crescendo = 0.50f + 0.035f * (float) i;
+                // Accent first of every triplet (i % 3 == 0), ghost others.
+                const float accent    = (i % 3 == 0) ?  0.18f
+                                       : (i % 3 == 1) ? -0.10f
+                                                      : -0.06f;
+                f.add (pitches[i], (double) i * tripletStep,
+                       std::clamp (crescendo + accent, 0.30f, 1.0f));
             }
             f.add (kKick,   kBar - 1.0 / 16.0, 0.92f, 0.5);
             f.add (kCrashL, kBar - 1.0 / 16.0, 1.0f, 0.5);
-            f.add (kCrashR, kBar - 1.0 / 16.0, 0.92f, 0.5);
+            f.add (kRide,   kBar - 1.0 / 16.0, 0.62f, 0.4);  // bell ring instead of R-crash unison
         }
 
         // 25 — Tom-to-Snare Climb: ascending floor → low → mid → high
-        // tom run, snare doubles, ending on kick+crash (rc.21).
+        // tom run, snare doubles, ending on kick+crash.
+        // v1.6.1-rc.22 — user spec: "more accent change between snares
+        // on those rolls". The four-snare run at beats 2.0–2.75 now
+        // alternates ghost → accent → ghost → SLAM (0.50 / 0.78 / 0.58
+        // / 0.95) instead of a smooth +0.04/step crescendo — this is
+        // the two-handed "SLAP-tap-SLAP-pop" feel that reads as
+        // distinct hits on a real kit. Tom climb gets paired-accent
+        // shaping (each pitch's two hits bracket a ghost+accent so the
+        // ear hears the climb as 4 punches not 8 even hits). Closing
+        // cymbal: L crash + china replacement (use kCrashR but at lower
+        // velocity + add a ride bell ring) for stereo+tonal width.
         inline void tomToSnareClimb (FillCtx& f)
         {
-            f.add (kFloorTom, 0.0,  0.55f);
-            f.add (kFloorTom, 0.25, 0.60f);
-            f.add (kLowTom,   0.5,  0.62f);
-            f.add (kLowTom,   0.75, 0.66f);
-            f.add (kMidTom,   1.0,  0.70f);
-            f.add (kMidTom,   1.25, 0.74f);
-            f.add (kHighTom,  1.5,  0.76f);
-            f.add (kHighTom,  1.75, 0.80f);
-            f.add (kSnare,    2.0,  0.74f);
-            f.add (kSnare,    2.25, 0.78f);
-            f.add (kSnare,    2.5,  0.82f);
-            f.add (kSnare,    2.75, 0.86f);
+            // Tom climb: each pitch's pair = ghost → accent.
+            f.add (kFloorTom, 0.0,  0.45f);
+            f.add (kFloorTom, 0.25, 0.78f);
+            f.add (kLowTom,   0.5,  0.55f);
+            f.add (kLowTom,   0.75, 0.82f);
+            f.add (kMidTom,   1.0,  0.60f);
+            f.add (kMidTom,   1.25, 0.86f);
+            f.add (kHighTom,  1.5,  0.65f);
+            f.add (kHighTom,  1.75, 0.92f);
+            // Four-snare run with wide accent spread (was flat 0.74→ 0.86).
+            f.add (kSnare,    2.0,  0.50f);  // ghost
+            f.add (kSnare,    2.25, 0.78f);  // accent
+            f.add (kSnare,    2.5,  0.58f);  // ghost
+            f.add (kSnare,    2.75, 0.95f);  // SLAM
             f.add (kKick,     3.0,  0.90f);
-            f.add (kFloorTom, 3.25, 0.85f);
-            f.add (kKick,     3.5,  0.92f);
+            f.add (kFloorTom, 3.25, 0.88f);
+            f.add (kKick,     3.5,  0.94f);
             f.add (kCrashL,   kBar - 1.0 / 16.0, 1.0f, 0.5);
-            f.add (kCrashR,   kBar - 1.0 / 16.0, 0.92f, 0.5);
+            f.add (kRide,     kBar - 1.0 / 16.0, 0.65f, 0.4);  // bell ring for tonal width
         }
 
         // 26 — Double Tom Stab: punctuated tom doubles separated by
         // hat 8ths. Pop / new-wave flavour, lighter-density variant
-        // for users who want toms without the metal weight (rc.21).
+        // for users who want toms without the metal weight.
+        // v1.6.1-rc.22 — the rc.21 baseline played each tom-double as
+        // two flat hits (0.78 / 0.72) which read as a flam, not a
+        // dynamic stab. Now each double is shaped accent→ghost or
+        // ghost→accent depending on beat parity (beats 0 and 2 are
+        // accent-first "BAM-bom", beat 1 is ghost-first "bom-BAM"
+        // for variation), the hat 8ths flicker between 0.32 and 0.50
+        // instead of all 0.40, and beat 4's resolution gets a
+        // crash-china split for tonal width.
         inline void doubleTomStab (FillCtx& f)
         {
             for (int b = 0; b < 4; ++b)
             {
                 const double base = (double) b;
-                f.add (kClosedHat, base + 0.0,  0.42f);
+                const bool   accentFirst = (b == 0 || b == 2);
+                // hat 8th on the downbeat — alternate quiet/loud per beat
+                f.add (kClosedHat, base + 0.0,  (b % 2 == 0) ? 0.32f : 0.50f);
                 int tom;
                 switch (b)
                 {
@@ -742,21 +798,25 @@ namespace aidrum
                 }
                 if (b < 3)
                 {
-                    f.add (tom, base + 0.25,  0.78f);
-                    f.add (tom, base + 0.375, 0.72f);
-                    f.add (kClosedHat, base + 0.5, 0.40f);
-                    f.add (tom, base + 0.75,  0.78f);
-                    f.add (tom, base + 0.875, 0.72f);
+                    // Tom double: shape as accent→ghost or ghost→accent.
+                    f.add (tom, base + 0.25,  accentFirst ? 0.92f : 0.55f);
+                    f.add (tom, base + 0.375, accentFirst ? 0.55f : 0.85f);
+                    f.add (kClosedHat, base + 0.5, (b % 2 == 0) ? 0.50f : 0.32f);
+                    // Second double: opposite shape for asymmetry.
+                    f.add (tom, base + 0.75,  accentFirst ? 0.58f : 0.88f);
+                    f.add (tom, base + 0.875, accentFirst ? 0.86f : 0.50f);
                 }
                 else
                 {
-                    f.add (kKick,    base + 0.0,  0.88f);
-                    f.add (kSnare,   base + 0.5,  0.82f);
-                    f.add (kFloorTom, base + 0.75, 0.80f);
+                    f.add (kKick,    base + 0.0,  0.92f);
+                    f.add (kSnare,   base + 0.5,  0.86f);
+                    f.add (kFloorTom, base + 0.75, 0.85f);
                 }
             }
+            // Crash-china pair (well, crash + ride bell as china stand-in)
+            // for tonal width vs flat L+R unison.
             f.add (kCrashL, kBar - 1.0 / 16.0, 1.0f, 0.5);
-            f.add (kCrashR, kBar - 1.0 / 16.0, 0.92f, 0.5);
+            f.add (kRide,   kBar - 1.0 / 16.0, 0.55f, 0.4);  // bell ring
         }
 
         // ── Dispatcher ────────────────────────────────────────────────
