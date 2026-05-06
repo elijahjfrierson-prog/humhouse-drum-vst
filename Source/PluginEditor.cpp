@@ -849,9 +849,13 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         // transpose). Used to render the popup labels as actual
         // pitches so the user reads "+3 semis (D♯1)" instead of a
         // bare "+3". Same lane index ordering as kLaneNamesDefault.
+        // Must match ArrangementStrip's kLaneNote table at
+        // ArrangementStrip.h:1168 — Floor Tom is 43 (Mid Tom 2),
+        // not 41 (Low Floor Tom). Drift between the two tables
+        // misnames every entry in the popup label.
         static const std::array<int, 8> kLaneRootNote {
             57 /*A4 / China*/, 49 /*Crash 1*/, 51 /*Ride*/,
-            42 /*Closed Hat*/, 48 /*Small Tom*/, 41 /*Floor Tom*/,
+            42 /*Closed Hat*/, 48 /*Small Tom*/, 43 /*Floor Tom*/,
             38 /*Snare*/,      36 /*Kick*/
         };
 

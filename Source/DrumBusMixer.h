@@ -167,6 +167,13 @@ namespace aidrum
         {
             for (auto& s : states) s.reset();
             reverb.reset();
+            // v1.6.1-rc.28-fix — clear master glue compressor envelope
+            // so a sample-rate change (host re-prepare) or transport
+            // stop+restart doesn't carry stale gain reduction into
+            // the next session. Per-bus comp envelopes already reset
+            // via BusState::reset() above; the master-level glueEnv
+            // lives directly on DrumBusMixer and was missed.
+            glueEnv.fill (0.0f);
         }
 
         // Called by PluginProcessor before the synth renders voices. Ensures
