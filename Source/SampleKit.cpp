@@ -152,8 +152,29 @@ namespace aidrum
                 case K::ClosedHat: hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.20f;  gateMs =  600.0f; break;
                 case K::PedalHat:  hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.20f;  gateMs =  650.0f; break;
                 case K::OpenHat:   hpHz = 200.0f; hsHz = 14000.0f; hsCut = 0.20f;  gateMs = 1500.0f; break;
-                case K::Ride:      hpHz = 150.0f; hsHz = 13000.0f; hsCut = 0.25f;  gateMs = 3500.0f; break;
-                case K::RideBell:  hpHz = 150.0f; hsHz = 13000.0f; hsCut = 0.25f;  gateMs = 2500.0f; break;
+                // v1.6.1-rc.28 — RIDE retune. The user reported the
+                // ride was too metallic and too predictable, asking
+                // for "something calmer and less predictable … cow
+                // bell but a somber brash of air". Drop the
+                // high-shelf corner from 13 kHz → 8.5 kHz and
+                // double the shelving cut (0.25 → 0.55) so the
+                // brittle stick-on-bronze partials above 8 kHz get
+                // attenuated hard. Effect: the ride loses its
+                // stainless-steel ping and reads as a softer,
+                // breathier, mallet-on-bronze tone — closer to the
+                // "somber brash of air" the user described. Gate
+                // shortens a touch (3500 → 2800 ms) so the decay
+                // doesn't hang and pull the mix forward. Bell gets
+                // the same shelf treatment but keeps a slightly
+                // brighter corner (10 kHz) so the bell still cuts
+                // when called for. Less-predictable behaviour comes
+                // from the per-hit timbre alternation in the live
+                // render path (see PluginProcessor.cpp), which
+                // alternates ride hits between the body sample and
+                // the bell sample so back-to-back hits never read
+                // identical the way one sample looped did.
+                case K::Ride:      hpHz = 150.0f; hsHz =  8500.0f; hsCut = 0.55f;  gateMs = 2800.0f; break;
+                case K::RideBell:  hpHz = 150.0f; hsHz = 10000.0f; hsCut = 0.40f;  gateMs = 2200.0f; break;
                 case K::Crash:
                 case K::China:     hpHz = 120.0f; hsHz = 12000.0f; hsCut = 0.25f;  gateMs = 3500.0f; break;
                 default: break;
@@ -643,6 +664,20 @@ namespace aidrum
             v.playRate = std::pow (2.0, semitones / 12.0);
             v.lpAmount = rightHand ? 0.0f : 0.55f;
             ++snareHitCounter;
+        }
+
+        // v1.6.1-rc.28 — apply per-lane PIANO ROLL transpose. Multiplied
+        // with any pre-existing playRate (e.g. the snare R/L detune
+        // above) so a snare lane transposed +5 semitones still gets the
+        // alternating-hand ±5¢ flavour on top. Out-of-table notes
+        // (lane = -1) leave playRate untouched.
+        const int xposLane = laneFromNote (midiNote);
+        if (xposLane >= 0)
+        {
+            const int xpos = laneTranspose[(size_t) xposLane]
+                                .load (std::memory_order_relaxed);
+            if (xpos != 0)
+                v.playRate *= std::pow (2.0, (double) xpos / 12.0);
         }
     }
 
