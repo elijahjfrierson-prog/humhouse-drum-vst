@@ -127,6 +127,45 @@ namespace aidrum
                 std::memory_order_relaxed);
         }
 
+        // v1.6.1-rc.28 — per-lane TRANSPOSE in semitones, range -24..+24.
+        // Drives the per-lane PIANO ROLL pitch picker the user gets when
+        // they click the ▦ icon next to a lane label. Internally applied
+        // as a play-rate scale of 2^(semitones/12) on every voice the
+        // lane fires, multiplied with any pre-existing snare R/L detune.
+        // Audio thread reads via std::atomic<int>; message thread
+        // writes via setLaneTranspose() (called from the APVTS listener
+        // in PluginProcessor when laneXpos* params change).
+        void setLaneTranspose (int laneIdx, int semitones) noexcept
+        {
+            if (laneIdx < 0 || laneIdx >= kNumLanes) return;
+            laneTranspose[(size_t) laneIdx].store (
+                juce::jlimit (-24, 24, semitones), std::memory_order_relaxed);
+        }
+        int getLaneTranspose (int laneIdx) const noexcept
+        {
+            if (laneIdx < 0 || laneIdx >= kNumLanes) return 0;
+            return laneTranspose[(size_t) laneIdx].load (
+                std::memory_order_relaxed);
+        }
+
+        // v1.6.1-rc.28 — laneFromNote: maps a GM-drum MIDI note to the
+        // 0..7 lane index used by setLaneTranspose / setLaneOverride.
+        // Mirrors the table in ArrangementStrip::laneFor() so the UI
+        // and the audio renderer agree on which lane a given hit
+        // belongs to. Returns -1 for notes outside the GM drum range.
+        static int laneFromNote (int n) noexcept
+        {
+            if (n == 35 || n == 36)                               return 7; // KICK
+            if (n == 37 || n == 38 || n == 39 || n == 40)         return 6; // SNARE
+            if (n == 41 || n == 43 || n == 45)                    return 5; // FLOOR TOM
+            if (n == 47 || n == 48 || n == 50)                    return 4; // SMALL TOM
+            if (n == 42 || n == 44 || n == 46)                    return 3; // HI-HAT
+            if (n == 51 || n == 53 || n == 59)                    return 2; // RIDE
+            if (n == 49)                                          return 1; // L CRASH
+            if (n == 52 || n == 55 || n == 57)                    return 0; // R CRASH
+            return -1;
+        }
+
         // Number of layers currently loaded for the slot that the given
         // arrangement lane plays. Used by the editor to size the per-lane
         // SAMPLE PICKER popup (so we don't show 32 placeholders when the
@@ -219,6 +258,12 @@ namespace aidrum
         // v1.6.1-rc.19 — per-lane SAMPLE PICKER override array.
         // 0 = auto (velocity-driven), 1..N = pin layer (N-1).
         std::array<std::atomic<int>, kNumLanes> laneOverride {};
+
+        // v1.6.1-rc.28 — per-lane semitone transpose set by the per-
+        // lane PIANO ROLL picker. Default 0 (no transpose). Audio
+        // thread loads relaxed; message thread stores via
+        // setLaneTranspose().
+        std::array<std::atomic<int>, kNumLanes> laneTranspose {};
 
         // Maps a MIDI note number to an arrangement lane index in the
         // same top→bottom order as ArrangementStrip's kLanes table:

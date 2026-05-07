@@ -95,6 +95,18 @@ namespace aidrum
         std::function<void (int laneIdx, juce::Point<int> screenPos)>
             onLanePickerRequested;
 
+        // v1.6.1-rc.28 — per-lane PIANO ROLL button. The user reported
+        // they "cand find the piano roll to change the note of the
+        // sample" — the rc.19 right-click sample picker was hidden
+        // behind a right-click and they didn't discover it. This adds
+        // a small ▦ icon next to each lane label that left-clicks open
+        // a chromatic note picker for that lane (transpose / retune
+        // the sample's trigger note). Same lane index ordering as
+        // onLaneSelected: 0=R CRASH, 1=L CRASH, 2=RIDE, 3=HI-HAT,
+        // 4=SMALL TOM, 5=FLOOR TOM, 6=SNARE, 7=KICK.
+        std::function<void (int laneIdx, juce::Point<int> screenPos)>
+            onLanePianoRollRequested;
+
         // v1.6.1-rc.10 — sub-beat click resolution. 16 = 1/16, 32 = 1/32,
         // 64 = 1/64. Drives the snap step inside handleAddNote so a
         // 1/64 step-div in the editor actually lets the user place a
@@ -272,9 +284,24 @@ namespace aidrum
                 // v1.6.1-rc.7 — cache the label rect so mouseDown can
                 // hit-test it and fire onLaneSelected. The clickable
                 // area covers the whole left label column for that row.
+                // v1.6.1-rc.28 — reserve a 14 px ▦ icon column on the
+                // LEFT of the label so the user has a visible affordance
+                // for the per-lane piano roll. The label text shifts
+                // right by `kPianoBtnW` and gets a slightly narrower
+                // right-aligned area (the rest of the rules — text
+                // colour, ghost greying, sample-picker right-click —
+                // continue to apply to the WHOLE row including the
+                // button column, so right-clicking the icon still
+                // opens the sample picker the same way as before).
+                constexpr float kPianoBtnW = 14.0f;
+                const auto pianoBtnRect = juce::Rectangle<float> (
+                    labelArea.getX() + 2.0f, yTop + (laneH - kPianoBtnW) * 0.5f,
+                    kPianoBtnW, kPianoBtnW);
+                cachedLanePianoButtons[(size_t) i] = pianoBtnRect;
+
                 const auto labelRect = juce::Rectangle<float> (
-                    labelArea.getX() + 2.0f, yTop,
-                    labelArea.getWidth() - 6.0f, laneH);
+                    labelArea.getX() + 2.0f + kPianoBtnW + 2.0f, yTop,
+                    labelArea.getWidth() - 6.0f - kPianoBtnW - 2.0f, laneH);
                 cachedLabelRects[(size_t) i] = labelRect;
 
                 // v1.6.1-rc.7 — selection ring around whichever lane the
@@ -298,6 +325,41 @@ namespace aidrum
                 g.setColour (labelCol);
                 g.drawText (kLanes[i].label, labelRect,
                             juce::Justification::centredRight, false);
+
+                // v1.6.1-rc.28 — per-lane PIANO ROLL icon. Three thin
+                // horizontal lines stacked over a vertical hairline,
+                // shaped like a tiny step-grid mini-icon. Painted in
+                // the same colour as the lane label (greys out with
+                // ghost) so the user reads it as part of the lane
+                // group. The whole 14×14 rect is the click target.
+                {
+                    auto col = labelCol.withAlpha (0.78f);
+                    g.setColour (col);
+                    const float pad = 2.0f;
+                    const auto inside = pianoBtnRect.reduced (pad);
+                    // 4 vertical "keys" arranged like a piano roll grid
+                    const float keyW = inside.getWidth() / 4.0f;
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        const float x = inside.getX() + (float) k * keyW;
+                        g.drawRect (juce::Rectangle<float> (
+                            x, inside.getY(), keyW, inside.getHeight()), 0.6f);
+                        // shaded "black-key" column at every odd index
+                        if ((k & 1) != 0)
+                        {
+                            g.setColour (col.withAlpha (0.35f));
+                            g.fillRect (juce::Rectangle<float> (
+                                x + 0.6f, inside.getY() + 0.6f,
+                                keyW - 1.2f, inside.getHeight() * 0.55f));
+                            g.setColour (col);
+                        }
+                    }
+                    // hover/halo: faint outline around the rect so the
+                    // affordance is obvious.
+                    g.setColour (col.withAlpha (0.25f));
+                    g.drawRoundedRectangle (pianoBtnRect.reduced (0.5f),
+                                            2.0f, 0.6f);
+                }
 
                 // lane divider tick inside the note area
                 g.setColour (juce::Colour (kLanes[i].col).withAlpha (0.10f));
@@ -746,6 +808,30 @@ namespace aidrum
                 return;
             }
 
+            // v1.6.1-rc.28 — per-lane PIANO ROLL icon click. Hit-test
+            // these BEFORE the broader label rect so the icon column
+            // takes priority over the GHOST-arm gesture. Left-click
+            // opens the chromatic note picker; right-click falls back
+            // to the SAMPLE PICKER (same as right-click on the label).
+            for (int i = 0; i < (int) cachedLanePianoButtons.size(); ++i)
+            {
+                if (cachedLanePianoButtons[(size_t) i].contains (e.position))
+                {
+                    if (e.mods.isPopupMenu() && onLanePickerRequested != nullptr)
+                    {
+                        const auto screenPos = localPointToGlobal (e.position.toInt());
+                        onLanePickerRequested (i, screenPos);
+                        return;
+                    }
+                    if (onLanePianoRollRequested != nullptr)
+                    {
+                        const auto screenPos = localPointToGlobal (e.position.toInt());
+                        onLanePianoRollRequested (i, screenPos);
+                        return;
+                    }
+                }
+            }
+
             // v1.6.1-rc.7 — lane label click: arms a row for the GHOST
             // button. Hit-tested before notes/grid so labels can never
             // accidentally drop a kick on bar 1.
@@ -1095,8 +1181,26 @@ namespace aidrum
             // (1/16, 1/32, or 1/64). beats-per-step = 4.0 / stepsPerBar
             // because one beat == one quarter note. Falls back to 1/16
             // if setStepsPerBar() was never called.
+            // v1.6.1-rc.28 — CRASH SNAP. The user reported the crash
+            // lanes (lane 0 = R CRASH, lane 1 = L CRASH) were "too
+            // touchy" — clicking near a beat would drop a 1/32 or
+            // 1/64 crash that's almost impossible to surgically delete
+            // on the small bottom strip. Crashes only ever sound
+            // musical on quarter / half / bar boundaries (every cymbal
+            // accent in a rock chart lands on a beat or a downbeat),
+            // so for crash lanes we override the step-div and snap to
+            // the nearest 1/4 note. 1/4 = 1.0 beats; 1/2 = 2.0 beats;
+            // bar = 4.0 beats — all multiples of 1.0, so a 1.0-beat
+            // grid covers all three placements the user listed and
+            // forbids the in-between 1/16 / 1/32 / 1/64 spray. Other
+            // lanes (Ride / Hi-Hat / Toms / Snare / Kick) keep the
+            // user-selected step-div so 1/16 hat ostinatos and ghost
+            // snares still work.
+            const int    laneForSnap = juce::jlimit (0, 7,
+                (int) ((p.y - cachedGridInner.getY()) / laneH));
+            const bool   crashLane = (laneForSnap == 0 || laneForSnap == 1);
             const int    spb = juce::jlimit (4, 64, stepsPerBar);
-            const double stepBeats = 4.0 / (double) spb;
+            const double stepBeats = crashLane ? 1.0 : (4.0 / (double) spb);
             const double snapped = std::floor (absBeat / stepBeats) * stepBeats;
 
             // Figure out which region this beat lives in. The cached
@@ -1266,6 +1370,11 @@ namespace aidrum
         int                                stepsPerBar      = 16;
         bool                               trapModeOn       = false; // v1.6.1-rc.19
         std::array<juce::Rectangle<float>, 8> cachedLabelRects {};
+
+        // v1.6.1-rc.28 — cached per-lane piano-roll icon hit-rect so
+        // mouseDown can fire onLanePianoRollRequested. Same lane-index
+        // ordering as cachedLabelRects.
+        std::array<juce::Rectangle<float>, 8> cachedLanePianoButtons {};
 
         // v1.6.1-rc.7 — rectangular hover-drag selection. The user can
         // click an empty area, drag to draw a highlight rectangle (left-

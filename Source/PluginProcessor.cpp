@@ -118,6 +118,21 @@ namespace
     constexpr const char* kParamLaneSampleSnare     = "laneSampSnare";
     constexpr const char* kParamLaneSampleKick      = "laneSampKick";
 
+    // v1.6.1-rc.28 — per-lane PIANO ROLL transpose. Click the ▦ icon
+    // next to a lane label to open a chromatic note picker; the chosen
+    // semitone offset (-24..+24, 0 = no transpose) writes through this
+    // APVTS param so it persists with the project state. The audio
+    // thread reads via SampleKit::getLaneTranspose() and applies it
+    // as a play-rate scale on every voice the lane fires.
+    constexpr const char* kParamLaneXposRCrash      = "laneXposRCrash";
+    constexpr const char* kParamLaneXposLCrash      = "laneXposLCrash";
+    constexpr const char* kParamLaneXposRide        = "laneXposRide";
+    constexpr const char* kParamLaneXposHat         = "laneXposHat";
+    constexpr const char* kParamLaneXposSmallTom    = "laneXposSmallTom";
+    constexpr const char* kParamLaneXposFloorTom    = "laneXposFloorTom";
+    constexpr const char* kParamLaneXposSnare       = "laneXposSnare";
+    constexpr const char* kParamLaneXposKick        = "laneXposKick";
+
     // v1.6.1-rc.12 — single bundled kit again. The (Bay Grunge) Yamaha
     // Maple kit was pulled in rc.12 (user: "take out the second drum
     // kit it is a liability and not routed correctly all together i do
@@ -280,6 +295,25 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
     busMixer.params_ref ((int) aidrum::Bus::China)    .reverbSend.store (0.25f);
     busMixer.params_ref ((int) aidrum::Bus::Toms)     .reverbSend.store (0.18f);
 
+    // v1.6.1-rc.28 — STUDIO-READY per-bus compression defaults. The
+    // user reported the kit "doesn't feel studio ready" and "feels
+    // separated from the mix" when recorded. Pre-arming each bus
+    // with a small amount of compression (kick / snare get the most
+    // because that's what reads as "punchy and present" on a
+    // recording, cymbals stay light so they don't pump). Combined
+    // with the new master glue compressor (DrumBusMixer
+    // master.glueAmount = 0.45) the kit now sounds like one cohesive
+    // recorded instrument the moment the plugin loads. User can dial
+    // any of these to 0 in the mixer panel to bypass.
+    busMixer.params_ref ((int) aidrum::Bus::Kick)     .compAmount.store (0.30f);
+    busMixer.params_ref ((int) aidrum::Bus::Snare)    .compAmount.store (0.35f);
+    busMixer.params_ref ((int) aidrum::Bus::Toms)     .compAmount.store (0.20f);
+    busMixer.params_ref ((int) aidrum::Bus::ClosedHat).compAmount.store (0.10f);
+    busMixer.params_ref ((int) aidrum::Bus::OpenHat)  .compAmount.store (0.10f);
+    busMixer.params_ref ((int) aidrum::Bus::Ride)     .compAmount.store (0.10f);
+    busMixer.params_ref ((int) aidrum::Bus::Crash)    .compAmount.store (0.08f);
+    busMixer.params_ref ((int) aidrum::Bus::China)    .compAmount.store (0.08f);
+
     // v1.6.1-rc.12 — push the current Room preset values into the master
     // reverb once on construction so default sessions hear reverb
     // immediately. Subsequent Room/RoomAmount changes go through
@@ -363,6 +397,33 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
         }
     }
 
+    // v1.6.1-rc.28 — per-lane PIANO ROLL transpose. Same atomic-fast-
+    // path as the SAMPLE PICKER above: forward the chosen semitone
+    // offset (-24..+24) straight into SampleKit's laneTranspose array.
+    // No regen needed — the next noteOn picks up the new offset.
+    {
+        struct LaneXposMap { const char* id; int lane; };
+        static const LaneXposMap kLaneXposMap[] = {
+            { kParamLaneXposRCrash,    0 },
+            { kParamLaneXposLCrash,    1 },
+            { kParamLaneXposRide,      2 },
+            { kParamLaneXposHat,       3 },
+            { kParamLaneXposSmallTom,  4 },
+            { kParamLaneXposFloorTom,  5 },
+            { kParamLaneXposSnare,     6 },
+            { kParamLaneXposKick,      7 },
+        };
+        for (const auto& m : kLaneXposMap)
+        {
+            if (id == m.id)
+            {
+                const int v = (int) apvts.getRawParameterValue (m.id)->load();
+                sampleKit.setLaneTranspose (m.lane, v);
+                return;
+            }
+        }
+    }
+
     // Every other generator-facing parameter triggers a live regen of
     // the last region so the user hears their tweak immediately. Pattern
     // length / genre / drumKit / room changes also re-emit — all cheap
@@ -405,7 +466,26 @@ void AIDrumAudioProcessor::parameterChanged (const juce::String& id, float /*new
      || id == kParamIntensity
      || id == kParamFillComplexity
      || id == kParamFillDensity
-     || id == kParamFillsProb)
+     || id == kParamFillsProb
+     // v1.6.1-rc.28 — INTELLIGENCE PAD fix. The XYPad binds to the
+     // `complexity` (X) and `velocity` (Y) sliders. Before rc.28 those
+     // two parameters fell through to regenerateCurrentRegion(), which
+     // calls backend.generate() — backend.generate() produces small
+     // procedural seed grooves, NOT the SoCal pool, so every nudge of
+     // the intelligence pad silently replaced the user's region with
+     // a "stupid basic groove" (their words, multiple times). Fix:
+     // skip regen on complexity / velocity. They are now consumed at
+     // emit time by shapeVelocity() (velocity = master velocity scale)
+     // and by applyIntensityCrashHatBalance() (complexity = ghost-
+     // density / ride-cymbal openness), so the user's region survives
+     // and the pad just shapes what's already there. The user can
+     // still trigger a full mold-around with the COMPOSE button, or a
+     // full re-roll with RANDOMIZE — both of those go through the
+     // SoCal pool. The intelligence pad is now "shape what's there",
+     // matching the user's mental model of "work around like compose
+     // button, not reset to basic grooves".
+     || id == kParamComplexity
+     || id == kParamVelocity)
         return;
 
     regenerateCurrentRegion();
@@ -639,6 +719,32 @@ APVTS::ParameterLayout AIDrumAudioProcessor::createLayout()
             params.push_back (std::make_unique<juce::AudioParameterInt> (
                 juce::ParameterID { laneIds[i].toRawUTF8(), 1 },
                 laneNames[i], 0, 32, 0));
+        }
+    }
+
+    // v1.6.1-rc.28 — 8 per-lane PIANO ROLL transpose params. -24..+24
+    // semitones, default 0 (no transpose). Drives the chromatic note
+    // picker the user gets when they click the ▦ icon next to a lane
+    // label on the arrangement strip. SampleKit applies the offset
+    // as a play-rate scale on every voice the lane fires.
+    {
+        const juce::StringArray xposIds {
+            kParamLaneXposRCrash,   kParamLaneXposLCrash,
+            kParamLaneXposRide,     kParamLaneXposHat,
+            kParamLaneXposSmallTom, kParamLaneXposFloorTom,
+            kParamLaneXposSnare,    kParamLaneXposKick
+        };
+        const juce::StringArray xposNames {
+            "Lane R-Crash Transpose", "Lane L-Crash Transpose",
+            "Lane Ride Transpose",    "Lane Hat Transpose",
+            "Lane Small-Tom Transpose", "Lane Floor-Tom Transpose",
+            "Lane Snare Transpose",   "Lane Kick Transpose"
+        };
+        for (int i = 0; i < xposIds.size(); ++i)
+        {
+            params.push_back (std::make_unique<juce::AudioParameterInt> (
+                juce::ParameterID { xposIds[i].toRawUTF8(), 1 },
+                xposNames[i], -24, 24, 0));
         }
     }
 
@@ -2716,20 +2822,58 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
     const int   activeSnareNote  = activeProf.snare;
     const int   activeGhostSnare = activeProf.ghostSnare;
 
+    // v1.6.1-rc.28 — VELOCITY-ARC LOOKAHEAD. The user reported the
+    // arrangement "feels like one moment it is quite than blaring
+    // there is no balance" — when a soft region (intensity 0.40)
+    // butts up against a slammed chorus (intensity 0.85), the cut
+    // is binary: every note in the soft region plays at 0.40-shaped
+    // velocity, then the very next note plays at 0.85-shaped
+    // velocity. Logic Pro Drummer ramps across the boundary so the
+    // build feels like a build, not a jump-cut.
+    //
+    // Implementation: resolve each region's effective intensity
+    // (regionIntensity if set, else global), then for each note
+    // lerp toward the NEIGHBOUR region's intensity over the last
+    // 25% (lookahead → next) or first 15% (lookback → prev) of the
+    // current region. The lerp is one-sided: a soft region followed
+    // by a louder region ramps UP through its tail; a loud region
+    // followed by a softer region ramps DOWN through its tail.
+    // (Both directions covered because regions can also descend
+    // from chorus → bridge.) The lookback exists for the case where
+    // a slammed region is preceded by a quiet pickup — the first
+    // beat or two carry residual energy from the prior region's
+    // tail dynamics, which is how a real drummer would play it.
+    auto resolveRegionIntensity = [&] (size_t idx) -> float
+    {
+        if (idx >= snapshot.size())
+            return intensity01;
+        const float ri = snapshot[idx].regionIntensity;
+        return ri >= 0.0f ? juce::jlimit (0.0f, 1.0f, ri) : intensity01;
+    };
+
     auto emitNotesInWindow = [&] (double winStart, double winEnd)
     {
         double regionOffset = 0.0;
-        for (const auto& region : snapshot)
+        for (size_t regionIdx = 0; regionIdx < snapshot.size(); ++regionIdx)
         {
+            const auto&  region    = snapshot[regionIdx];
             const double regionLen = std::max (0.001, region.lengthInBeats);
             // v1.6.1-rc.14 — per-region INTENSITY override. Sentinel < 0
             // means "inherit the global INTENSITY knob"; any non-negative
             // value clamped 0..1 wins so the user can program a soft
             // pre-chorus → slammed chorus → somber bridge by spinning
             // each region's own intensity dial.
-            const float regionI = (region.regionIntensity >= 0.0f)
-                                    ? juce::jlimit (0.0f, 1.0f, region.regionIntensity)
-                                    : intensity01;
+            const float regionI = resolveRegionIntensity (regionIdx);
+
+            // v1.6.1-rc.28 — neighbour intensities for the lookahead
+            // / lookback velocity arc. First region has no prev; last
+            // region has no next.
+            const float prevI = regionIdx > 0
+                                  ? resolveRegionIntensity (regionIdx - 1)
+                                  : regionI;
+            const float nextI = regionIdx + 1 < snapshot.size()
+                                  ? resolveRegionIntensity (regionIdx + 1)
+                                  : regionI;
 
             // v1.6.1-rc.16 — snare LEFT/RIGHT stick alternation.
             // User spec: "ADD A Left STICK AND Right STICK FOR SNARE
@@ -2790,12 +2934,40 @@ void AIDrumAudioProcessor::renderArrangementToMidiBuffer (juce::MidiBuffer& midi
 
                 if (onBeat >= winStart && onBeat < winEnd)
                 {
+                    // v1.6.1-rc.28 — VELOCITY-ARC LOOKAHEAD. Blend
+                    // this region's intensity toward the next
+                    // region's intensity over the last 25% of the
+                    // bar, and toward the prev region's intensity
+                    // over the first 15%. `pos` is 0..1 across the
+                    // region.
+                    const float pos = (float) juce::jlimit (
+                        0.0, 1.0, rawOnBeat / regionLen);
+                    float arcedI = regionI;
+                    if (pos > 0.75f && std::abs (nextI - regionI) > 0.05f)
+                    {
+                        // Smoothstep from 0 at pos=0.75 to 1 at pos=1.0
+                        const float t = juce::jlimit (0.0f, 1.0f,
+                                            (pos - 0.75f) / 0.25f);
+                        const float s = t * t * (3.0f - 2.0f * t);
+                        arcedI = regionI + (nextI - regionI) * s * 0.55f;
+                    }
+                    else if (pos < 0.15f && std::abs (regionI - prevI) > 0.05f
+                             && regionIdx > 0)
+                    {
+                        // Smoothstep from 1 at pos=0 to 0 at pos=0.15
+                        const float t = juce::jlimit (0.0f, 1.0f,
+                                            1.0f - pos / 0.15f);
+                        const float s = t * t * (3.0f - 2.0f * t);
+                        arcedI = regionI + (prevI - regionI) * s * 0.30f;
+                    }
+                    arcedI = juce::jlimit (0.0f, 1.0f, arcedI);
+
                     const int sample = static_cast<int> (
                         (onBeat - blockStartBeat) * secondsPerBeat * sampleRate / timeScale);
                     midiOut.addEvent (
                         juce::MidiMessage::noteOn (10, note.noteNumber,
                             shapeVelocity (note.noteNumber, rawVel,
-                                           regionI, shapeRng,
+                                           arcedI, shapeRng,
                                            ghostMask.load())),
                         juce::jlimit (0, numSamples - 1, sample));
                 }

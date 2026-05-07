@@ -86,6 +86,17 @@ namespace aidrum
         std::atomic<float> reverbMix   { 0.22f };     // reverb return level
         std::atomic<float> reverbSize  { 0.55f };
         std::atomic<float> reverbDamp  { 0.50f };
+
+        // v1.6.1-rc.28 — MASTER GLUE COMPRESSOR. The user reported the
+        // kit "doesn't feel studio ready and when i record it feels
+        // separated from the mix". Adding a master-bus compressor
+        // (sum-and-glue style — slow attack, medium release, low
+        // ratio) so the kit reads as one cohesive instrument the
+        // moment a user drops the plugin onto a track. Defaults to
+        // 0.45 (~3-4 dB of gentle gain reduction on transients) which
+        // is enough to "glue" but doesn't squash the dynamics. Set to
+        // 0 to bypass entirely. Range 0..1.
+        std::atomic<float> glueAmount  { 0.45f };
     };
 
     // v1.3.0 Room preset bank — algorithmic reverb character per space.
@@ -156,6 +167,13 @@ namespace aidrum
         {
             for (auto& s : states) s.reset();
             reverb.reset();
+            // v1.6.1-rc.28-fix — clear master glue compressor envelope
+            // so a sample-rate change (host re-prepare) or transport
+            // stop+restart doesn't carry stale gain reduction into
+            // the next session. Per-bus comp envelopes already reset
+            // via BusState::reset() above; the master-level glueEnv
+            // lives directly on DrumBusMixer and was missed.
+            glueEnv.fill (0.0f);
         }
 
         // Called by PluginProcessor before the synth renders voices. Ensures
@@ -422,6 +440,68 @@ namespace aidrum
                     o[s] = o[s] * dryGain + r[s] * wetGain;
             }
 
+            // --- Master GLUE compressor (v1.6.1-rc.28) -----------------------
+            // Sum-and-glue style stereo compressor on the master bus.
+            // Sidechain detector = max(|L|, |R|) so a transient on
+            // either side pulls both channels equally (no L/R drift,
+            // stereo image preserved). Soft-knee, 2:1 ratio, 10 ms
+            // attack, 120 ms release. The user reported the kit
+            // "feels separated from the mix" when recorded — this
+            // glues the kit into one cohesive instrument before the
+            // master gain + soft clip stage.
+            const float glueAmt = juce::jlimit (0.0f, 1.0f,
+                                      master.glueAmount.load (std::memory_order_relaxed));
+            if (glueAmt > 0.001f && outCh > 0)
+            {
+                // Threshold sweeps from -6 dB (gentle) at 0 to -22 dB
+                // (squashed) at 1 — same shape as the per-bus comp
+                // but starting higher so the master never crushes.
+                const float threshDb  = juce::jmap (glueAmt, 0.0f, 1.0f, -6.0f, -22.0f);
+                const float threshLin = juce::Decibels::decibelsToGain (threshDb, -60.0f);
+                // 2:1 across the whole knob range (glue-style, not
+                // squash-style). Makeup compensates for the average
+                // gain reduction so the master perceived loudness
+                // stays roughly constant as the user sweeps.
+                constexpr float ratio       = 2.0f;
+                const float     makeupDb    = juce::jmap (glueAmt, 0.0f, 1.0f, 0.0f, 4.0f);
+                const float     makeup      = juce::Decibels::decibelsToGain (makeupDb, -60.0f);
+
+                // 10 ms attack, 120 ms release.
+                const float attackCoeff  = std::exp (-1.0f / (float) (0.010 * sr));
+                const float releaseCoeff = std::exp (-1.0f / (float) (0.120 * sr));
+
+                auto* oL = output.getWritePointer (0);
+                auto* oR = outCh > 1 ? output.getWritePointer (1) : nullptr;
+                float& envL = glueEnv[0];
+                float& envR = glueEnv[1];
+                for (int s = 0; s < n; ++s)
+                {
+                    const float xL = oL[s];
+                    const float xR = oR != nullptr ? oR[s] : xL;
+                    const float linked = std::max (std::abs (xL), std::abs (xR));
+
+                    // Linked detector — both sides see the same env.
+                    const float coeff = (linked > envL) ? attackCoeff : releaseCoeff;
+                    envL = coeff * envL + (1.0f - coeff) * linked;
+                    envR = envL;
+
+                    // Soft-knee gain reduction. Below threshold = unity.
+                    float gain = 1.0f;
+                    if (envL > threshLin)
+                    {
+                        const float overDb = juce::Decibels::gainToDecibels (envL, -60.0f)
+                                           - threshDb;
+                        const float reducedDb = overDb / ratio;
+                        const float diffDb    = reducedDb - overDb;   // negative
+                        gain = juce::Decibels::decibelsToGain (diffDb, -60.0f);
+                    }
+
+                    oL[s] = xL * gain * makeup;
+                    if (oR != nullptr)
+                        oR[s] = xR * gain * makeup;
+                }
+            }
+
             // --- Master gain + soft clip -------------------------------------
             const float mg = juce::Decibels::decibelsToGain (
                                  master.gainDb.load (std::memory_order_relaxed), -60.0f);
@@ -540,5 +620,14 @@ namespace aidrum
         juce::AudioBuffer<float> reverbBuffer;
         juce::Reverb             reverb;
         MasterParams             master;
+
+        // v1.6.1-rc.28 — MASTER GLUE COMPRESSOR state. One detector
+        // envelope per output channel (stereo = 2). Slow attack
+        // (~10 ms), medium release (~120 ms), 2:1 ratio, threshold
+        // shifts with the glueAmount knob. Sidechain is the linked
+        // peak of L+R so transients on either side pull both channels
+        // down together (preserves stereo image). All-pole detector,
+        // soft-knee.
+        std::array<float, 2>     glueEnv { { 0.0f, 0.0f } };
     };
 }

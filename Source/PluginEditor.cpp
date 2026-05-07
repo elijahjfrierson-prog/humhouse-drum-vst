@@ -819,6 +819,124 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
             });
     };
 
+    // v1.6.1-rc.28 — per-lane PIANO ROLL chromatic note picker. Click
+    // the ▦ icon next to a lane label and a popup opens listing every
+    // chromatic note from C-1 to G9 (-24..+24 semitone offset around
+    // the lane's default GM trigger). Selecting a note pins the
+    // transpose for that lane on every subsequent noteOn, so the user
+    // can retune kick-by-fifth, snare-up-an-octave, ride-down-3-semis
+    // without leaving the arrangement view. Reset entry sets 0
+    // semitones (default pitch). Persists with project state via the
+    // 8 laneXpos* APVTS params registered in createParameterLayout.
+    arrangementStrip.onLanePianoRollRequested =
+        [this] (int laneIdx, juce::Point<int> screenPos)
+    {
+        static const std::array<const char*, 8> kLaneXposIds {
+            "laneXposRCrash", "laneXposLCrash",
+            "laneXposRide",   "laneXposHat",
+            "laneXposSmallTom","laneXposFloorTom",
+            "laneXposSnare",  "laneXposKick"
+        };
+        static const std::array<const char*, 8> kLaneNamesDefault {
+            "R CRASH", "L CRASH", "RIDE", "HI-HAT",
+            "SMALL TOM", "FLOOR TOM", "SNARE", "KICK"
+        };
+        static const std::array<const char*, 8> kLaneNamesTrap {
+            "PAD", "SYNTH", "PHRASE", "HI-HAT",
+            "PERC (HI)", "PERC (LO)", "SNARE", "808"
+        };
+        // Default trigger note (the GM note the lane plays at +0
+        // transpose). Used to render the popup labels as actual
+        // pitches so the user reads "+3 semis (D♯1)" instead of a
+        // bare "+3". Same lane index ordering as kLaneNamesDefault.
+        // Must match ArrangementStrip's kLaneNote table at
+        // ArrangementStrip.h:1168 — Floor Tom is 43 (Mid Tom 2),
+        // not 41 (Low Floor Tom). Drift between the two tables
+        // misnames every entry in the popup label.
+        static const std::array<int, 8> kLaneRootNote {
+            57 /*A4 / China*/, 49 /*Crash 1*/, 51 /*Ride*/,
+            42 /*Closed Hat*/, 48 /*Small Tom*/, 43 /*Floor Tom*/,
+            38 /*Snare*/,      36 /*Kick*/
+        };
+
+        if (laneIdx < 0 || laneIdx >= 8) return;
+
+        const bool trap = arrangementStrip.getTrapMode();
+        const auto* paramId = kLaneXposIds[(size_t) laneIdx];
+        const juce::String laneName =
+            (trap ? kLaneNamesTrap : kLaneNamesDefault)[(size_t) laneIdx];
+
+        auto* p = processorRef.getAPVTS().getParameter (paramId);
+        const int currentXpos = p != nullptr
+            ? (int) ((juce::AudioParameterInt*) p)->get()
+            : 0;
+
+        auto noteName = [] (int midi) -> juce::String
+        {
+            static const char* names[] = {
+                "C","C#","D","D#","E","F","F#","G","G#","A","A#","B"
+            };
+            const int oct = (midi / 12) - 1;
+            return juce::String (names[((midi % 12) + 12) % 12])
+                 + juce::String (oct);
+        };
+
+        juce::PopupMenu menu;
+        menu.addSectionHeader (laneName + " — piano roll (transpose)");
+        // ID 1 = reset to 0 semitones; semitone offsets map to IDs
+        // (semitone + 100) so we can pack -24..+24 into a single
+        // popup without ID collisions.
+        menu.addItem (1,
+            "Reset (0 semitones — " + noteName (kLaneRootNote[(size_t) laneIdx]) + ")",
+            true, currentXpos == 0);
+        menu.addSeparator();
+
+        // -24..-1 (down two octaves), then +1..+24 (up two octaves).
+        // Group into "Down" / "Up" submenus so the popup stays compact.
+        juce::PopupMenu down, up;
+        for (int s = -24; s <= -1; ++s)
+        {
+            const int target = kLaneRootNote[(size_t) laneIdx] + s;
+            const int id = s + 100; // 76..99
+            const juce::String label =
+                (s >= 0 ? juce::String ("+") : juce::String())
+                + juce::String (s) + " semis (" + noteName (target) + ")";
+            down.addItem (id, label, true, currentXpos == s);
+        }
+        for (int s = 1; s <= 24; ++s)
+        {
+            const int target = kLaneRootNote[(size_t) laneIdx] + s;
+            const int id = s + 100; // 101..124
+            const juce::String label =
+                (s >= 0 ? juce::String ("+") : juce::String())
+                + juce::String (s) + " semis (" + noteName (target) + ")";
+            up.addItem (id, label, true, currentXpos == s);
+        }
+        menu.addSubMenu ("Down (-1..-24)", down);
+        menu.addSubMenu ("Up (+1..+24)",   up);
+
+        juce::PopupMenu::Options opts;
+        opts = opts.withTargetScreenArea (
+            juce::Rectangle<int> (screenPos.x, screenPos.y, 1, 1));
+
+        menu.showMenuAsync (opts,
+            [this, laneIdx, paramId] (int chosen)
+            {
+                if (chosen <= 0) return;
+                auto* pp = processorRef.getAPVTS().getParameter (paramId);
+                if (pp == nullptr) return;
+
+                const int newXpos = (chosen == 1) ? 0 : (chosen - 100);
+                const float norm = pp->convertTo0to1 ((float) newXpos);
+                pp->beginChangeGesture();
+                pp->setValueNotifyingHost (norm);
+                pp->endChangeGesture();
+                processorRef.getSampleKit()
+                            .setLaneTranspose (laneIdx, newXpos);
+                arrangementStrip.repaint();
+            });
+    };
+
     // v1.6.1-rc.14 — per-region INTENSITY drag-strip. Click + drag the
     // gold bar at the bottom of any region tile to set that region's
     // velocity vibe (soft pre-chorus → slammed chorus → somber bridge);
