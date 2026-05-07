@@ -1641,6 +1641,14 @@ void AIDrumAudioProcessor::composeMoldRegion (int regionIndex, int kitIndex)
                [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
                { return a.startBeat < b.startBeat; });
 
+    // v1.6.1-rc.28 — must mirror composeMoldAroundForKit which
+    // applies the INTENSITY-driven crash/hat balance after the
+    // corpus merge (PluginProcessor.cpp:1445). Without this the
+    // per-region COMPOSE result keeps every corpus hi-hat note even
+    // at high intensity where they should be thinned for the
+    // "more crash, less hat" sludge feel.
+    applyIntensityCrashHatBalance (result,
+                                   static_cast<std::uint64_t> (libIdx) ^ 0xC0DEULL);
     spliceMandatoryFillIntoRegion (result, libIdx
                                    ^ static_cast<int> (regionIndex));
 
@@ -1684,22 +1692,36 @@ namespace
 {
     // GM drum constants (mirror withActiveKitApplied + AIBackend). Kept
     // local to this TU so the public header stays clean.
-    constexpr int kKickGM       = 36;
-    constexpr int kSnareGM      = 38;
-    constexpr int kSideStickGM  = 37;
-    constexpr int kClapGM       = 39;
-    constexpr int kClosedHatGM  = 42;
-    constexpr int kPedalHatGM   = 44;
-    constexpr int kOpenHatGM    = 46;
-    constexpr int kRideGM       = 51;
-    constexpr int kRideBellGM   = 53;
-    constexpr int kCrashGM      = 49;
-    constexpr int kCrashAltGM   = 57;
-    constexpr int kChinaGM      = 52;
-    constexpr int kFloorTomGM   = 41;
-    constexpr int kLowTomGM     = 43;
-    constexpr int kMidTomGM     = 45;
-    constexpr int kHighTomGM    = 48;
+    // v1.6.1-rc.28 — lane-erase mapping must match laneFor() in
+    // ArrangementStrip.h:288 and noteToLane() in PluginProcessor.cpp
+    // line 999. Devin Review caught a divergence in the first push:
+    // 45 was placed in SMALL TOM, but laneFor maps it to FLOOR TOM,
+    // and several display-mapped notes (35 / 40 / 47 / 50 / 55 / 59)
+    // had no erase entry at all. The full GM table below mirrors
+    // laneFor exactly so an erase click never misses a hit the user
+    // can see in the strip.
+    constexpr int kAcousticKickGM = 35;
+    constexpr int kKickGM         = 36;
+    constexpr int kSideStickGM    = 37;
+    constexpr int kSnareGM        = 38;
+    constexpr int kClapGM         = 39;
+    constexpr int kElectricSnareGM = 40;
+    constexpr int kFloorTomGM     = 41;
+    constexpr int kClosedHatGM    = 42;
+    constexpr int kLowTomGM       = 43;
+    constexpr int kPedalHatGM     = 44;
+    constexpr int kMidTomGM       = 45;  // FLOOR-side per laneFor
+    constexpr int kOpenHatGM      = 46;
+    constexpr int kLowMidTomGM    = 47;  // SMALL-side per laneFor
+    constexpr int kHighTomGM      = 48;
+    constexpr int kCrashGM        = 49;
+    constexpr int kHighTomAltGM   = 50;  // SMALL-side per laneFor
+    constexpr int kRideGM         = 51;
+    constexpr int kChinaGM        = 52;
+    constexpr int kRideBellGM     = 53;
+    constexpr int kSplashGM       = 55;  // R-CRASH-side per laneFor
+    constexpr int kCrashAltGM     = 57;
+    constexpr int kRideAltGM      = 59;  // RIDE-side per laneFor
 }
 
 static std::vector<int> kitNotesForLaneStatic (const aidrum::DrumKitProfile& prof,
@@ -1713,33 +1735,42 @@ static std::vector<int> kitNotesForLaneStatic (const aidrum::DrumKitProfile& pro
             if (std::find (out.begin(), out.end(), n) == out.end())
                 out.push_back (n);
     };
+    // Each case mirrors laneFor() in ArrangementStrip.h. GM numbers
+    // come first so erase works even on regions that haven't yet
+    // been through withActiveKitApplied; the kit profile fields
+    // come second to cover post-remap regions.
     switch (laneIdx)
     {
-        case 0: // R CRASH (alt crash + china stack — rightmost cymbal)
-            add ({ kCrashAltGM, kChinaGM, prof.crashAlt, prof.china });
+        case 0: // R CRASH — china (52) + splash (55) + alt crash (57)
+            add ({ kChinaGM, kSplashGM, kCrashAltGM,
+                   prof.china, prof.crashAlt });
             break;
-        case 1: // L CRASH
+        case 1: // L CRASH — crash (49)
             add ({ kCrashGM, prof.crash });
             break;
-        case 2: // RIDE (bow + bell)
-            add ({ kRideGM, kRideBellGM, prof.ride, prof.rideBell });
+        case 2: // RIDE — ride (51) + ride bell (53) + ride 2 (59)
+            add ({ kRideGM, kRideBellGM, kRideAltGM,
+                   prof.ride, prof.rideBell });
             break;
-        case 3: // HI-HAT (closed + open + pedal — single lane visually)
-            add ({ kClosedHatGM, kOpenHatGM, kPedalHatGM,
+        case 3: // HI-HAT — closed (42) + pedal (44) + open (46)
+            add ({ kClosedHatGM, kPedalHatGM, kOpenHatGM,
                    prof.closedHat, prof.openHat, prof.pedalHat });
             break;
-        case 4: // SMALL TOM (high + mid)
-            add ({ kHighTomGM, kMidTomGM, prof.highTom, prof.midTom });
+        case 4: // SMALL TOM — low-mid (47) + high (48) + high alt (50)
+            add ({ kLowMidTomGM, kHighTomGM, kHighTomAltGM,
+                   prof.highTom, prof.midTom });
             break;
-        case 5: // FLOOR TOM (low + floor)
-            add ({ kLowTomGM, kFloorTomGM, prof.lowTom, prof.floorTom });
+        case 5: // FLOOR TOM — floor (41) + low (43) + mid-tom (45)
+            add ({ kFloorTomGM, kLowTomGM, kMidTomGM,
+                   prof.floorTom, prof.lowTom });
             break;
-        case 6: // SNARE (incl. ghost / side-stick / clap variants)
-            add ({ kSnareGM, kSideStickGM, kClapGM,
+        case 6: // SNARE — side-stick (37) + snare (38) + clap (39) +
+                // electric snare (40)
+            add ({ kSideStickGM, kSnareGM, kClapGM, kElectricSnareGM,
                    prof.snare, prof.ghostSnare, prof.sideStick, prof.clap });
             break;
-        case 7: // KICK
-            add ({ kKickGM, prof.kick });
+        case 7: // KICK — acoustic bass (35) + kick (36)
+            add ({ kAcousticKickGM, kKickGM, prof.kick });
             break;
         default:
             break;
