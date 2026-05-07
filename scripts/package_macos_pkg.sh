@@ -50,10 +50,64 @@ fi
 PKGDIR="$STAGE/pkgs"
 mkdir -p "$PKGDIR"
 
+# v1.6.1-rc.29 — PRE-INSTALL CLEANUP scripts. User reported rc.28
+# crashed FL Studio Mac on plugin load. Root cause is the same
+# class of issue we fixed in rc.24: AU validation cache + plugin
+# DB hold the prior binary's identity, then drop-in replace
+# serves a half-stale / half-new bundle to the host. The rc.24
+# fix bumped the plugin codes once; the rc.29 fix doubles down by
+# (a) bumping codes again (Mk2 → Mk3 in CMakeLists.txt) AND (b)
+# nuking every prior install path + the system AU cache before
+# the new bundle hits disk, so a fresh re-validation is forced
+# on first launch instead of a cached "approved" mismatch.
+#
+# Note: pkgbuild --scripts dir must contain a file named exactly
+# "preinstall" (no extension) marked executable. The installer
+# runs it as root before the payload is laid down.
+VST3_SCRIPTS="$STAGE/vst3_scripts"
+AU_SCRIPTS="$STAGE/au_scripts"
+mkdir -p "$VST3_SCRIPTS" "$AU_SCRIPTS"
+
+cat > "$VST3_SCRIPTS/preinstall" <<'PREINSTALL_VST3'
+#!/bin/sh
+# v1.6.1-rc.29 — wipe any prior HumHouse Drums.vst3 (system-wide
+# + every per-user Library) so FL Studio's plugin DB doesn't see
+# two competing bundles with the same path. Silent-fail on errors:
+# we never want a missing path to abort the install.
+rm -rf "/Library/Audio/Plug-Ins/VST3/HumHouse Drums.vst3" 2>/dev/null || true
+for home in /Users/*; do
+  [ -d "$home" ] || continue
+  rm -rf "$home/Library/Audio/Plug-Ins/VST3/HumHouse Drums.vst3" 2>/dev/null || true
+done
+exit 0
+PREINSTALL_VST3
+chmod +x "$VST3_SCRIPTS/preinstall"
+
+cat > "$AU_SCRIPTS/preinstall" <<'PREINSTALL_AU'
+#!/bin/sh
+# v1.6.1-rc.29 — wipe prior HumHouse Drums.component + flush the
+# Audio Unit validation cache so Logic Pro / GarageBand / FL
+# Studio re-validate the new bundle from scratch instead of
+# serving a cached "approved" result keyed to the old binary.
+# Killing AudioComponentRegistrar is the documented way to make
+# auval re-scan on next launch (Apple devforums, JUCE forum).
+rm -rf "/Library/Audio/Plug-Ins/Components/HumHouse Drums.component" 2>/dev/null || true
+for home in /Users/*; do
+  [ -d "$home" ] || continue
+  rm -rf "$home/Library/Audio/Plug-Ins/Components/HumHouse Drums.component" 2>/dev/null || true
+  rm -rf "$home/Library/Caches/AudioUnitCache" 2>/dev/null || true
+done
+rm -rf "/Library/Caches/AudioUnitCache" 2>/dev/null || true
+killall -9 AudioComponentRegistrar 2>/dev/null || true
+exit 0
+PREINSTALL_AU
+chmod +x "$AU_SCRIPTS/preinstall"
+
 pkgbuild \
   --identifier "${BUNDLE_ID}.vst3" \
   --version "$VERSION" \
   --root "$STAGE/vst3_root" \
+  --scripts "$VST3_SCRIPTS" \
   --install-location "/" \
   "$PKGDIR/vst3.pkg"
 
@@ -62,6 +116,7 @@ if [[ -d "$AU_ROOT/HumHouse Drums.component" ]]; then
     --identifier "${BUNDLE_ID}.au" \
     --version "$VERSION" \
     --root "$STAGE/au_root" \
+    --scripts "$AU_SCRIPTS" \
     --install-location "/" \
     "$PKGDIR/au.pkg"
 fi
