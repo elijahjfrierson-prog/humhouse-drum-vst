@@ -1527,6 +1527,270 @@ void AIDrumAudioProcessor::randomizePatternForKit (int kitIndex)
         arrangement.back() = std::move (result);
 }
 
+// ============================================================================
+// v1.6.1-rc.28 — region-TARGETED edit ops (per-region clickable number badge)
+// ============================================================================
+// User flow: click the small "1" / "2" / "3" badge on the top-left of
+// any region tile in the arrangement strip → popup menu lets you
+// randomize / compose-mold / clear THAT specific region. Previously
+// RANDOMIZE / COMPOSE only operated on arrangement.back(), so to
+// reshape region 2 in a 5-region arrangement the user had to delete
+// regions 3-5, randomize the new last region, and rebuild — exactly
+// what he meant by "clear the whole arrangement of everything and
+// restart, that is not okay". Each method preserves the region's
+// length (uses the existing region's lengthInBeats, not the global
+// pattern-length APVTS) and its per-region INTENSITY override.
+
+void AIDrumAudioProcessor::randomizeRegion (int regionIndex, int kitIndex)
+{
+    const auto& socal  = aidrum::socalIndicesForKit (kitIndex);
+    const auto& bucket = ! socal.empty() ? socal
+                                         : aidrum::starterIndicesForKit (kitIndex);
+    if (bucket.empty())
+        return;
+
+    std::mt19937_64 rng (static_cast<std::uint64_t> (std::random_device{}()));
+    std::uniform_int_distribution<size_t> pick (0, bucket.size() - 1);
+    const auto& lib = aidrum::allStarterGrooves();
+    const int   libIdx = bucket[pick (rng)];
+    if (libIdx < 0 || libIdx >= static_cast<int> (lib.size()))
+        return;
+
+    // Snapshot the existing region's length + intensity under a brief
+    // lock, build the replacement on a local copy, then briefly re-
+    // acquire to swap. Same priority-inversion pattern Devin Review
+    // flagged on randomizePatternForKit / composeMoldAroundForKit.
+    double targetBeats   = 32.0;
+    float  savedRegionInt = -1.0f;
+    {
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        if (regionIndex < 0 || regionIndex >= static_cast<int> (arrangement.size()))
+            return;
+        targetBeats    = std::max (4.0, arrangement[(size_t) regionIndex].lengthInBeats);
+        savedRegionInt = arrangement[(size_t) regionIndex].regionIntensity;
+    }
+
+    const int targetBars = juce::jlimit (1, 64,
+        (int) std::lround (targetBeats / 4.0));
+    aidrum::MidiPattern result = expandGrooveToTargetBars (
+        lib[(size_t) libIdx].pattern,
+        static_cast<std::uint64_t> (libIdx) ^ static_cast<std::uint64_t> (regionIndex)
+            ^ 0xC0FFEEULL,
+        targetBars);
+    applyIntensityCrashHatBalance (result,
+                                   static_cast<std::uint64_t> (libIdx) ^ 0xBEEFULL);
+    spliceMandatoryFillIntoRegion (result, libIdx);
+    result.regionIntensity = savedRegionInt;
+
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (regionIndex >= 0 && regionIndex < static_cast<int> (arrangement.size()))
+        arrangement[(size_t) regionIndex] = std::move (result);
+}
+
+void AIDrumAudioProcessor::composeMoldRegion (int regionIndex, int kitIndex)
+{
+    const auto& socal  = aidrum::socalIndicesForKit (kitIndex);
+    const auto& bucket = ! socal.empty() ? socal
+                                         : aidrum::starterIndicesForKit (kitIndex);
+    if (bucket.empty())
+        return;
+
+    const int safeKit = juce::jlimit (0, (int) composeCycleIndex.size() - 1,
+                                      std::max (0, kitIndex));
+    auto& counter = composeCycleIndex[(size_t) safeKit];
+    const size_t pick = counter % bucket.size();
+    counter = (counter + 1) % (bucket.size() * 16);
+
+    const auto& lib = aidrum::allStarterGrooves();
+    const int   libIdx = bucket[pick];
+    if (libIdx < 0 || libIdx >= static_cast<int> (lib.size()))
+        return;
+
+    aidrum::MidiPattern result;
+    {
+        std::lock_guard<std::mutex> lock (arrangementMutex);
+        if (regionIndex < 0 || regionIndex >= static_cast<int> (arrangement.size()))
+            return;
+        result = arrangement[(size_t) regionIndex];
+    }
+
+    // Same dedupe + 0.78× damping the COMPOSE pad does — preserves
+    // the user's primary hits, decorates with corpus ghost-snares /
+    // hat ostinato / tom phrase-end accents.
+    auto quant = [] (double b) { return (int) std::llround (b * 8.0); };
+    std::set<std::pair<int,int>> existing;
+    for (const auto& n : result.notes)
+        existing.insert ({ n.noteNumber, quant (n.startBeat) });
+
+    const aidrum::MidiPattern& src = lib[(size_t) libIdx].pattern;
+    const double targetLen = std::max (0.5, result.lengthInBeats);
+    for (const auto& n : src.notes)
+    {
+        aidrum::MidiNote dec = n;
+        dec.startBeat = std::fmod (n.startBeat, targetLen);
+        if (dec.startBeat < 0.0) dec.startBeat += targetLen;
+        const auto key = std::make_pair (dec.noteNumber, quant (dec.startBeat));
+        if (existing.count (key))
+            continue;
+        dec.velocity = juce::jlimit (0.05f, 1.0f, dec.velocity * 0.78f);
+        result.notes.push_back (dec);
+        existing.insert (key);
+    }
+
+    std::sort (result.notes.begin(), result.notes.end(),
+               [] (const aidrum::MidiNote& a, const aidrum::MidiNote& b)
+               { return a.startBeat < b.startBeat; });
+
+    spliceMandatoryFillIntoRegion (result, libIdx
+                                   ^ static_cast<int> (regionIndex));
+
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (regionIndex >= 0 && regionIndex < static_cast<int> (arrangement.size()))
+        arrangement[(size_t) regionIndex] = std::move (result);
+}
+
+void AIDrumAudioProcessor::clearRegionNotes (int regionIndex)
+{
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (regionIndex < 0 || regionIndex >= static_cast<int> (arrangement.size()))
+        return;
+    auto& region = arrangement[(size_t) regionIndex];
+    region.notes.clear();
+    // Length + intensity preserved — playback still advances through
+    // the empty region so the user can re-fill it via manual / mold.
+}
+
+// ============================================================================
+// v1.6.1-rc.28 — per-lane "0" / erase ops
+// ============================================================================
+// User flow: small "0" pill next to each lane label wipes that lane
+// across the WHOLE arrangement; per-region "0" pills wipe a lane in
+// just that region. Use case: build a soft intro by zero-ing out
+// hi-hats + snares on region 1 only — RANDOMIZE / COMPOSE produced a
+// full-kit groove but the intro should ride on kick + cymbals only.
+// Previously the only way was to redraw the whole region by hand or
+// nuke + restart the arrangement, which is exactly what the user
+// flagged as "clear the whole arrangement of everything and restart,
+// that is not okay".
+//
+// We match against BOTH the GM canonical note number AND the active
+// kit's remapped note number for that lane, because regions are
+// stored in kit-remapped form post-commit (withActiveKitApplied has
+// already run) but procedural / spliced fill content can still carry
+// raw GM until the next remap pass. Belt-and-suspenders: an erase
+// click should never miss a hit because of which side of the remap
+// it landed on.
+namespace
+{
+    // GM drum constants (mirror withActiveKitApplied + AIBackend). Kept
+    // local to this TU so the public header stays clean.
+    constexpr int kKickGM       = 36;
+    constexpr int kSnareGM      = 38;
+    constexpr int kSideStickGM  = 37;
+    constexpr int kClapGM       = 39;
+    constexpr int kClosedHatGM  = 42;
+    constexpr int kPedalHatGM   = 44;
+    constexpr int kOpenHatGM    = 46;
+    constexpr int kRideGM       = 51;
+    constexpr int kRideBellGM   = 53;
+    constexpr int kCrashGM      = 49;
+    constexpr int kCrashAltGM   = 57;
+    constexpr int kChinaGM      = 52;
+    constexpr int kFloorTomGM   = 41;
+    constexpr int kLowTomGM     = 43;
+    constexpr int kMidTomGM     = 45;
+    constexpr int kHighTomGM    = 48;
+}
+
+static std::vector<int> kitNotesForLaneStatic (const aidrum::DrumKitProfile& prof,
+                                               int laneIdx)
+{
+    std::vector<int> out;
+    out.reserve (8);
+    auto add = [&] (std::initializer_list<int> ns)
+    {
+        for (int n : ns)
+            if (std::find (out.begin(), out.end(), n) == out.end())
+                out.push_back (n);
+    };
+    switch (laneIdx)
+    {
+        case 0: // R CRASH (alt crash + china stack — rightmost cymbal)
+            add ({ kCrashAltGM, kChinaGM, prof.crashAlt, prof.china });
+            break;
+        case 1: // L CRASH
+            add ({ kCrashGM, prof.crash });
+            break;
+        case 2: // RIDE (bow + bell)
+            add ({ kRideGM, kRideBellGM, prof.ride, prof.rideBell });
+            break;
+        case 3: // HI-HAT (closed + open + pedal — single lane visually)
+            add ({ kClosedHatGM, kOpenHatGM, kPedalHatGM,
+                   prof.closedHat, prof.openHat, prof.pedalHat });
+            break;
+        case 4: // SMALL TOM (high + mid)
+            add ({ kHighTomGM, kMidTomGM, prof.highTom, prof.midTom });
+            break;
+        case 5: // FLOOR TOM (low + floor)
+            add ({ kLowTomGM, kFloorTomGM, prof.lowTom, prof.floorTom });
+            break;
+        case 6: // SNARE (incl. ghost / side-stick / clap variants)
+            add ({ kSnareGM, kSideStickGM, kClapGM,
+                   prof.snare, prof.ghostSnare, prof.sideStick, prof.clap });
+            break;
+        case 7: // KICK
+            add ({ kKickGM, prof.kick });
+            break;
+        default:
+            break;
+    }
+    return out;
+}
+
+void AIDrumAudioProcessor::eraseLaneInRegion (int regionIndex, int laneIdx)
+{
+    const auto kit = static_cast<aidrum::DrumKit> (
+        (int) apvts.getRawParameterValue (kParamDrumKit)->load());
+    const auto& prof = aidrum::drumKitProfile (kit);
+    const auto laneNotes = kitNotesForLaneStatic (prof, laneIdx);
+    if (laneNotes.empty())
+        return;
+
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    if (regionIndex < 0 || regionIndex >= static_cast<int> (arrangement.size()))
+        return;
+    auto& region = arrangement[(size_t) regionIndex];
+    auto& notes  = region.notes;
+    notes.erase (std::remove_if (notes.begin(), notes.end(),
+        [&] (const aidrum::MidiNote& n)
+        {
+            return std::find (laneNotes.begin(), laneNotes.end(), n.noteNumber)
+                   != laneNotes.end();
+        }), notes.end());
+}
+
+void AIDrumAudioProcessor::eraseLaneInArrangement (int laneIdx)
+{
+    const auto kit = static_cast<aidrum::DrumKit> (
+        (int) apvts.getRawParameterValue (kParamDrumKit)->load());
+    const auto& prof = aidrum::drumKitProfile (kit);
+    const auto laneNotes = kitNotesForLaneStatic (prof, laneIdx);
+    if (laneNotes.empty())
+        return;
+
+    std::lock_guard<std::mutex> lock (arrangementMutex);
+    for (auto& region : arrangement)
+    {
+        auto& notes = region.notes;
+        notes.erase (std::remove_if (notes.begin(), notes.end(),
+            [&] (const aidrum::MidiNote& n)
+            {
+                return std::find (laneNotes.begin(), laneNotes.end(), n.noteNumber)
+                       != laneNotes.end();
+            }), notes.end());
+    }
+}
+
 // v1.6.1-rc.9 — Auto-fill helper. Returns a one-bar fill that the
 // caller will splice in as the 8th bar of an 8-bar block. Action
 // starts on beat 2 of the bar so beat 1 still carries the previous
