@@ -72,19 +72,27 @@ if(AIDRUM_AAX_SDK_PATH)
     endif()
 endif()
 
-# v1.6.1-rc.24 — fresh plugin identity codes. Logic Pro's AU validation
-# cache (and FL Studio's plugin DB) was holding the old "HumHouse Drums"
-# manufacturer/plugin pair (Humh/Hhdr) and silently mismatching the new
-# Drummer-track + host-MIDI-capture wiring. Bumping BUNDLE_ID +
-# PLUGIN_MANUFACTURER_CODE + PLUGIN_CODE forces every host to register
-# rc.24 as a fresh plugin entry. PRODUCT_NAME / COMPANY_NAME stay stable
-# so the packaging pipeline (macOS .pkg/.dmg, Windows .exe, CI artifact
-# names) doesn't have to change in lockstep with every identity bump.
+# v1.6.1-rc.29 — SECOND identity bump. rc.24 already moved us to
+# Mk2 (Hhm2 / Hh24) and rc.28 inherited those codes. User reported
+# rc.28 crashes FL Studio Mac on plugin load — same class of issue
+# as the rc.23 → rc.24 transition where FL Studio's plugin DB held
+# the cached validation result of the old binary, then served a
+# half-stale/half-new bundle when the new install replaced the
+# bundle in place under the same component identity. User's words:
+# "make a new file every time and for Mac too". Going forward we
+# bump these three on EVERY rc — the cost is one re-scan in the
+# host on first launch, the benefit is no cached-validation
+# crashes ever again.
+#
+# rc.29 codes: Mk3 / Hhm3 / Hh29 (24 → 29 mirrors the rc number).
+# PRODUCT_NAME / COMPANY_NAME stay stable so the packaging pipeline
+# (macOS .pkg/.dmg, Windows .exe, CI artifact names) doesn't have to
+# change in lockstep.
 juce_add_plugin(AIDrumVST
     COMPANY_NAME              "HumHouse"
-    BUNDLE_ID                 "com.humhouse.humhousedrums.mk2"
-    PLUGIN_MANUFACTURER_CODE  Hhm2
-    PLUGIN_CODE               Hh24
+    BUNDLE_ID                 "com.humhouse.humhousedrums.mk3"
+    PLUGIN_MANUFACTURER_CODE  Hhm3
+    PLUGIN_CODE               Hh29
     FORMATS                   ${AIDRUM_FORMATS}
     PRODUCT_NAME              "HumHouse Drums"
     IS_SYNTH                  TRUE
