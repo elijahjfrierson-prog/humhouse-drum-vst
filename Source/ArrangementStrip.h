@@ -107,6 +107,23 @@ namespace aidrum
         std::function<void (int laneIdx, juce::Point<int> screenPos)>
             onLanePianoRollRequested;
 
+        // v1.6.1-rc.28 — per-lane GLOBAL ERASE button (the small "0"
+        // pill next to each lane label). Click → wipe THAT lane's
+        // notes from EVERY region in the arrangement. Lane index
+        // ordering matches onLaneSelected: 0=R CRASH, 1=L CRASH,
+        // 2=RIDE, 3=HI-HAT, 4=SMALL TOM, 5=FLOOR TOM, 6=SNARE,
+        // 7=KICK. Editor wires this to processor.eraseLaneInArrangement.
+        std::function<void (int laneIdx)> onLaneZeroClicked;
+
+        // v1.6.1-rc.28 — per-region per-lane ERASE button (the tiny
+        // "0" pill stacked vertically along each region tile's left
+        // edge). Click → wipe THAT lane's notes from JUST that one
+        // region. Use case (user's words): "most songs start soft
+        // with intros, so if i could zero out hihhats and snares it
+        // would be great to build the arrangement as i go".
+        std::function<void (int regionIdx, int laneIdx)>
+            onRegionLaneZeroClicked;
+
         // v1.6.1-rc.10 — sub-beat click resolution. 16 = 1/16, 32 = 1/32,
         // 64 = 1/64. Drives the snap step inside handleAddNote so a
         // 1/64 step-div in the editor actually lets the user place a
@@ -152,6 +169,17 @@ namespace aidrum
         std::function<void (int regionIndex)> onCopyRegion;
         std::function<void (int regionIndex)> onPasteRegion;
 
+        // v1.6.1-rc.28 — fires when the user clicks the per-region
+        // NUMBER badge in a region tile's top-left header. Editor
+        // wires this to a popup menu that lets the user randomize /
+        // compose-mold / clear / copy / paste / delete THAT specific
+        // region in isolation. Replaces the old workflow where the
+        // user had to nuke the whole arrangement to reshape a single
+        // region. The point is passed in screen coordinates so the
+        // popup can be anchored under the badge.
+        std::function<void (int regionIndex, juce::Point<int> screenPos)>
+            onRegionNumberClicked;
+
         // v1.6.1-rc.5 — step-sequencer toggle semantics. Left-click on a
         // drawn note immediately deletes it (same motion = toggle off).
         // Left-click on an empty grid cell drops a new note at that lane
@@ -193,13 +221,21 @@ namespace aidrum
             cachedRegionIntensityKnobs.clear();
             cachedRegionCopyButtons.clear();
             cachedRegionPasteButtons.clear();
+            cachedRegionNumberButtons.clear();
+            cachedRegionLaneZeroButtons.clear();
 
             // v1.6.1-rc.2 — reserve a narrow column on the left for per-lane
             // labels (CRASH / RIDE / HI-HAT / TOM / SNARE / KICK). 6 lanes
             // now — RIDE is explicit instead of being lumped with crashes.
             // v1.6.1-rc.9 — widened from 54 to 76 so 'R CRASH' / 'L CRASH'
             // labels render their final 'H' (was clipped at 54).
-            constexpr float kLabelColumn = 76.0f;
+            // v1.6.1-rc.28 — bumped 76 → 92 to make room for the
+            // per-lane "0" / erase pill on the right edge of each
+            // label cell, alongside the rc.28 piano-roll icon on
+            // the left. Layout per lane row: [piano ▦ 14px][2px gap]
+            // [label text 56px][2px gap][zero "0" 14px][4px right pad].
+            // The handleRegionDelete mirror below was bumped to match.
+            constexpr float kLabelColumn = 92.0f;
             constexpr float kHeaderRow   = 14.0f;
             auto labelArea = inner.removeFromLeft (kLabelColumn);
             inner.removeFromLeft (6.0f);                 // gap after labels
@@ -299,9 +335,23 @@ namespace aidrum
                     kPianoBtnW, kPianoBtnW);
                 cachedLanePianoButtons[(size_t) i] = pianoBtnRect;
 
+                // v1.6.1-rc.28 — "0" / erase pill on the right edge
+                // of each lane label. 14×14 dark-rose pill with a
+                // centered "0". Click → wipe lane's notes from ALL
+                // regions. Reserve its column from the labelRect so
+                // the text still right-aligns cleanly.
+                constexpr float kZeroBtnW = 14.0f;
+                const auto zeroBtnRect = juce::Rectangle<float> (
+                    labelArea.getRight() - 4.0f - kZeroBtnW,
+                    yTop + (laneH - kZeroBtnW) * 0.5f,
+                    kZeroBtnW, kZeroBtnW);
+                cachedLaneZeroButtons[(size_t) i] = zeroBtnRect;
+
                 const auto labelRect = juce::Rectangle<float> (
                     labelArea.getX() + 2.0f + kPianoBtnW + 2.0f, yTop,
-                    labelArea.getWidth() - 6.0f - kPianoBtnW - 2.0f, laneH);
+                    labelArea.getWidth() - 6.0f - kPianoBtnW - 2.0f
+                        - kZeroBtnW - 4.0f,
+                    laneH);
                 cachedLabelRects[(size_t) i] = labelRect;
 
                 // v1.6.1-rc.7 — selection ring around whichever lane the
@@ -361,6 +411,25 @@ namespace aidrum
                                             2.0f, 0.6f);
                 }
 
+                // v1.6.1-rc.28 — per-lane "0" / GLOBAL ERASE pill.
+                // Dark-rose fill + brighter "0" so it reads as a
+                // destructive action without screaming. Click wipes
+                // this lane from EVERY region (per-region wipe is the
+                // tiny "0" pill on each region tile's left edge).
+                {
+                    juce::Colour eraseAccent (0xffe25b6c); // muted rose
+                    g.setColour (juce::Colour (GothicPalette::kInk).withAlpha (0.92f));
+                    g.fillRoundedRectangle (zeroBtnRect, 3.0f);
+                    g.setColour (eraseAccent.withAlpha (isGhost ? 0.45f : 0.85f));
+                    g.drawRoundedRectangle (zeroBtnRect, 3.0f, 0.9f);
+                    auto zf = juce::Font (juce::FontOptions (10.5f));
+                    zf.setExtraKerningFactor (0.04f);
+                    g.setFont (zf);
+                    g.setColour (eraseAccent.withAlpha (isGhost ? 0.55f : 0.95f));
+                    g.drawText ("0", zeroBtnRect,
+                                juce::Justification::centred, false);
+                }
+
                 // lane divider tick inside the note area
                 g.setColour (juce::Colour (kLanes[i].col).withAlpha (0.10f));
                 g.drawLine (inner.getX(), yTop, inner.getRight(), yTop, 0.6f);
@@ -410,14 +479,74 @@ namespace aidrum
                 // INTENSITY). The number is always shown (even on a
                 // single region) so the knob has a label next to it.
                 {
-                    auto lf = juce::Font (juce::FontOptions (9.0f));
-                    lf.setExtraKerningFactor (0.22f);
+                    // v1.6.1-rc.28 — region NUMBER is now a clickable
+                    // button-styled badge. User clicks "1" / "2" / etc.
+                    // → editor opens a per-region edit popup (randomize
+                    // / compose / clear / copy / paste / delete THIS
+                    // region, no need to nuke the whole arrangement).
+                    // Drawn as a small dark pill with the region index
+                    // centered, gold border so it reads as interactive.
+                    juce::Rectangle<float> numBadge (
+                        regionX0 + 2.0f, inner.getY() + 1.5f, 16.0f, 13.0f);
+                    cachedRegionNumberButtons.push_back ({ (int) i, numBadge });
+
+                    g.setColour (juce::Colour (GothicPalette::kInk).withAlpha (0.92f));
+                    g.fillRoundedRectangle (numBadge, 3.0f);
+                    g.setColour (juce::Colour (GothicPalette::kAccent).withAlpha (0.75f));
+                    g.drawRoundedRectangle (numBadge, 3.0f, 0.9f);
+
+                    auto lf = juce::Font (juce::FontOptions (9.5f));
+                    lf.setExtraKerningFactor (0.18f);
                     g.setFont (lf);
-                    g.setColour (juce::Colour (GothicPalette::kBone).withAlpha (0.85f));
+                    g.setColour (juce::Colour (GothicPalette::kAccent));
                     g.drawText (juce::String ((int) i + 1),
-                                juce::Rectangle<float> (regionX0 + 3.0f, inner.getY() + 1.0f,
-                                                        14.0f, 14.0f),
-                                juce::Justification::topLeft, false);
+                                numBadge,
+                                juce::Justification::centred, false);
+
+                    // v1.6.1-rc.28 — per-region per-lane "0" / ERASE
+                    // pills. Tiny 8×8 rose pill on the LEFT edge of
+                    // each region tile, vertically aligned with each
+                    // lane row Y. Lane 0 (R CRASH) row's pill is
+                    // shifted right past the number badge so the two
+                    // don't overlap. Click → wipe that lane's notes
+                    // from THIS region only. Cached for the
+                    // mouseDown hit-test below.
+                    {
+                        const float laneHForRegion =
+                            inner.getHeight() / 8.0f;
+                        constexpr float kRegionZeroSz = 9.0f;
+                        for (int laneRow = 0; laneRow < 8; ++laneRow)
+                        {
+                            const float laneTop =
+                                inner.getY() + laneRow * laneHForRegion;
+                            // Lane 0 pill drops just below the number
+                            // badge so it doesn't fight the badge's
+                            // 16×13 rect; lanes 1-7 center vertically
+                            // in their lane row at the region's left
+                            // edge.
+                            const float pillX = (laneRow == 0)
+                                ? regionX0 + 20.0f
+                                : regionX0 + 2.0f;
+                            const float pillY = laneTop
+                                + (laneHForRegion - kRegionZeroSz) * 0.5f;
+                            juce::Rectangle<float> pill (
+                                pillX, pillY, kRegionZeroSz, kRegionZeroSz);
+                            cachedRegionLaneZeroButtons.push_back (
+                                { (int) i, laneRow, pill });
+
+                            juce::Colour eraseAccent (0xffe25b6c);
+                            g.setColour (juce::Colour (GothicPalette::kInk)
+                                            .withAlpha (0.86f));
+                            g.fillRoundedRectangle (pill, 2.0f);
+                            g.setColour (eraseAccent.withAlpha (0.7f));
+                            g.drawRoundedRectangle (pill, 2.0f, 0.7f);
+                            auto zf = juce::Font (juce::FontOptions (8.0f));
+                            g.setFont (zf);
+                            g.setColour (eraseAccent.withAlpha (0.92f));
+                            g.drawText ("0", pill,
+                                        juce::Justification::centred, false);
+                        }
+                    }
 
                     // Mini intensity knob — 18 px square, sits flush with
                     // the region number in the same header band.
@@ -751,6 +880,36 @@ namespace aidrum
                 return;
             }
 
+            // v1.6.1-rc.28 — per-region NUMBER badge hit-test. Sits
+            // immediately to the LEFT of the intensity knob, so test
+            // it first. Click → onRegionNumberClicked → editor opens
+            // the per-region edit popup. Right-click ALSO opens the
+            // popup (some users right-click out of habit on numbered
+            // tiles; better to surface the same menu than to fall
+            // through to deleteRegion).
+            // v1.6.1-rc.28 — per-region per-lane "0" pills tested
+            // BEFORE the region-number badge so a click on lane 0's
+            // pill (which sits to the right of the badge) doesn't
+            // fall through to the badge. Other lanes have the pill
+            // on the region's left edge, well clear of the badge.
+            for (const auto& hit : cachedRegionLaneZeroButtons)
+            {
+                if (! hit.rect.contains (e.position))
+                    continue;
+                if (onRegionLaneZeroClicked != nullptr)
+                    onRegionLaneZeroClicked (hit.regionIdx, hit.laneIdx);
+                return;
+            }
+
+            for (const auto& hit : cachedRegionNumberButtons)
+            {
+                if (! hit.rect.contains (e.position))
+                    continue;
+                if (onRegionNumberClicked != nullptr)
+                    onRegionNumberClicked (hit.regionIdx, e.getScreenPosition());
+                return;
+            }
+
             // v1.6.1-rc.15 — per-region INTENSITY mini-knob hit-test.
             // Tested AFTER the COPY/PASTE pills (which sit beside the
             // knob) so the buttons win their tiny rectangles. Vertical
@@ -813,6 +972,21 @@ namespace aidrum
             // takes priority over the GHOST-arm gesture. Left-click
             // opens the chromatic note picker; right-click falls back
             // to the SAMPLE PICKER (same as right-click on the label).
+            // v1.6.1-rc.28 — per-lane GLOBAL "0" / erase pill hit-test.
+            // Sits on the right edge of each lane label cell. Click →
+            // wipe lane across whole arrangement. Test before label /
+            // piano-roll buttons because the pill is inside the same
+            // labelArea row.
+            for (int i = 0; i < (int) cachedLaneZeroButtons.size(); ++i)
+            {
+                if (cachedLaneZeroButtons[(size_t) i].contains (e.position))
+                {
+                    if (onLaneZeroClicked != nullptr)
+                        onLaneZeroClicked (i);
+                    return;
+                }
+            }
+
             for (int i = 0; i < (int) cachedLanePianoButtons.size(); ++i)
             {
                 if (cachedLanePianoButtons[(size_t) i].contains (e.position))
@@ -1250,12 +1424,14 @@ namespace aidrum
             if (onDeleteRegion == nullptr || last.totalBeats <= 0.0
                 || last.regions.empty())
                 return;
-            // v1.6.1-rc.9 — must mirror kLabelColumn in paint() (76.0f)
-            // plus the 6px gap. Was 54+6 in rc.8; bumped to 76+6 here so
-            // right-click region-delete hit-tests against the same grid
-            // the user sees.
+            // v1.6.1-rc.28 — must mirror kLabelColumn in paint() (now
+            // 92.0f after rc.28 added the per-lane "0" pill alongside
+            // the rc.28 piano-roll icon) plus the 6px gap. Was 54+6
+            // in rc.8, 76+6 in rc.9-rc.27, 92+6 here so right-click
+            // region-delete hit-tests against the same grid the user
+            // sees.
             auto gridRect = inner.withTrimmedRight (getAppendButtonBounds (inner).getWidth() + 10.0f)
-                                 .withTrimmedLeft  (76.0f + 6.0f)
+                                 .withTrimmedLeft  (92.0f + 6.0f)
                                  .withTrimmedTop   (14.0f);
             if (! gridRect.contains (p)) return;
             const double total = std::max (1.0, last.totalBeats);
@@ -1351,6 +1527,32 @@ namespace aidrum
         // intensity knob so the buttons take priority.
         std::vector<RegionIntensityHit> cachedRegionCopyButtons;
         std::vector<RegionIntensityHit> cachedRegionPasteButtons;
+        // v1.6.1-rc.28 — per-region NUMBER badge hit-rect (the small
+        // "1" / "2" / "3" pill in the top-left of each region tile).
+        // Rebuilt every paint(); hit-tested before the intensity knob
+        // so the badge wins its tiny 14×14 box. Click fires
+        // onRegionNumberClicked → editor opens the per-region edit
+        // popup.
+        std::vector<RegionIntensityHit> cachedRegionNumberButtons;
+
+        // v1.6.1-rc.28 — per-lane GLOBAL "0" pill hit-rects (one per
+        // lane row in the left label column). Same lane-index order
+        // as cachedLabelRects: 0=R CRASH … 7=KICK. Click fires
+        // onLaneZeroClicked → editor calls processor.eraseLaneInArrangement.
+        std::array<juce::Rectangle<float>, 8> cachedLaneZeroButtons {};
+
+        // v1.6.1-rc.28 — per-region per-lane "0" pill hit-rects.
+        // Each entry stores the regionIdx + laneIdx + tile-local
+        // rect. Rebuilt every paint(); hit-tested in mouseDown
+        // BEFORE the per-lane piano roll icon and before the
+        // region-number badge so the pill wins its 9×9 box.
+        struct RegionLaneHit
+        {
+            int                    regionIdx = -1;
+            int                    laneIdx   = -1;
+            juce::Rectangle<float> rect;
+        };
+        std::vector<RegionLaneHit> cachedRegionLaneZeroButtons;
         int                            draggingRegionIntensity = -1;
         bool                           draggingKnobIsKnob      = false;
         float                          draggingKnobAnchorY     = -1.0f;

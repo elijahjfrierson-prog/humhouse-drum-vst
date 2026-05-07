@@ -974,6 +974,98 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
         arrangementStrip.repaint();
     };
 
+    // v1.6.1-rc.28 — clickable region NUMBER badge → per-region edit
+    // popup. User reported they "find I have to clear the whole
+    // arrangement of everything and restart and that is not okay"
+    // because RANDOMIZE / COMPOSE used to only operate on the LAST
+    // region. The processor now exposes randomizeRegion / composeMoldRegion
+    // / clearRegionNotes / eraseLaneInRegion that take a regionIndex,
+    // and the editor surfaces all of them through this menu so the
+    // user can reshape any region in the middle of the arrangement
+    // without nuking trailing regions.
+    //
+    // The "Erase instrument..." submenu provides per-region per-lane
+    // erase as a backup to the tiny "0" pills painted on each region
+    // tile (some lanes' pills are very small; the menu is the larger
+    // hit-target for users with shaky pointers).
+    arrangementStrip.onRegionNumberClicked =
+        [this] (int regionIdx, juce::Point<int> screenPos)
+    {
+        if (regionIdx < 0)
+            return;
+
+        juce::PopupMenu m;
+        m.addSectionHeader (juce::String ("Region ") + juce::String (regionIdx + 1));
+        m.addItem (1, "Randomize this region");
+        m.addItem (2, "Compose-mold this region");
+        m.addItem (3, "Clear notes (keep length + intensity)");
+        m.addSeparator();
+        m.addItem (4, "Copy this region");
+        m.addItem (5, "Paste into this region");
+        m.addItem (6, "Delete this region");
+        m.addSeparator();
+
+        juce::PopupMenu eraseSub;
+        // Lane index ordering matches ArrangementStrip kLaneNote +
+        // PluginProcessor::kitNotesForLaneStatic switch:
+        // 0=R CRASH, 1=L CRASH, 2=RIDE, 3=HI-HAT, 4=SMALL TOM,
+        // 5=FLOOR TOM, 6=SNARE, 7=KICK.
+        static const char* const kLaneLabels[8] = {
+            "Erase R Crash",   "Erase L Crash",  "Erase Ride",
+            "Erase Hi-Hat",    "Erase Small Tom","Erase Floor Tom",
+            "Erase Snare",     "Erase Kick"
+        };
+        for (int laneIdx = 0; laneIdx < 8; ++laneIdx)
+            eraseSub.addItem (100 + laneIdx, kLaneLabels[laneIdx]);
+        m.addSubMenu ("Erase instrument...", eraseSub);
+
+        auto opts = juce::PopupMenu::Options()
+                        .withTargetScreenArea (juce::Rectangle<int> (
+                            screenPos.x, screenPos.y, 1, 1));
+
+        m.showMenuAsync (opts,
+            [this, regionIdx] (int result)
+            {
+                if (result == 0)
+                    return;
+                const int kit = drumKitBox.getSelectedItemIndex();
+                if (result == 1)
+                    processorRef.randomizeRegion (regionIdx, kit);
+                else if (result == 2)
+                    processorRef.composeMoldRegion (regionIdx, kit);
+                else if (result == 3)
+                    processorRef.clearRegionNotes (regionIdx);
+                else if (result == 4)
+                    processorRef.copyRegionToClipboard (regionIdx);
+                else if (result == 5)
+                    processorRef.pasteCopiedRegionInto (regionIdx);
+                else if (result == 6)
+                    processorRef.deleteRegion (regionIdx);
+                else if (result >= 100 && result < 108)
+                    processorRef.eraseLaneInRegion (regionIdx, result - 100);
+                arrangementStrip.repaint();
+            });
+    };
+
+    // v1.6.1-rc.28 — per-lane GLOBAL "0" pill on each lane label.
+    // Wipes that lane's notes from EVERY region in the arrangement.
+    // The user described this as "0 button next every instrument on
+    // the instrument rack ... to simply erase a full region of
+    // whatever instrument you want" — this is the global half (per-
+    // region erase is the per-region per-lane "0" pill below).
+    arrangementStrip.onLaneZeroClicked = [this] (int laneIdx)
+    {
+        processorRef.eraseLaneInArrangement (laneIdx);
+        arrangementStrip.repaint();
+    };
+
+    arrangementStrip.onRegionLaneZeroClicked =
+        [this] (int regionIdx, int laneIdx)
+    {
+        processorRef.eraseLaneInRegion (regionIdx, laneIdx);
+        arrangementStrip.repaint();
+    };
+
     // v1.6.1-rc.7 — Cmd/Ctrl + two-finger trackpad scroll on the strip
     // grows or shrinks the visible cell width. Implemented at the
     // editor layer because the strip doesn't own its bounds — we

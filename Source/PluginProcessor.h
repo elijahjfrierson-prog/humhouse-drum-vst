@@ -123,6 +123,32 @@ public:
     // it appends one.
     void randomizePatternForKit (int kitIndex);
 
+    // v1.6.1-rc.28 — region-TARGETED edit ops. Driven by the clickable
+    // region-number badge in the arrangement strip: user clicks "1" /
+    // "2" / etc. on a region's top-left corner and gets a popup menu
+    // to randomize / compose / clear THAT specific region without
+    // nuking the whole arrangement (he'd been having to clear and
+    // restart). All three preserve the region's length and per-region
+    // INTENSITY override; only its notes change.
+    void randomizeRegion (int regionIndex, int kitIndex);
+    void composeMoldRegion (int regionIndex, int kitIndex);
+    void clearRegionNotes (int regionIndex);
+
+    // v1.6.1-rc.28 — per-lane "0" / erase ops. Drives the small "0"
+    // pills next to each lane label (wipes the lane across the WHOLE
+    // arrangement) and the per-region per-lane "0" pills (wipes a
+    // single lane in a single region). User flow: build an intro
+    // region with no hi-hat / no snare by clicking the "0" pill on
+    // those lanes within region 1, then leave hats + snares full in
+    // regions 2-N. Lane indices match ArrangementStrip's lane order
+    // (0=R CRASH, 1=L CRASH, 2=RIDE, 3=HI-HAT, 4=SMALL TOM,
+    //  5=FLOOR TOM, 6=SNARE, 7=KICK). The matching set covers both
+    // GM canonical notes AND the active kit's remapped notes so the
+    // erase works regardless of which kit is loaded or whether a
+    // region was committed pre- or post-remap.
+    void eraseLaneInRegion (int regionIndex, int laneIdx);
+    void eraseLaneInArrangement (int laneIdx);
+
     // v1.6.1-rc.9 — auto-fill cadence helper. Returns a fill-shaped
     // MidiPattern that fits the last bar of an 8-bar block, starting
     // its action on beat 2. Pure helper so the editor can paint the
