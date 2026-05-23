@@ -84,15 +84,15 @@ endif()
 # host on first launch, the benefit is no cached-validation
 # crashes ever again.
 #
-# rc.29 codes: Mk3 / Hhm3 / Hh29 (24 → 29 mirrors the rc number).
+# rc.30 codes: Mk4 / Hhm4 / Hh30 (29 → 30 mirrors the rc number).
 # PRODUCT_NAME / COMPANY_NAME stay stable so the packaging pipeline
 # (macOS .pkg/.dmg, Windows .exe, CI artifact names) doesn't have to
 # change in lockstep.
 juce_add_plugin(AIDrumVST
     COMPANY_NAME              "HumHouse"
-    BUNDLE_ID                 "com.humhouse.humhousedrums.mk3"
-    PLUGIN_MANUFACTURER_CODE  Hhm3
-    PLUGIN_CODE               Hh29
+    BUNDLE_ID                 "com.humhouse.humhousedrums.mk4"
+    PLUGIN_MANUFACTURER_CODE  Hhm4
+    PLUGIN_CODE               Hh30
     FORMATS                   ${AIDRUM_FORMATS}
     PRODUCT_NAME              "HumHouse Drums"
     IS_SYNTH                  TRUE

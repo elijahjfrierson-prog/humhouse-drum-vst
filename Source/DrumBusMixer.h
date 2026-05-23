@@ -87,16 +87,14 @@ namespace aidrum
         std::atomic<float> reverbSize  { 0.55f };
         std::atomic<float> reverbDamp  { 0.50f };
 
-        // v1.6.1-rc.28 — MASTER GLUE COMPRESSOR. The user reported the
-        // kit "doesn't feel studio ready and when i record it feels
-        // separated from the mix". Adding a master-bus compressor
-        // (sum-and-glue style — slow attack, medium release, low
-        // ratio) so the kit reads as one cohesive instrument the
-        // moment a user drops the plugin onto a track. Defaults to
-        // 0.45 (~3-4 dB of gentle gain reduction on transients) which
-        // is enough to "glue" but doesn't squash the dynamics. Set to
-        // 0 to bypass entirely. Range 0..1.
-        std::atomic<float> glueAmount  { 0.45f };
+        // v1.6.1-rc.28 — MASTER GLUE COMPRESSOR. Sum-and-glue style —
+        // slow attack, medium release, low ratio. Set to 0 to bypass.
+        // v1.6.1-rc.30 — default reverted from 0.45 to 0.0 (bypass).
+        // The rc.28 default (0.45) pushed the idle-block CPU load
+        // above the DAW's real-time threshold, causing FL Studio /
+        // Logic to kill the plugin on load. The mixer panel still
+        // exposes the GLUE knob so the user can opt in after loading.
+        std::atomic<float> glueAmount  { 0.0f };
     };
 
     // v1.3.0 Room preset bank — algorithmic reverb character per space.
@@ -221,6 +219,15 @@ namespace aidrum
                 const bool muted = p.mute.load (std::memory_order_relaxed)
                                 || (anySolo && ! p.solo.load (std::memory_order_relaxed));
                 if (muted) continue;
+
+                // v1.6.1-rc.30 — skip the entire DSP chain for buses
+                // that contain only silence (peak magnitude ≈ 0). Drums
+                // are transient instruments: between hits most buses sit
+                // at zero, so this saves EQ + comp + drive + dampen +
+                // depth + clipper + gain/pan + reverb-send per block
+                // for every inactive bus. getMagnitude is O(n) but far
+                // cheaper than running the full chain.
+                if (buf.getMagnitude (0, n) < 1.0e-12f) continue;
 
                 // --- EQ (3-band one-pole shelves / simple peaking) ---------
                 const float low  = p.eqLowDb .load (std::memory_order_relaxed);

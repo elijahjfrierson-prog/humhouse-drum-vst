@@ -295,24 +295,14 @@ AIDrumAudioProcessor::AIDrumAudioProcessor()
     busMixer.params_ref ((int) aidrum::Bus::China)    .reverbSend.store (0.25f);
     busMixer.params_ref ((int) aidrum::Bus::Toms)     .reverbSend.store (0.18f);
 
-    // v1.6.1-rc.28 — STUDIO-READY per-bus compression defaults. The
-    // user reported the kit "doesn't feel studio ready" and "feels
-    // separated from the mix" when recorded. Pre-arming each bus
-    // with a small amount of compression (kick / snare get the most
-    // because that's what reads as "punchy and present" on a
-    // recording, cymbals stay light so they don't pump). Combined
-    // with the new master glue compressor (DrumBusMixer
-    // master.glueAmount = 0.45) the kit now sounds like one cohesive
-    // recorded instrument the moment the plugin loads. User can dial
-    // any of these to 0 in the mixer panel to bypass.
-    busMixer.params_ref ((int) aidrum::Bus::Kick)     .compAmount.store (0.30f);
-    busMixer.params_ref ((int) aidrum::Bus::Snare)    .compAmount.store (0.35f);
-    busMixer.params_ref ((int) aidrum::Bus::Toms)     .compAmount.store (0.20f);
-    busMixer.params_ref ((int) aidrum::Bus::ClosedHat).compAmount.store (0.10f);
-    busMixer.params_ref ((int) aidrum::Bus::OpenHat)  .compAmount.store (0.10f);
-    busMixer.params_ref ((int) aidrum::Bus::Ride)     .compAmount.store (0.10f);
-    busMixer.params_ref ((int) aidrum::Bus::Crash)    .compAmount.store (0.08f);
-    busMixer.params_ref ((int) aidrum::Bus::China)    .compAmount.store (0.08f);
+    // v1.6.1-rc.28 — per-bus compression defaults were set here (0.08-0.35
+    // across all 8 buses). Combined with the master glue compressor they
+    // pushed the idle CPU load over the DAW's real-time threshold, causing
+    // FL Studio / Logic to kill the plugin on load (rc.29 crash reports).
+    // v1.6.1-rc.30 — defaults reverted to 0.0 (bypass). The mixer panel
+    // still exposes the per-bus COMP knob so the user can opt in after
+    // loading. Master glue compressor default also reverted (see
+    // DrumBusMixer.h MasterParams::glueAmount).
 
     // v1.6.1-rc.12 — push the current Room preset values into the master
     // reverb once on construction so default sessions hear reverb
