@@ -47,6 +47,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut for HumHouse Drums 2 (Standalone)"; GroupDescription: "Additional shortcuts:"
 
+; v1.6.1-rc.30 — wipe the old-named "HumHouse Drums" artifacts so users
+; upgrading from v1 don't end up with both old and new plugins in their
+; DAW scan path (mirrors the macOS .pkg preinstall cleanup).
+[InstallDelete]
+Type: filesandordirs; Name: "{commoncf64}\VST3\HumHouse Drums.vst3"
+Type: files; Name: "{app}\HumHouse Drums.exe"
+
 [Files]
 ; Standalone .exe -> Program Files\HumHouse\HumHouse Drums\
 Source: "..\..\build\AIDrumVST_artefacts\Release\Standalone\HumHouse Drums 2.exe"; \
