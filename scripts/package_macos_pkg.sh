@@ -17,8 +17,8 @@ BUNDLE_ID="com.humhouse.humhousedrums.installer"
 PKG_OUT="${PKG_OUT:-HumHouse-Drums-macOS.pkg}"
 
 ART="$REPO/build/AIDrumVST_artefacts/Release"
-VST3_SRC="$ART/VST3/HumHouse Drums.vst3"
-AU_SRC="$ART/AU/HumHouse Drums.component"
+VST3_SRC="$ART/VST3/HumHouse Drums 2.vst3"
+AU_SRC="$ART/AU/HumHouse Drums 2.component"
 
 if [[ ! -d "$VST3_SRC" ]]; then
   echo "ERROR: $VST3_SRC not found. Run 'cmake --build build --config Release' first." >&2
@@ -39,10 +39,10 @@ fi
 # If APPLE_DEVELOPER_ID is exported we'd use it; otherwise ad-hoc (-).
 SIGN_IDENTITY="${APPLE_DEVELOPER_ID:--}"
 codesign --force --deep --sign "$SIGN_IDENTITY" \
-  "$VST3_ROOT/HumHouse Drums.vst3" || true
-if [[ -d "$AU_ROOT/HumHouse Drums.component" ]]; then
+  "$VST3_ROOT/HumHouse Drums 2.vst3" || true
+if [[ -d "$AU_ROOT/HumHouse Drums 2.component" ]]; then
   codesign --force --deep --sign "$SIGN_IDENTITY" \
-    "$AU_ROOT/HumHouse Drums.component" || true
+    "$AU_ROOT/HumHouse Drums 2.component" || true
 fi
 
 # Build two component packages, then wrap them in a productbuild archive
@@ -75,9 +75,11 @@ cat > "$VST3_SCRIPTS/preinstall" <<'PREINSTALL_VST3'
 # two competing bundles with the same path. Silent-fail on errors:
 # we never want a missing path to abort the install.
 rm -rf "/Library/Audio/Plug-Ins/VST3/HumHouse Drums.vst3" 2>/dev/null || true
+rm -rf "/Library/Audio/Plug-Ins/VST3/HumHouse Drums 2.vst3" 2>/dev/null || true
 for home in /Users/*; do
   [ -d "$home" ] || continue
   rm -rf "$home/Library/Audio/Plug-Ins/VST3/HumHouse Drums.vst3" 2>/dev/null || true
+  rm -rf "$home/Library/Audio/Plug-Ins/VST3/HumHouse Drums 2.vst3" 2>/dev/null || true
 done
 exit 0
 PREINSTALL_VST3
@@ -92,9 +94,11 @@ cat > "$AU_SCRIPTS/preinstall" <<'PREINSTALL_AU'
 # Killing AudioComponentRegistrar is the documented way to make
 # auval re-scan on next launch (Apple devforums, JUCE forum).
 rm -rf "/Library/Audio/Plug-Ins/Components/HumHouse Drums.component" 2>/dev/null || true
+rm -rf "/Library/Audio/Plug-Ins/Components/HumHouse Drums 2.component" 2>/dev/null || true
 for home in /Users/*; do
   [ -d "$home" ] || continue
   rm -rf "$home/Library/Audio/Plug-Ins/Components/HumHouse Drums.component" 2>/dev/null || true
+  rm -rf "$home/Library/Audio/Plug-Ins/Components/HumHouse Drums 2.component" 2>/dev/null || true
   rm -rf "$home/Library/Caches/AudioUnitCache" 2>/dev/null || true
 done
 rm -rf "/Library/Caches/AudioUnitCache" 2>/dev/null || true
@@ -111,7 +115,7 @@ pkgbuild \
   --install-location "/" \
   "$PKGDIR/vst3.pkg"
 
-if [[ -d "$AU_ROOT/HumHouse Drums.component" ]]; then
+if [[ -d "$AU_ROOT/HumHouse Drums 2.component" ]]; then
   pkgbuild \
     --identifier "${BUNDLE_ID}.au" \
     --version "$VERSION" \
@@ -126,7 +130,7 @@ DIST="$STAGE/distribution.xml"
 cat > "$DIST" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>HumHouse Drums $VERSION</title>
+    <title>HumHouse Drums 2 $VERSION</title>
     <welcome    file="welcome.html"    mime-type="text/html"/>
     <license    file="license.txt"     mime-type="text/plain"/>
     <conclusion file="conclusion.html" mime-type="text/html"/>
@@ -156,7 +160,7 @@ cp "$REPO/installer/LICENSE.txt" "$RES/license.txt"
 
 cat > "$RES/welcome.html" <<'HTML'
 <html><body style="font-family: -apple-system, system-ui; padding: 20px;">
-<h2 style="margin-top:0;">Welcome to HumHouse Drums</h2>
+<h2 style="margin-top:0;">Welcome to HumHouse Drums 2</h2>
 <p>This installer will place the plug-ins in their standard locations so
 every supported DAW can find them automatically:</p>
 <ul>
@@ -165,7 +169,7 @@ every supported DAW can find them automatically:</p>
   <li><b>Audio Unit</b> &rarr; /Library/Audio/Plug-Ins/Components/<br/>
       <small>Logic Pro, GarageBand, MainStage</small></li>
 </ul>
-<p>After installation, rescan plug-ins in your DAW. HumHouse Drums will
+<p>After installation, rescan plug-ins in your DAW. HumHouse Drums 2 will
 appear as an Instrument.</p>
 </body></html>
 HTML
@@ -181,7 +185,7 @@ cat > "$RES/conclusion.html" <<'HTML'
       Find installed plug-ins.</li>
   <li><b>Ableton</b> &rarr; Preferences &rarr; Plug-Ins &rarr; Rescan.</li>
 </ul>
-<p>HumHouse Drums will appear under <b>Instruments</b> / <b>Generators</b>.</p>
+<p>HumHouse Drums 2 will appear under <b>Instruments</b> / <b>Generators</b>.</p>
 </body></html>
 HTML
 

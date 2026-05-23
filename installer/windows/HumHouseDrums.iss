@@ -5,11 +5,11 @@
 ; Run from the repository root on Windows after a Release build:
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\HumHouseDrums.iss
 
-#define MyAppName "HumHouse Drums"
+#define MyAppName "HumHouse Drums 2"
 #define MyAppVersion "1.6.1"
 #define MyAppPublisher "HumHouse"
 #define MyAppURL "https://github.com/elijahjfrierson-prog/humhouse-drum-vst"
-#define MyAppExeName "HumHouse Drums.exe"
+#define MyAppExeName "HumHouse Drums 2.exe"
 
 [Setup]
 AppId={{7A3E9C12-4F1B-4D21-9B0C-HUMHOUSEDRUMS}}
@@ -20,7 +20,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
-DefaultDirName={autopf}\HumHouse\HumHouse Drums
+DefaultDirName={autopf}\HumHouse\HumHouse Drums 2
 DefaultGroupName=HumHouse
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE.txt
@@ -45,29 +45,36 @@ SetupIconFile=..\..\Resources\Icons\HumHouseAppIcon.ico
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut for HumHouse Drums (Standalone)"; GroupDescription: "Additional shortcuts:"
+Name: "desktopicon"; Description: "Create a &desktop shortcut for HumHouse Drums 2 (Standalone)"; GroupDescription: "Additional shortcuts:"
+
+; v1.6.1-rc.30 — wipe the old-named "HumHouse Drums" artifacts so users
+; upgrading from v1 don't end up with both old and new plugins in their
+; DAW scan path (mirrors the macOS .pkg preinstall cleanup).
+[InstallDelete]
+Type: filesandordirs; Name: "{commoncf64}\VST3\HumHouse Drums.vst3"
+Type: files; Name: "{app}\HumHouse Drums.exe"
 
 [Files]
 ; Standalone .exe -> Program Files\HumHouse\HumHouse Drums\
-Source: "..\..\build\AIDrumVST_artefacts\Release\Standalone\HumHouse Drums.exe"; \
+Source: "..\..\build\AIDrumVST_artefacts\Release\Standalone\HumHouse Drums 2.exe"; \
   DestDir: "{app}"; Flags: ignoreversion
 
 ; VST3 bundle -> C:\Program Files\Common Files\VST3\HumHouse Drums.vst3\
 ; VST3 is a *folder*; recurse the whole bundle.
-Source: "..\..\build\AIDrumVST_artefacts\Release\VST3\HumHouse Drums.vst3\*"; \
-  DestDir: "{commoncf64}\VST3\HumHouse Drums.vst3"; \
+Source: "..\..\build\AIDrumVST_artefacts\Release\VST3\HumHouse Drums 2.vst3\*"; \
+  DestDir: "{commoncf64}\VST3\HumHouse Drums 2.vst3"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; EULA in install dir for reference
 Source: "..\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\HumHouse Drums"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\Uninstall HumHouse Drums"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\HumHouse Drums"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\HumHouse Drums 2"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Uninstall HumHouse Drums 2"; Filename: "{uninstallexe}"
+Name: "{commondesktop}\HumHouse Drums 2"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch HumHouse Drums Standalone"; \
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch HumHouse Drums 2 Standalone"; \
   Flags: nowait postinstall skipifsilent unchecked
 
 [Messages]

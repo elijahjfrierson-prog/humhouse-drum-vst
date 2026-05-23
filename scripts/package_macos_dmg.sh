@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Package the macOS build into a drag-to-install .dmg containing:
-#   * HumHouse Drums.vst3   (Ableton, FL Studio, Reaper, Cubase, Studio One, …)
-#   * HumHouse Drums.component (Logic Pro, GarageBand)
+#   * HumHouse Drums 2.vst3   (Ableton, FL Studio, Reaper, Cubase, Studio One, …)
+#   * HumHouse Drums 2.component (Logic Pro, GarageBand)
 #   * Symlinks to the system plug-in folders so the user can just drag & drop
 #
 # Must run on macOS (uses `hdiutil`, `codesign`).
@@ -9,10 +9,10 @@ set -euo pipefail
 
 BUILD_DIR="${BUILD_DIR:-build}"
 ARTEFACTS="$BUILD_DIR/AIDrumVST_artefacts/Release"
-VST3_SRC="$ARTEFACTS/VST3/HumHouse Drums.vst3"
-AU_SRC="$ARTEFACTS/AU/HumHouse Drums.component"
-APP_SRC="$ARTEFACTS/Standalone/HumHouse Drums.app"
-STAGING="$(mktemp -d)/HumHouse Drums"
+VST3_SRC="$ARTEFACTS/VST3/HumHouse Drums 2.vst3"
+AU_SRC="$ARTEFACTS/AU/HumHouse Drums 2.component"
+APP_SRC="$ARTEFACTS/Standalone/HumHouse Drums 2.app"
+STAGING="$(mktemp -d)/HumHouse Drums 2"
 DMG_OUT="${DMG_OUT:-HumHouse-Drums-macOS.dmg}"
 
 if [[ ! -d "$VST3_SRC" ]]; then
@@ -37,29 +37,29 @@ ln -s "/Library/Audio/Plug-Ins/Components" "$STAGING/Audio Unit Plug-Ins"
 
 # Readme inside the dmg.
 cat > "$STAGING/README.txt" <<'EOF'
-HumHouse Drums
-==============
+HumHouse Drums 2
+================
 
 Three ways to use it:
 
 A) Standalone app (no DAW scanning needed):
-   Double-click "HumHouse Drums.app" — it runs by itself. Use the
+   Double-click "HumHouse Drums 2.app" — it runs by itself. Use the
    "Drag MIDI to DAW" handle or "Save MIDI..." button to pull
    patterns into FL Studio / Logic / Ableton / anything.
 
 B) VST3 plugin (Ableton Live, FL Studio, Reaper, Cubase, Studio One, …):
-   Drag "HumHouse Drums.vst3" into "VST3 Plug-Ins" then rescan in your DAW.
+   Drag "HumHouse Drums 2.vst3" into "VST3 Plug-Ins" then rescan in your DAW.
 
 C) AU plugin (Logic Pro, GarageBand — Logic does not accept VST3):
-   Drag "HumHouse Drums.component" into "Audio Unit Plug-Ins" then
+   Drag "HumHouse Drums 2.component" into "Audio Unit Plug-Ins" then
    relaunch Logic.
 
 First launch (unsigned build):
   macOS Gatekeeper may block the plugin the first time your DAW loads it.
   If that happens, run this once in Terminal:
 
-      xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/HumHouse Drums.vst3"
-      xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/HumHouse Drums.component"
+      xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/HumHouse Drums 2.vst3"
+      xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/HumHouse Drums 2.component"
 
   Then relaunch your DAW.
 EOF
@@ -69,14 +69,14 @@ EOF
 if [[ -n "${APPLE_DEVELOPER_ID:-}" ]]; then
   echo "Signing with Developer ID: $APPLE_DEVELOPER_ID"
   codesign --force --deep --options runtime --timestamp \
-           --sign "$APPLE_DEVELOPER_ID" "$STAGING/HumHouse Drums.vst3"
+           --sign "$APPLE_DEVELOPER_ID" "$STAGING/HumHouse Drums 2.vst3"
   codesign --force --deep --options runtime --timestamp \
-           --sign "$APPLE_DEVELOPER_ID" "$STAGING/HumHouse Drums.component"
+           --sign "$APPLE_DEVELOPER_ID" "$STAGING/HumHouse Drums 2.component"
 else
   echo "No APPLE_DEVELOPER_ID set; ad-hoc signing (users may see Gatekeeper prompts)."
-  codesign --force --deep --sign - "$STAGING/HumHouse Drums.vst3"   || true
-  codesign --force --deep --sign - "$STAGING/HumHouse Drums.component" || true
-  [[ -d "$STAGING/HumHouse Drums.app" ]] && codesign --force --deep --sign - "$STAGING/HumHouse Drums.app" || true
+  codesign --force --deep --sign - "$STAGING/HumHouse Drums 2.vst3"   || true
+  codesign --force --deep --sign - "$STAGING/HumHouse Drums 2.component" || true
+  [[ -d "$STAGING/HumHouse Drums 2.app" ]] && codesign --force --deep --sign - "$STAGING/HumHouse Drums 2.app" || true
 fi
 
 rm -f "$DMG_OUT"
@@ -88,7 +88,7 @@ attempt=1
 max_attempts=5
 while (( attempt <= max_attempts )); do
   if hdiutil create \
-        -volname "HumHouse Drums" \
+        -volname "HumHouse Drums 2" \
         -srcfolder "$STAGING" \
         -fs HFS+ \
         -format UDZO \
