@@ -94,7 +94,7 @@ juce_add_plugin(AIDrumVST
     PLUGIN_MANUFACTURER_CODE  Hhm4
     PLUGIN_CODE               Hh30
     FORMATS                   ${AIDRUM_FORMATS}
-    PRODUCT_NAME              "HumHouse Drums 2"
+    PRODUCT_NAME              "HumHouse Drums"
     IS_SYNTH                  TRUE
     NEEDS_MIDI_INPUT          TRUE
     NEEDS_MIDI_OUTPUT         TRUE

@@ -63,11 +63,17 @@ private:
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp   (const juce::MouseEvent&) override;
+
+        // Called on mouseUp after a drag — hook this to trigger a
+        // pattern cycle (composeMoldAround) from the SoCal pool.
+        std::function<void()> onPadReleased;
     private:
         void timerCallback() override;
         void updateFromPoint (juce::Point<float> p);
         juce::Slider* complexitySlider = nullptr;
         juce::Slider* velocitySlider   = nullptr;
+        bool dragged = false;
     };
 
     class KitVisualizer : public juce::Component
@@ -107,7 +113,7 @@ private:
     aidrum::CompactGothicLookAndFeel compactLnf;
     juce::TooltipWindow       tooltipWindow { this, 350 };
 
-    juce::Label               titleLabel    { {}, "HUMHOUSE  DRUMS  2" };
+    juce::Label               titleLabel    { {}, "HUMHOUSE  DRUMS" };
     juce::Label               subtitleLabel { {}, "\u2020 hum. house. haunt. \u2020" };
 
     // v1.6.1-rc.7 — bundled HumHouse logo (greyscale grunge crest). Loaded
