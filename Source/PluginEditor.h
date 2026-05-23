@@ -107,7 +107,7 @@ private:
     aidrum::CompactGothicLookAndFeel compactLnf;
     juce::TooltipWindow       tooltipWindow { this, 350 };
 
-    juce::Label               titleLabel    { {}, "HUMHOUSE  DRUMS" };
+    juce::Label               titleLabel    { {}, "HUMHOUSE  DRUMS  2" };
     juce::Label               subtitleLabel { {}, "\u2020 hum. house. haunt. \u2020" };
 
     // v1.6.1-rc.7 — bundled HumHouse logo (greyscale grunge crest). Loaded
