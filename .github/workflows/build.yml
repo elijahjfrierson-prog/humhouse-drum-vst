@@ -100,10 +100,10 @@ jobs:
 
           # Also ship the raw VST3 + Standalone .exe for users who prefer
           # manual install or portable use.
-          Copy-Item -Recurse "build/AIDrumVST_artefacts/Release/VST3/HumHouse Drums 2.vst3" artifacts/
-          Copy-Item "build/AIDrumVST_artefacts/Release/Standalone/HumHouse Drums 2.exe" artifacts/
+          Copy-Item -Recurse "build/AIDrumVST_artefacts/Release/VST3/HumHouse Drums.vst3" artifacts/
+          Copy-Item "build/AIDrumVST_artefacts/Release/Standalone/HumHouse Drums.exe" artifacts/
           @'
-          HumHouse Drums 2 — Windows
+          HumHouse Drums — Windows
           ==========================
 
           RECOMMENDED: run HumHouse-Drums-Windows-Setup.exe — it installs
@@ -113,9 +113,9 @@ jobs:
 
           MANUAL INSTALL (alternative):
           A) Standalone app (NO plugin scanning needed):
-             Double-click "HumHouse Drums 2.exe".
+             Double-click "HumHouse Drums.exe".
           B) VST3 plugin:
-             Copy the whole "HumHouse Drums 2.vst3" folder into
+             Copy the whole "HumHouse Drums.vst3" folder into
                  C:\Program Files\Common Files\VST3\
           '@ | Out-File -FilePath artifacts/README.txt -Encoding ASCII
 
@@ -124,13 +124,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir -p artifacts
-          cp -R "build/AIDrumVST_artefacts/Release/VST3/HumHouse Drums 2.vst3" artifacts/
-          cp    "build/AIDrumVST_artefacts/Release/Standalone/HumHouse Drums 2" artifacts/ || true
+          cp -R "build/AIDrumVST_artefacts/Release/VST3/HumHouse Drums.vst3" artifacts/
+          cp    "build/AIDrumVST_artefacts/Release/Standalone/HumHouse Drums" artifacts/ || true
           cat > artifacts/README.txt <<'EOF'
-          HumHouse Drums 2 — Linux
+          HumHouse Drums — Linux
 
-          Standalone: chmod +x "HumHouse Drums 2" && ./"HumHouse Drums 2"
-          VST3:       copy "HumHouse Drums 2.vst3" folder into ~/.vst3/
+          Standalone: chmod +x "HumHouse Drums" && ./"HumHouse Drums"
+          VST3:       copy "HumHouse Drums.vst3" folder into ~/.vst3/
           EOF
 
       - name: Upload workflow artifact
@@ -149,8 +149,8 @@ jobs:
           cp artifacts/HumHouse-Drums-Windows-Setup.exe .
           # Also zip the portable VST3 + Standalone .exe for users who want manual install.
           mkdir -p _portable
-          cp -R "artifacts/HumHouse Drums 2.vst3" _portable/
-          cp "artifacts/HumHouse Drums 2.exe" _portable/
+          cp -R "artifacts/HumHouse Drums.vst3" _portable/
+          cp "artifacts/HumHouse Drums.exe" _portable/
           cp artifacts/README.txt _portable/
           cd _portable && 7z a -tzip "../${{ matrix.artifact }}.zip" .
 

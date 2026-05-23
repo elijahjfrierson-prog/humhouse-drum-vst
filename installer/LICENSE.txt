@@ -4,7 +4,7 @@
                  ▲▲    HUMHOUSE     ▲▲
               ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-HumHouse Drums 2 — End User License Agreement
+HumHouse Drums — End User License Agreement
 =============================================
 
 The HumHouse crest appears on the installer welcome / finish pages and on
@@ -13,7 +13,7 @@ the terms below.
 
 Copyright (c) 2026 HumHouse. All rights reserved.
 
-By installing or using HumHouse Drums 2 (the "Software"), you agree to the
+By installing or using HumHouse Drums (the "Software"), you agree to the
 following terms:
 
 1. LICENSE GRANT

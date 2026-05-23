@@ -93,12 +93,21 @@ void AIDrumAudioProcessorEditor::XYPad::updateFromPoint (juce::Point<float> p)
 
 void AIDrumAudioProcessorEditor::XYPad::mouseDown (const juce::MouseEvent& e)
 {
+    dragged = false;
     updateFromPoint (e.position);
 }
 
 void AIDrumAudioProcessorEditor::XYPad::mouseDrag (const juce::MouseEvent& e)
 {
+    dragged = true;
     updateFromPoint (e.position);
+}
+
+void AIDrumAudioProcessorEditor::XYPad::mouseUp (const juce::MouseEvent&)
+{
+    if (onPadReleased)
+        onPadReleased();
+    dragged = false;
 }
 
 void AIDrumAudioProcessorEditor::XYPad::paint (juce::Graphics& g)
@@ -1115,6 +1124,12 @@ AIDrumAudioProcessorEditor::AIDrumAudioProcessorEditor (AIDrumAudioProcessor& p)
     // capture path in processBlock.
 
     xyPad.bind (&complexitySlider, &velocitySlider);
+    xyPad.onPadReleased = [this]
+    {
+        processorRef.composeMoldAroundForKit (drumKitBox.getSelectedItemIndex());
+        arrangementStrip.repaint();
+        manualGrid.repaint();
+    };
     addAndMakeVisible (xyPad);
     addAndMakeVisible (kitVisualizer);
     kitVisualizer.setSelectedKit (0);
