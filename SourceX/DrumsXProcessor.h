@@ -19,6 +19,10 @@ namespace hhx
         inline constexpr const char* fillAmount     = "fillAmount";
         inline constexpr const char* fillComplexity = "fillComplexity";
         inline constexpr const char* fillBars       = "fillBars";
+        inline constexpr const char* fillStyle      = "fillStyle";
+        inline constexpr const char* fillVelVar     = "fillVelVar";
+        inline constexpr const char* kickVariation  = "kickVar";
+        inline constexpr const char* followSections = "followSect";
         inline constexpr const char* swing          = "swing";
         inline constexpr const char* swingGrid      = "swingGrid";
         inline constexpr const char* humanize       = "humanize";
@@ -39,16 +43,22 @@ namespace hhx
         inline constexpr const char* outputLevel    = "outputLevel";
 
         juce::String laneEnable (int lane);
+        juce::String laneGhost (int lane);
         juce::String laneSwitch (int lane);
+        juce::String laneGain (int lane);
+        juce::String lanePan (int lane);
+        juce::String laneTune (int lane);
+        juce::String laneDamp (int lane);
     }
 
-    /** The six rock characters the plugin ships. Each is a starting point on
-        the complexity / intensity plane plus a feel bias — the actual notes
-        always come from the human corpus.
+    /** The rock characters the plugin ships. Each is a starting point on the
+        complexity / intensity plane plus a feel bias, and points at a cluster
+        of the human corpus - the actual notes always come from real takes.
     */
     struct Character
     {
         const char* name;
+        int   corpusCharacter;
         float complexity;
         float intensity;
         float swing;
@@ -121,6 +131,18 @@ namespace hhx
         /** Hits for a bar range, honouring manual mode. Message thread only. */
         std::vector<Hit> renderBars (int startBar, int numBars) const;
 
+        /** The nearest real takes to the current XY position, for the
+            landing-zone display. */
+        std::vector<int> getLandingZone (int maxResults) const;
+
+        const GrooveCorpus& getCorpus() const { return corpus; }
+
+        /** The arrangement the performance follows when "Follow Arrangement" is
+            on. Hosts that expose markers can drive this; otherwise it holds the
+            default song form. */
+        void setSections (std::vector<SectionSpan> spans);
+        std::vector<SectionSpan> getSections() const;
+
         std::shared_ptr<const Timeline> getTimeline() const;
 
         // --- transport (standalone) --------------------------------------
@@ -169,6 +191,9 @@ namespace hhx
 
         std::shared_ptr<const Timeline> timeline;
         juce::SpinLock                  timelineLock;
+
+        std::vector<SectionSpan>       hostSections;
+        mutable juce::SpinLock         sectionLock;
 
         mutable std::mutex  manualMutex;
         std::array<std::array<float, kManualSteps>, NumLanes> manualGrid {};

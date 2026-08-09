@@ -7,80 +7,123 @@
 
 namespace hhx
 {
-    /** Everything the UI can change about the performance. Values are the
-        plain 0..1 / enum forms the APVTS stores.
+    /** One arrangement span read from the host's markers. */
+    struct SectionSpan
+    {
+        int startBar = 0;
+        int numBars  = 0;
+        int section  = SectionVerse;
+    };
+
+    /** Everything the performance depends on. Two identical settings structs
+        always produce identical output - that is what makes golden-render
+        tests possible.
     */
     struct PerformanceSettings
     {
-        float complexity     = 0.45f;
-        float intensity      = 0.55f;
+        // --- performance ------------------------------------------------
+        float complexity   = 0.45f;
+        float intensity    = 0.55f;
+        int   character    = 1;        // index into the corpus character table
 
-        float fillAmount     = 0.35f;   // how often a phrase ends on a fill
+        // --- fills ------------------------------------------------------
+        float fillAmount     = 0.35f;
         float fillComplexity = 0.5f;
-        int   fillBars       = 1;       // 1 or 2
-        std::uint32_t fillLaneMask = 0xFFFFFFFFu;
+        float fillVelVar     = 0.3f;
+        float fillLengthBars = 1.0f;   // 0.5, 1 or 2
+        std::uint8_t  fillStyleMask = 0;               // 0 = any style
+        std::uint32_t fillLaneMask  = 0xFFFFFFFFu;
 
-        float swing          = 0.0f;    // 0..1
-        bool  swingSixteenth = false;   // false = 8th grid
-
-        float humanize       = 0.5f;    // scales the corpus micro-timing + drift
-        float feel           = 0.5f;    // 0 = push, 0.5 = neutral, 1 = laid back
+        // --- feel -------------------------------------------------------
+        float swing          = 0.0f;
+        bool  swingSixteenth = false;
+        float humanize       = 0.5f;   // how much of the drummer's deviation to keep
+        float feel           = 0.5f;   // 0 = laid back, 1 = pushed
         float ghostAmount    = 0.5f;
-        float hatOpenness    = 0.0f;    // 0 = closed, 1 = fully open ostinato
+        float hatOpenness    = 0.0f;
+        float kickVariation  = 0.3f;
         bool  rideInsteadOfHat = false;
-        bool  halfTime       = false;
+        bool  halfTime         = false;
 
-        /** Bit per lane; a cleared bit removes that kit piece from the
-            performance (Logic's kit-piece selector).
-        */
-        std::uint32_t laneMask = 0xFFFFFFFFu;
+        // --- kit / metre ------------------------------------------------
+        std::uint32_t laneMask  = 0xFFFFFFFFu;
+        std::uint32_t ghostMask = 0;   // lanes forced to ghost level
+        float beatsPerBar = 4.0f;      // in quarter notes
+        int   timeSigNum  = 4;
+        int   timeSigDen  = 4;
+        int   phraseBars  = 2;
 
-        // Bar length in quarter notes: numerator * 4 / denominator.
-        // 4/4 → 4, 3/4 → 3, 6/8 → 3, 7/8 → 3.5.
-        float beatsPerBar    = 4.0f;
-        int   timeSigNum     = 4;
-        int   timeSigDen     = 4;
-        int   phraseBars     = 2;
-
-        /** Per-group variation index, driven by the numbered variation
-            buttons on the MAIN page (0 = "the closest take").
-        */
-        int   variationRhythm = 0;      // kick / snare group
-        int   variationCymbal = 0;      // hats / ride / crash group
+        int   variationRhythm = 0;
+        int   variationCymbal = 0;
+        bool  followSections  = false;
+        std::vector<SectionSpan> sections;
 
         std::uint64_t seed = 1;
     };
 
-    /** Turns corpus phrases into a concrete, bar-indexed performance.
+    /** Selection, variation and humanization. Knows nothing about samples.
 
-        Deterministic: (settings, seed, barIndex) always produces identical
-        output, so nothing drifts between the UI preview, playback and export.
+        Rendering is pure and deterministic: (settings, bar) always yields the
+        same hits, so the host can ask for any window at any time and the
+        result is stitch-free.
     */
     class PerformanceEngine
     {
     public:
         void setCorpus (const GrooveCorpus* c) { corpus = c; }
 
-        /** Renders `numBars` starting at `startBar`. Returned hit beats are
-            absolute, measured from bar 0 of the performance.
-        */
         std::vector<Hit> renderBars (const PerformanceSettings& s,
                                      int startBar,
                                      int numBars) const;
 
-        /** One phrase's worth of hits, positions relative to the phrase.
-            Used by the MAIN page dot strips so the UI shows the real pattern.
-        */
         std::vector<Hit> renderPhrasePreview (const PerformanceSettings& s,
                                               int phraseIndex) const;
 
-        /** True when the phrase starting at `startBar` ends on a fill. */
         bool phraseEndsWithFill (const PerformanceSettings& s, int phraseIndex) const;
 
+        /** Where the current XY position lands: the nearest real takes, for the
+            landing-zone display on the performance page.
+        */
+        std::vector<int> landingZone (const PerformanceSettings& s, int maxResults) const;
+
+        int sectionAtBar (const PerformanceSettings& s, int bar) const;
+
     private:
+        /** A hit mid-render: the grid position it has been folded onto plus the
+            drummer's own deviation, still separate so Humanize can scale it.
+        */
+        struct Raw
+        {
+            float        beat     = 0.0f;
+            float        dev      = 0.0f;
+            std::uint8_t lane     = LaneKick;
+            std::uint8_t velocity = 100;
+        };
+
+        struct Sources
+        {
+            const Phrase* skeleton = nullptr;   // kick / snare / toms
+            const Phrase* colour   = nullptr;   // hats / ride / cymbals
+        };
+
+        Sources pickSources (const PerformanceSettings& s,
+                             int phraseIndex,
+                             std::uint64_t seed) const;
+
         std::vector<Hit> renderPhrase (const PerformanceSettings& s,
                                        int phraseIndex,
                                        bool includeFill) const;
+
+        void appendFill (const PerformanceSettings& s,
+                         int   phraseIndex,
+                         float fillStartBeat,
+                         float phraseBeats,
+                         std::uint64_t seed,
+                         std::vector<Raw>& raw) const;
+
+        int fillIndexForPhrase (const PerformanceSettings& s, int phraseIndex) const;
+
+        std::uint16_t characterMask (const PerformanceSettings& s) const;
 
         const GrooveCorpus* corpus = nullptr;
     };

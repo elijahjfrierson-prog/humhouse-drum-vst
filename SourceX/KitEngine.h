@@ -45,9 +45,23 @@ namespace hhx
         float getLaneGainDb (int lane) const;
         void setLanePan (int lane, float pan);
         float getLanePan (int lane) const;
+        void setLaneTune (int lane, float semitones);
+        float getLaneTune (int lane) const;
+        void setLaneDamp (int lane, float amount01);
+        float getLaneDamp (int lane) const;
 
-        void noteOn (int lane, float velocity01);
+        /** `variant` is the round-robin slot the performance engine chose, so
+            two consecutive strokes on a lane never fire the same sample.
+        */
+        void noteOn (int lane, float velocity01, int variant = 0);
         void allNotesOff();
+
+        /** Which lane actually holds samples for an articulation. A 30-piece
+            performance still plays on a kit that only ships one snare: the
+            articulation falls back to its nearest relative rather than going
+            silent.
+        */
+        int resolveLane (int lane) const;
 
         void renderNextBlock (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
 
@@ -67,6 +81,8 @@ namespace hhx
             std::atomic<int>   sampleSwitch { 0 };
             std::atomic<float> gainDb { 0.0f };
             std::atomic<float> pan    { 0.0f };
+            std::atomic<float> tune   { 0.0f };   // semitones
+            std::atomic<float> damp   { 0.0f };   // 0 = open, 1 = heavily muted
             std::atomic<float> activity { 0.0f };
             std::atomic<int>   roundRobin { 0 };
         };
@@ -78,11 +94,15 @@ namespace hhx
             double increment = 1.0;
             float  gainL = 0.0f;
             float  gainR = 0.0f;
+            float  env   = 1.0f;
+            float  envDecay = 1.0f;
             int    lane  = -1;
+            int    articulation = -1;
             bool   active = false;
         };
 
         void addSample (int lane, std::shared_ptr<Sample> s);
+        void chokeArticulations (int lane);
         static int pieceNameToLane (const juce::String& piece);
 
         static constexpr int kMaxVoices = 64;

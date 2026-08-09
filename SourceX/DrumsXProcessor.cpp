@@ -13,20 +13,28 @@
 namespace hhx
 {
     juce::String pid::laneEnable (int lane) { return "lane" + juce::String (lane) + "On"; }
+    juce::String pid::laneGhost (int lane)  { return "lane" + juce::String (lane) + "Gh"; }
     juce::String pid::laneSwitch (int lane) { return "lane" + juce::String (lane) + "Smp"; }
+    juce::String pid::laneGain (int lane)   { return "lane" + juce::String (lane) + "Gain"; }
+    juce::String pid::lanePan (int lane)    { return "lane" + juce::String (lane) + "Pan"; }
+    juce::String pid::laneTune (int lane)   { return "lane" + juce::String (lane) + "Tune"; }
+    juce::String pid::laneDamp (int lane)   { return "lane" + juce::String (lane) + "Damp"; }
 
     const std::vector<Character>& characters()
     {
-        // Six rock characters. Each one is a landing spot on the same human
-        // corpus, not a different note generator — exactly how Logic's
-        // drummers differ from one another.
+        // Each character is a landing spot on one human corpus - a cluster plus
+        // a feel bias - not a different note generator. That is exactly how
+        // Logic's drummers differ from one another.
         static const std::vector<Character> c {
-            { "Ethan  -  Pop Rock",    0.35f, 0.45f, 0.06f, 0.55f, 0.10f, false },
-            { "Nikki  -  Retro Rock",  0.45f, 0.50f, 0.18f, 0.70f, 0.05f, false },
-            { "Jesse  -  Hard Rock",   0.55f, 0.78f, 0.00f, 0.35f, 0.20f, false },
-            { "Max    -  Punk Rock",   0.72f, 0.90f, 0.00f, 0.20f, 0.35f, false },
-            { "Logan  -  Garage Rock", 0.60f, 0.62f, 0.10f, 0.60f, 0.25f, false },
-            { "Darcy  -  Ride Groove", 0.40f, 0.55f, 0.12f, 0.50f, 0.00f, true  },
+            { "Ethan  -  Pop Rock",    0, 0.35f, 0.45f, 0.06f, 0.55f, 0.10f, false },
+            { "Nikki  -  Retro Rock",  1, 0.45f, 0.50f, 0.18f, 0.70f, 0.05f, false },
+            { "Jesse  -  Hard Rock",   2, 0.55f, 0.78f, 0.00f, 0.35f, 0.20f, false },
+            { "Max    -  Punk Rock",   3, 0.72f, 0.90f, 0.00f, 0.20f, 0.35f, false },
+            { "Kane   -  Metal",       4, 0.80f, 0.95f, 0.00f, 0.15f, 0.20f, false },
+            { "Ruby   -  Shuffle",     5, 0.50f, 0.55f, 0.55f, 0.75f, 0.05f, false },
+            { "Cole   -  Half Time",   6, 0.40f, 0.70f, 0.08f, 0.45f, 0.10f, false },
+            { "Logan  -  Roots Rock",  7, 0.45f, 0.58f, 0.14f, 0.62f, 0.10f, false },
+            { "Darcy  -  Prog",        8, 0.72f, 0.66f, 0.05f, 0.55f, 0.15f, true  },
         };
         return c;
     }
@@ -35,37 +43,9 @@ namespace hhx
     {
         constexpr int kTimelineBars = 64;
 
-        int laneToMidiNote (int lane)
-        {
-            switch (lane)
-            {
-                case LaneKick:      return 36;
-                case LaneSnare:     return 38;
-                case LaneSnareRim:  return 40;
-                case LaneSideStick: return 37;
-                case LaneHatClosed: return 42;
-                case LaneHatPedal:  return 44;
-                case LaneHatOpen:   return 46;
-                case LaneTomHi:     return 48;
-                case LaneTomMid:    return 45;
-                case LaneTomFloor:  return 41;
-                case LaneCrashL:    return 49;
-                case LaneCrashR:    return 57;
-                case LaneRide:      return 51;
-                case LaneRideBell:  return 53;
-                default:            return 38;
-            }
-        }
+        int laneToMidiNote (int lane) { return laneToNote (lane); }
 
-        const char* prettyLaneName (int lane)
-        {
-            static const char* names[NumLanes] = {
-                "Kick", "Snare", "Rim", "Side Stick", "Hat Closed", "Hat Pedal",
-                "Hat Open", "Tom Hi", "Tom Mid", "Tom Floor", "Crash L",
-                "Crash R", "Ride", "Ride Bell"
-            };
-            return (lane >= 0 && lane < NumLanes) ? names[lane] : "?";
-        }
+        const char* prettyLaneName (int lane) { return laneName (lane); }
     }
 
     const char* drumsXLaneName (int lane) { return prettyLaneName (lane); }
@@ -86,6 +66,9 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::preset, 1 },
                                                             "Character", characterNames, 2));
 
+        const auto dbStr  = [] (float v, int) { return String (v, 1) + " dB"; };
+        const auto semiStr = [] (float v, int) { return String (v, 2) + " st"; };
+
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::complexity, 1 },
                                                            "Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.45f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
@@ -99,7 +82,20 @@ namespace hhx
                                                            "Fill Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.5f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::fillBars, 1 },
-                                                            "Fill Length", StringArray { "1 Bar", "2 Bars" }, 0));
+                                                            "Fill Length",
+                                                            StringArray { "1/2 Bar", "1 Bar", "2 Bars" }, 1));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::fillStyle, 1 },
+                                                            "Fill Style",
+                                                            StringArray { "Any", "Straight", "Triplet", "Roll",
+                                                                          "Syncopated", "Tom Led", "Cymbal Led" }, 0));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::fillVelVar, 1 },
+                                                           "Fill Vel Variation", NormalisableRange<float> (0.0f, 1.0f), 0.3f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::kickVariation, 1 },
+                                                           "Kick Variation", NormalisableRange<float> (0.0f, 1.0f), 0.3f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { pid::followSections, 1 },
+                                                         "Follow Arrangement", false));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::swing, 1 },
                                                            "Swing", NormalisableRange<float> (0.0f, 1.0f), 0.0f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
@@ -145,12 +141,28 @@ namespace hhx
 
         for (int lane = 0; lane < NumLanes; ++lane)
         {
+            const juce::String n (prettyLaneName (lane));
             layout.add (std::make_unique<AudioParameterBool> (
-                ParameterID { pid::laneEnable (lane), 1 },
-                juce::String (prettyLaneName (lane)) + " On", true));
+                ParameterID { pid::laneEnable (lane), 1 }, n + " On", true));
+            layout.add (std::make_unique<AudioParameterBool> (
+                ParameterID { pid::laneGhost (lane), 1 }, n + " Ghost", false));
             layout.add (std::make_unique<AudioParameterInt> (
-                ParameterID { pid::laneSwitch (lane), 1 },
-                juce::String (prettyLaneName (lane)) + " Sample", -4, 4, 0));
+                ParameterID { pid::laneSwitch (lane), 1 }, n + " Sample", -4, 4, 0));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneGain (lane), 1 }, n + " Gain",
+                NormalisableRange<float> (-24.0f, 12.0f, 0.1f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (dbStr)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::lanePan (lane), 1 }, n + " Pan",
+                NormalisableRange<float> (-1.0f, 1.0f, 0.01f), 0.0f));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneTune (lane), 1 }, n + " Tune",
+                NormalisableRange<float> (-6.0f, 6.0f, 0.01f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (semiStr)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneDamp (lane), 1 }, n + " Damp",
+                NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         }
 
         return layout;
@@ -170,6 +182,15 @@ namespace hhx
 
         kit.loadBundledKit ("SoCalRock");
 
+        // A conventional rock song form. Hosts that expose markers can replace
+        // it through setSections(); the performance only follows it when
+        // "Follow Arrangement" is on.
+        hostSections = { { 0,  4, SectionIntro },  { 4,  8, SectionVerse },
+                         { 12, 8, SectionChorus }, { 20, 8, SectionVerse },
+                         { 28, 8, SectionChorus }, { 36, 4, SectionBridge },
+                         { 40, 8, SectionChorus }, { 48, 8, SectionVerse },
+                         { 56, 8, SectionOutro } };
+
         for (auto* p : getParameters())
             if (auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
                 apvts.addParameterListener (withID->paramID, this);
@@ -187,8 +208,13 @@ namespace hhx
     void DrumsXProcessor::parameterChanged (const juce::String& id, float value)
     {
         for (int lane = 0; lane < NumLanes; ++lane)
-            if (id == pid::laneSwitch (lane))
-                kit.setLaneSampleSwitch (lane, (int) value);
+        {
+            if (id == pid::laneSwitch (lane)) kit.setLaneSampleSwitch (lane, (int) value);
+            else if (id == pid::laneGain (lane)) kit.setLaneGainDb (lane, value);
+            else if (id == pid::lanePan (lane))  kit.setLanePan (lane, value);
+            else if (id == pid::laneTune (lane)) kit.setLaneTune (lane, value);
+            else if (id == pid::laneDamp (lane)) kit.setLaneDamp (lane, value);
+        }
 
         // Re-render off the audio thread. Nothing the user typed into the
         // manual grid is touched by this.
@@ -255,6 +281,11 @@ namespace hhx
                 p->setValueNotifyingHost (p->convertTo0to1 (v));
         };
 
+        if (auto* p = apvts.getParameter (pid::preset))
+            if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (p))
+                if (choice->getIndex() != index)
+                    choice->setValueNotifyingHost (choice->convertTo0to1 ((float) index));
+
         set (pid::complexity,  c.complexity);
         set (pid::intensity,   c.intensity);
         set (pid::swing,       c.swing);
@@ -276,7 +307,20 @@ namespace hhx
         s.intensity      = get (pid::intensity);
         s.fillAmount     = get (pid::fillAmount);
         s.fillComplexity = get (pid::fillComplexity);
-        s.fillBars       = (int) get (pid::fillBars) + 1;
+        const int fillLenIdx = (int) get (pid::fillBars);
+        s.fillLengthBars = fillLenIdx == 0 ? 0.5f : (fillLenIdx == 1 ? 1.0f : 2.0f);
+        s.fillVelVar     = get (pid::fillVelVar);
+        s.kickVariation  = get (pid::kickVariation);
+        s.followSections = get (pid::followSections) > 0.5f;
+
+        const int styleIdx = (int) get (pid::fillStyle);
+        static const std::uint8_t styles[] = { 0, FillStraight, FillTriplet, FillRoll,
+                                               FillSyncopated, FillTomLed, FillCymbalLed };
+        s.fillStyleMask  = styleIdx > 0 && styleIdx < (int) std::size (styles)
+                         ? styles[styleIdx] : (std::uint8_t) 0;
+
+        const int charIdx = juce::jlimit (0, (int) characters().size() - 1, (int) get (pid::preset));
+        s.character      = characters()[(std::size_t) charIdx].corpusCharacter;
         s.swing          = get (pid::swing);
         s.swingSixteenth = get (pid::swingGrid) > 0.5f;
         s.humanize       = get (pid::humanize);
@@ -298,14 +342,45 @@ namespace hhx
         s.variationCymbal = (int) get (pid::variationCymbal);
 
         std::uint32_t mask = 0;
+        std::uint32_t ghost = 0;
         for (int lane = 0; lane < NumLanes; ++lane)
+        {
             if (get (pid::laneEnable (lane)) > 0.5f)
                 mask |= (1u << lane);
+            if (get (pid::laneGhost (lane)) > 0.5f)
+                ghost |= (1u << lane);
+        }
         s.laneMask     = mask;
         s.fillLaneMask = mask;
+        s.ghostMask    = ghost;
+
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            s.sections = hostSections;
+        }
 
         s.seed = seed.load();
         return s;
+    }
+
+    void DrumsXProcessor::setSections (std::vector<SectionSpan> spans)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            hostSections = std::move (spans);
+        }
+        triggerAsyncUpdate();
+    }
+
+    std::vector<SectionSpan> DrumsXProcessor::getSections() const
+    {
+        const juce::SpinLock::ScopedLockType sl (sectionLock);
+        return hostSections;
+    }
+
+    std::vector<int> DrumsXProcessor::getLandingZone (int maxResults) const
+    {
+        return engine.landingZone (buildSettings(), maxResults);
     }
 
     void DrumsXProcessor::regenerate()
@@ -498,7 +573,7 @@ namespace hhx
                 const int note = laneToMidiNote (h.lane);
                 midi.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), offset);
                 midi.addEvent (juce::MidiMessage::noteOff (10, note), juce::jmin (numSamples - 1, offset + 8));
-                kit.noteOn (h.lane, (float) h.velocity / 127.0f);
+                kit.noteOn (h.lane, (float) h.velocity / 127.0f, h.variant);
             }
         };
 
@@ -657,8 +732,18 @@ namespace hhx
         apvts.replaceState (state);
 
         for (int lane = 0; lane < NumLanes; ++lane)
-            if (const auto* p = apvts.getRawParameterValue (pid::laneSwitch (lane)))
-                kit.setLaneSampleSwitch (lane, (int) p->load());
+        {
+            const auto load = [this] (const juce::String& id)
+            {
+                const auto* p = apvts.getRawParameterValue (id);
+                return p != nullptr ? p->load() : 0.0f;
+            };
+            kit.setLaneSampleSwitch (lane, (int) load (pid::laneSwitch (lane)));
+            kit.setLaneGainDb (lane, load (pid::laneGain (lane)));
+            kit.setLanePan (lane, load (pid::lanePan (lane)));
+            kit.setLaneTune (lane, load (pid::laneTune (lane)));
+            kit.setLaneDamp (lane, load (pid::laneDamp (lane)));
+        }
     }
 
     juce::AudioProcessorEditor* DrumsXProcessor::createEditor()

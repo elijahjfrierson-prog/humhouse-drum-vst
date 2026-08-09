@@ -1,0 +1,27 @@
+{
+  "corpus": "rock_corpus.hhc",
+  "format_version": 2,
+  "phrases": 8538,
+  "beats": 7782,
+  "fills": 756,
+  "characters": {
+    "Half Time": 951,
+    "Hard Rock": 2060,
+    "Metal": 1920,
+    "Pop Rock": 552,
+    "Prog": 2082,
+    "Punk": 1941,
+    "Rock": 2776,
+    "Roots Rock": 751,
+    "Shuffle": 959
+  },
+  "articulations": 30,
+  "attribution": [
+    {
+      "name": "Groove MIDI Dataset",
+      "source": "https://magenta.tensorflow.org/datasets/groove",
+      "license": "CC-BY 4.0",
+      "credit": "Gillick, Roberts, Engel, Eck, Bamman - Learning to Groove with Inverse Sequence Transformations (2019)"
+    }
+  ]
+}

@@ -27,22 +27,88 @@ namespace hhx
     {
         const auto p = piece.toLowerCase();
         if (p.startsWith ("kick"))          return LaneKick;
+        if (p.startsWith ("snare_ghost"))   return LaneSnareGhost;
+        if (p.startsWith ("snare_flam"))    return LaneSnareFlam;
+        if (p.startsWith ("snare_roll"))    return LaneSnareRoll;
+        if (p.startsWith ("snare_rim"))     return LaneSnareRim;
         if (p.startsWith ("snare"))         return LaneSnare;
         if (p.startsWith ("rim"))           return LaneSnareRim;
         if (p.startsWith ("sidestick"))     return LaneSideStick;
+        if (p.startsWith ("side_stick"))    return LaneSideStick;
         if (p.startsWith ("hat_closed"))    return LaneHatClosed;
+        if (p.startsWith ("hat_tight"))     return LaneHatTight;
         if (p.startsWith ("hat_pedal"))     return LaneHatPedal;
-        if (p.startsWith ("hat_open"))      return LaneHatOpen;
-        if (p.startsWith ("tom_high"))      return LaneTomHi;
-        if (p.startsWith ("tom_mid"))       return LaneTomMid;
-        if (p.startsWith ("tom_low"))       return LaneTomFloor;
-        if (p.startsWith ("floor_tom"))     return LaneTomFloor;
+        if (p.startsWith ("hat_splash"))    return LaneHatSplash;
+        if (p.startsWith ("hat_bell"))      return LaneHatBell;
+        if (p.startsWith ("hat_open_1"))    return LaneHatOpen1;
+        if (p.startsWith ("hat_open_2"))    return LaneHatOpen2;
+        if (p.startsWith ("hat_open_3"))    return LaneHatOpen3;
+        if (p.startsWith ("hat_open_4"))    return LaneHatOpen4;
+        if (p.startsWith ("hat_open"))      return LaneHatOpen2;
+        if (p.startsWith ("tom_high"))      return LaneTom1;
+        if (p.startsWith ("tom_1"))         return LaneTom1;
+        if (p.startsWith ("tom_mid"))       return LaneTom2;
+        if (p.startsWith ("tom_2"))         return LaneTom2;
+        if (p.startsWith ("tom_low"))       return LaneTom3;
+        if (p.startsWith ("tom_3"))         return LaneTom3;
+        if (p.startsWith ("tom_4"))         return LaneTom4;
+        if (p.startsWith ("floor_tom"))     return LaneTom3;
         if (p.startsWith ("left_crash"))    return LaneCrashL;
         if (p.startsWith ("right_crash"))   return LaneCrashR;
+        if (p.startsWith ("crash_3"))       return LaneCrash3;
         if (p.startsWith ("crash"))         return LaneCrashR;
-        if (p.startsWith ("china"))         return LaneCrashL;
+        if (p.startsWith ("china"))         return LaneChina;
+        if (p.startsWith ("splash"))        return LaneSplash;
         if (p.startsWith ("ride_bell"))     return LaneRideBell;
-        if (p.startsWith ("ride"))          return LaneRide;
+        if (p.startsWith ("ride_edge"))     return LaneRideEdge;
+        if (p.startsWith ("ride_crash"))    return LaneRideCrash;
+        if (p.startsWith ("ride"))          return LaneRideBow;
+        if (p.startsWith ("perc"))          return LanePerc;
+        return -1;
+    }
+
+    int KitEngine::resolveLane (int lane) const
+    {
+        if (lane < 0 || lane >= NumLanes)
+            return -1;
+        if (! lanes[(std::size_t) lane].layers.empty())
+            return lane;
+
+        // Fallback chains, nearest relative first.
+        static const std::vector<std::vector<int>> chains = {
+            { LaneSnareGhost,  LaneSnare },
+            { LaneSnareFlam,   LaneSnare },
+            { LaneSnareRoll,   LaneSnare },
+            { LaneSnareRim,    LaneSnare },
+            { LaneSideStick,   LaneSnareRim, LaneSnare },
+            { LaneHatTight,    LaneHatClosed },
+            { LaneHatOpen1,    LaneHatOpen2, LaneHatClosed },
+            { LaneHatOpen2,    LaneHatOpen3, LaneHatClosed },
+            { LaneHatOpen3,    LaneHatOpen2, LaneHatClosed },
+            { LaneHatOpen4,    LaneHatOpen3, LaneHatOpen2, LaneHatClosed },
+            { LaneHatPedal,    LaneHatClosed },
+            { LaneHatSplash,   LaneHatOpen2, LaneHatClosed },
+            { LaneHatBell,     LaneHatClosed },
+            { LaneRideEdge,    LaneRideBow },
+            { LaneRideCrash,   LaneCrashR, LaneRideBow },
+            { LaneRideBell,    LaneRideBow },
+            { LaneCrash3,      LaneCrashR, LaneCrashL },
+            { LaneChina,       LaneCrashL, LaneCrashR },
+            { LaneSplash,      LaneCrashL, LaneCrashR },
+            { LaneTom4,        LaneTom3, LaneTom2 },
+            { LaneTom3,        LaneTom2, LaneTom1 },
+            { LaneTom2,        LaneTom1, LaneTom3 },
+            { LanePerc,        LaneSideStick, LaneSnareRim },
+        };
+
+        for (const auto& chain : chains)
+        {
+            if (chain.front() != lane)
+                continue;
+            for (std::size_t i = 1; i < chain.size(); ++i)
+                if (! lanes[(std::size_t) chain[i]].layers.empty())
+                    return chain[i];
+        }
         return -1;
     }
 
@@ -185,6 +251,28 @@ namespace hhx
         return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].gainDb.load() : 0.0f;
     }
 
+    void KitEngine::setLaneTune (int lane, float semitones)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].tune.store (juce::jlimit (-12.0f, 12.0f, semitones));
+    }
+
+    float KitEngine::getLaneTune (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].tune.load() : 0.0f;
+    }
+
+    void KitEngine::setLaneDamp (int lane, float amount01)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].damp.store (juce::jlimit (0.0f, 1.0f, amount01));
+    }
+
+    float KitEngine::getLaneDamp (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].damp.load() : 0.0f;
+    }
+
     void KitEngine::setLanePan (int lane, float pan)
     {
         if (lane >= 0 && lane < NumLanes)
@@ -201,9 +289,11 @@ namespace hhx
         return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].activity.load() : 0.0f;
     }
 
-    void KitEngine::noteOn (int lane, float velocity01)
+    void KitEngine::noteOn (int lane, float velocity01, int variant)
     {
-        if (lane < 0 || lane >= NumLanes)
+        const int articulation = lane;
+        lane = resolveLane (lane);
+        if (lane < 0)
             return;
 
         auto& slot = lanes[(std::size_t) lane];
@@ -213,14 +303,14 @@ namespace hhx
 
         const float vel = juce::jlimit (0.02f, 1.0f, velocity01);
 
-        // Velocity picks the layer; the round-robin counter nudges between the
-        // chosen layer and its neighbour so repeated hits differ.
+        // Velocity picks the layer; the round-robin slot the performance engine
+        // chose then nudges to a neighbouring sample so repeated hits differ.
         int index = (int) std::floor (vel * (float) numLayers);
         index = juce::jlimit (0, numLayers - 1, index);
 
-        const int rr = slot.roundRobin.fetch_add (1);
-        if (numLayers > 1 && (rr & 1) != 0)
-            index = juce::jlimit (0, numLayers - 1, index + ((rr & 2) ? 1 : -1));
+        const int rr = slot.roundRobin.fetch_add (1) + variant;
+        if (numLayers > 1 && (variant & 1) != 0)
+            index = juce::jlimit (0, numLayers - 1, index + ((variant & 2) ? 1 : -1));
         index = juce::jlimit (0, numLayers - 1, index + slot.sampleSwitch.load());
 
         auto sample = slot.layers[(std::size_t) index];
@@ -229,7 +319,7 @@ namespace hhx
 
         // Micro-variation: ±12 cents and ±0.6 dB per hit keeps repeated notes
         // from phase-cancelling into an obvious loop.
-        const float cents = ((rr * 37) % 25 - 12) * 0.01f;
+        const float cents = (float) ((rr * 37) % 25 - 12) + slot.tune.load() * 100.0f;
         const float trim  = juce::Decibels::decibelsToGain (((rr * 53) % 13 - 6) * 0.1f);
 
         const float gain = vel * juce::Decibels::decibelsToGain (slot.gainDb.load()) * trim;
@@ -258,22 +348,54 @@ namespace hhx
         if (target == nullptr)
             return;
 
-        // Choke: an open hat stops when a closed hat or pedal is played.
-        if (lane == LaneHatClosed || lane == LaneHatPedal)
-            for (auto& v : voices)
-                if (v.active && v.lane == LaneHatOpen)
-                    v.active = false;
+        chokeArticulations (articulation);
+
+        // Damping shortens the decay, the way a drummer's tape or a felt does.
+        const float damp = slot.damp.load();
+        const float decayTime = juce::jmap (damp, 0.0f, 1.0f, 8.0f, 0.09f);
 
         target->sample    = std::move (sample);
         target->position  = 0.0;
         target->increment = (target->sample->sourceRate / currentRate)
-                          * std::pow (2.0, cents / 12.0);
+                          * std::pow (2.0, cents / 1200.0);
         target->gainL     = gl;
         target->gainR     = gr;
+        target->env       = 1.0f;
+        target->envDecay  = damp <= 0.001f ? 1.0f
+                          : (float) std::pow (0.001, 1.0 / (decayTime * currentRate));
         target->lane      = lane;
+        target->articulation = articulation;
         target->active    = true;
 
         slot.activity.store (1.0f);
+    }
+
+    void KitEngine::chokeArticulations (int articulation)
+    {
+        // Hat pedal state machine: closing the hats kills anything ringing on
+        // the openness ladder. Cymbal chokes stop their own cymbal.
+        const auto killIf = [this] (auto&& predicate)
+        {
+            for (auto& v : voices)
+                if (v.active && predicate (v.articulation))
+                    v.active = false;
+        };
+
+        if (articulation == LaneHatClosed || articulation == LaneHatTight
+            || articulation == LaneHatPedal)
+        {
+            killIf ([] (int a) { return a >= LaneHatOpen1 && a <= LaneHatOpen4; });
+        }
+        else if (articulation >= LaneHatOpen1 && articulation <= LaneHatOpen4)
+        {
+            // A wider hat replaces a narrower one rather than stacking.
+            killIf ([articulation] (int a)
+                    { return a >= LaneHatOpen1 && a <= LaneHatOpen4 && a != articulation; });
+        }
+        else if (articulation == LaneChina || articulation == LaneSplash)
+        {
+            killIf ([articulation] (int a) { return a == articulation; });
+        }
     }
 
     void KitEngine::allNotesOff()
@@ -318,11 +440,18 @@ namespace hhx
                 const float l = srcL[pos] + frac * (srcL[pos + 1] - srcL[pos]);
                 const float r = srcR[pos] + frac * (srcR[pos + 1] - srcR[pos]);
 
-                outL[i] += l * v.gainL;
+                outL[i] += l * v.gainL * v.env;
                 if (outR != nullptr)
-                    outR[i] += r * v.gainR;
+                    outR[i] += r * v.gainR * v.env;
 
                 v.position += v.increment;
+                v.env *= v.envDecay;
+                if (v.env < 1.0e-4f)
+                {
+                    v.active = false;
+                    v.sample.reset();
+                    break;
+                }
             }
         }
 

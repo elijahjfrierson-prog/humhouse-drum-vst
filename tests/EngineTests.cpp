@@ -91,12 +91,11 @@ int main (int argc, char** argv)
     // 3. Lane mask: a muted lane never appears.
     {
         auto masked = s;
-        masked.laneMask &= ~(1u << hhx::LaneHatClosed);
-        masked.laneMask &= ~(1u << hhx::LaneHatOpen);
-        masked.laneMask &= ~(1u << hhx::LaneHatPedal);
+        for (int lane = hhx::LaneHatClosed; lane <= hhx::LaneHatBell; ++lane)
+            masked.laneMask &= ~(1u << lane);
         bool foundHat = false;
         for (const auto& h : engine.renderBars (masked, 0, 32))
-            if (h.lane == hhx::LaneHatClosed || h.lane == hhx::LaneHatOpen || h.lane == hhx::LaneHatPedal)
+            if (h.lane >= hhx::LaneHatClosed && h.lane <= hhx::LaneHatBell)
                 foundHat = true;
         check (! foundHat, "cleared lane-mask bits remove that kit piece");
     }
@@ -134,8 +133,8 @@ int main (int argc, char** argv)
     {
         auto fills = s;
         fills.fillAmount = 1.0f;
-        fills.fillLaneMask = (1u << hhx::LaneSnare) | (1u << hhx::LaneTomHi)
-                           | (1u << hhx::LaneTomMid) | (1u << hhx::LaneTomFloor)
+        fills.fillLaneMask = (1u << hhx::LaneSnare) | (1u << hhx::LaneTom1)
+                           | (1u << hhx::LaneTom2) | (1u << hhx::LaneTom3)
                            | (1u << hhx::LaneKick);
         check (! engine.renderBars (fills, 0, 16).empty(), "fill-restricted render still produces hits");
     }
@@ -176,6 +175,118 @@ int main (int argc, char** argv)
             return hits.empty() ? 0.0 : total / (double) hits.size();
         };
         check (average (loud) > average (soft) + 3.0, "intensity raises average velocity");
+    }
+
+    // 9. The 30-piece articulation map: every lane has a name and a GM note,
+    //    and the notes are unique so per-instrument export never collides.
+    {
+        check (hhx::NumLanes == 30, "articulation map has 30 pieces");
+        std::map<int, int> notes;
+        bool named = true;
+        for (int lane = 0; lane < hhx::NumLanes; ++lane)
+        {
+            const char* n = hhx::laneName (lane);
+            if (n == nullptr || std::string (n).empty() || std::string (n) == "?")
+                named = false;
+            ++notes[hhx::laneToNote (lane)];
+        }
+        check (named, "every articulation is named");
+        check ((int) notes.size() == hhx::NumLanes, "every articulation maps to a distinct MIDI note");
+    }
+
+    // 10. Corpus v2 metadata: characters, sections and a learned velocity model.
+    {
+        check (corpus.numCharacters() >= 8, "corpus clusters into at least 8 characters");
+        bool allNamed = true;
+        for (int c = 0; c < corpus.numCharacters(); ++c)
+            if (corpus.characterName (c).empty())
+                allNamed = false;
+        check (allNamed, "every character is named");
+        check (corpus.velocityRow (hhx::LaneSnare, 4) != nullptr, "velocity model is present");
+
+        int deviating = 0;
+        for (int i = 0; i < corpus.numBeats() && i < 400; ++i)
+            for (const auto& h : corpus.beat (i).hits)
+                if (h.dev != 0)
+                    ++deviating;
+        check (deviating > 0, "phrases keep the drummer's timing deviation");
+    }
+
+    // 11. Character selection actually restricts which takes are used.
+    {
+        auto a = s, b = s;
+        a.character = 0;
+        b.character = corpus.numCharacters() - 1;
+        check (! sameHits (engine.renderBars (a, 0, 8), engine.renderBars (b, 0, 8)),
+               "different characters play differently");
+    }
+
+    // 12. Fill style filtering keeps rendering valid.
+    {
+        auto tomLed = s;
+        tomLed.fillAmount    = 1.0f;
+        tomLed.fillStyleMask = hhx::FillTomLed;
+        check (! engine.renderBars (tomLed, 0, 16).empty(), "tom-led fills still render");
+
+        auto halfBar = s;
+        halfBar.fillAmount     = 1.0f;
+        halfBar.fillLengthBars = 0.5f;
+        check (! engine.renderBars (halfBar, 0, 16).empty(), "half-bar fills still render");
+    }
+
+    // 13. Note-level round robin: consecutive hits on a lane differ in variant.
+    {
+        auto busy = s;
+        busy.complexity = 0.85f;
+        const auto hits = engine.renderBars (busy, 0, 16);
+        std::map<int, int> lastVariant;
+        int repeats = 0, pairs = 0;
+        for (const auto& h : hits)
+        {
+            const auto it = lastVariant.find (h.lane);
+            if (it != lastVariant.end())
+            {
+                ++pairs;
+                if (it->second == h.variant)
+                    ++repeats;
+            }
+            lastVariant[h.lane] = h.variant;
+        }
+        check (pairs > 0 && repeats == 0, "consecutive same-lane hits pick different variants");
+    }
+
+    // 14. No audible loop over 32 bars at a fixed XY position.
+    {
+        std::vector<std::string> bars;
+        const auto hits = engine.renderBars (s, 0, 32);
+        bars.resize (32);
+        for (const auto& h : hits)
+        {
+            const int bar = (int) (h.beat / s.beatsPerBar);
+            if (bar >= 0 && bar < 32)
+                bars[(std::size_t) bar] += std::to_string (h.lane) + ":"
+                                         + std::to_string ((int) (h.beat * 24.0f)) + ",";
+        }
+        std::map<std::string, int> unique;
+        for (const auto& b : bars)
+            ++unique[b];
+        check ((int) unique.size() >= 24, "32 bars at one XY position give at least 24 distinct bars");
+    }
+
+    // 15. Section awareness: following an arrangement changes the performance.
+    {
+        auto flat = s, arranged = s;
+        arranged.followSections = true;
+        arranged.sections = { { 0, 4, hhx::SectionIntro }, { 4, 4, hhx::SectionChorus } };
+        check (! sameHits (engine.renderBars (flat, 0, 8), engine.renderBars (arranged, 0, 8)),
+               "following the arrangement changes the performance");
+        check (engine.sectionAtBar (arranged, 5) == hhx::SectionChorus, "bar 5 reports the chorus");
+    }
+
+    // 16. Landing zone: the XY position resolves to real neighbouring takes.
+    {
+        const auto zone = engine.landingZone (s, 8);
+        check (zone.size() >= 4, "XY position has several real takes within reach");
     }
 
     std::printf ("\n%s\n", failures == 0 ? "All engine tests passed." : "Engine tests FAILED.");
