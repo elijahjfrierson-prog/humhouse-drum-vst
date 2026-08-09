@@ -133,24 +133,42 @@ grep -rn $'\u2014' SourceX/          # then confirm each hit is a comment, not a
 The places to eyeball for mojibake: MAIN character list, KIT panel header, KIT empty-lane marker,
 the EXPORT MIDI popup menu, and the LOAD KIT FOLDER button.
 
-## The KIT page does not scale with lane count (regression watch)
+## The KIT page lane list is a Viewport (fixed at a93ce78, may regress)
 
-`GrooveCorpus.h` `NumLanes` grew from 14 to 30, but `layoutKit()` still places rows at a fixed
-`y = 116 + 30*lane` inside a panel of `(16, 70, W-32, H-150)` (bottom edge y=580 in a 660px editor).
-Consequence observed at 82be826: rows from **Hat Bell (lane 15)** onward are drawn *outside* the KIT
-panel border, and lanes 18-29 (`Ride Edge`, `Ride Crash`, `Crash L/R/3`, `China`, `Splash`,
-`Tom 1-4`, `Perc`) fall past the bottom of the editor and are **completely unreachable** — there is no
-scrolling or paging. Changing the UI scale does **not** help, because the scale is a transform on a
-fixed 1040x660 canvas, so the identical rows are clipped at 75%, 100% and 150%.
+History: `NumLanes` grew 14 -> 30 and at 82be826 `layoutKit()` still used a fixed
+`y = 116 + 30*lane` inside a panel of `(16, 70, W-32, H-150)` (bottom edge y=580), so lanes 18-29
+(`Ride Edge`, `Ride Crash`, `Crash L/R/3`, `China`, `Splash`, `Tom 1-4`, `Perc`) were completely
+unreachable and rows painted outside the panel border. Changing UI scale did **not** help, because
+the scale is a transform on a fixed 1040x660 canvas.
+
+Since a93ce78 the rows live in a `juce::Viewport`:
+- `kitViewport.setBounds(24, 112, 700, 464)` -> editor x24..724, y112..576 (panel bottom is 580, so
+  the viewport sits 4px inside it and clips rows rather than overpainting the frame).
+- `kitRowsHolder.setSize(maxVisibleWidth, 30*NumLanes + 6)` = 906px for 30 lanes, rows from `y=4` at
+  pitch 30. Only ~15.4 rows fit, so reaching `Perc` *requires* a working scrollbar.
+- `setScrollBarsShown(true, false)` — vertical only.
+- Column headers are drawn at y=96 by the parent, **above** the viewport, so they must stay fixed
+  while rows scroll. Verify that, not just that rows move.
+- Right-hand column starts at x=740 (kit name/Load Kit/Output/Mic Blend/Bleed/Mono Crush) vs the
+  viewport right edge 724 -> only **16px** clearance. Re-check for overlap whenever either moves.
+
+### Gotcha: mouse wheel over a lane slider does not scroll the list
+
+The lane rows contain `LEVEL` and `PAN` sliders that **consume wheel events**, so wheeling over the
+middle of the viewport adjusts whichever slider is under the cursor instead of scrolling — easy to
+misread as "scrolling is broken", and easy to accidentally change a mix value mid-test. Scroll over
+the **lane-name / ON column** (screenshot x~90 at 100%) or drag the scrollbar instead. Worth
+reporting as a usability defect: users naturally wheel over the middle of the list.
 
 Whenever `NumLanes` changes, re-check every page that enumerates lanes:
-- KIT rows (`layoutKit`) — the fixed `116 + 30*lane` maths above.
+- KIT rows (`layoutKit`) — confirm the holder height still exceeds the viewport and `Perc` is
+  reachable; count rows and name the first/last visible lane as evidence.
 - The DETAILS manual step grid — this one *does* divide its height by the lane count, so it survives,
   but at 30 lanes each row is ~6px at 100% and ~4px at 75%, i.e. the lane labels become effectively
   unreadable at 75%. Zoom the label column and judge legibility at native size, not at zoom.
 
-Count the rows you can actually see and name the first clipped lane and the last visible one; that is
-the evidence that makes the bug actionable.
+Always name the first and last visible lane at each scroll position; that concrete evidence is what
+makes a clipping regression actionable (and what proves the viewport fix at each UI scale).
 
 ## Verifying "X changes the rendered pattern" on a dense view
 
@@ -192,10 +210,32 @@ shows the previously chosen scale and the window reopens at that geometry (e.g. 
 Kit params (Output / Mic Blend / Bleed / Mono Crush and per-lane gain/pan/tune/damp) are real APVTS
 parameters and do restore — verify by diffing the same zoom region before and after relaunch.
 
-**Known state-restore hole:** Complexity/Intensity do *not* survive a relaunch — they come back at the
-selected character's defaults (Ethan 35/45) even though Fills/Swing and all kit params persist,
-because the persisted character selection is re-applied on editor open and overwrites them. Test it
-by moving the XY pad **without** clicking a character, then relaunching.
+**Complexity/Intensity restore (fixed at a93ce78, may regress).** Previously they came back at the
+selected character's defaults because the editor's initial `characterList.selectRow()` re-applied the
+persisted character and overwrote the saved XY. `CharacterListModel::suppressApply` is now set true
+only around that initial `selectRow`, and `selectedRowsChanged` early-returns while set.
+
+This fix has **two** failure modes, so always test both directions:
+1. Move the XY pad to distinctive values (e.g. 85%/82%) **without** clicking any character row, quit,
+   relaunch, and read the readouts *before touching anything* — they must be restored, and the same
+   character row must still be highlighted.
+2. Then click a *different* character (e.g. `Max - Punk Rock` -> 72%/90%) and confirm the readouts and
+   puck **do** move. Over-suppressing `suppressApply` would silently break normal character
+   application, which test 1 alone cannot catch.
+
+## Scale picker offers no 125%
+
+`scaleBox.addItemList({ "75%", "85%", "100%", "115%", "130%", "150%" }, 1)` — if asked to test 125%,
+use **115% and 130%** (which bracket it) and say so explicitly in the report. Expected outer window
+geometry: 782x523 (75%), 1198x819 (115%), 1354x886 (130%), 1562x1018 (150%), 1042x688 (100%).
+
+## Sample switch is a bipolar -4..+4 offset, not a 0-based index
+
+`pid::laneSwitch(lane)` is clamped with `juce::jlimit(-4.0f, 4.0f, raw + delta)`, and the row label
+reads `<offset> / <numSamples>x<numLayers>` (e.g. `4 / 15x1`, `-2 / 15x1`). A **negative offset is
+by design** — do not report it as a failed clamp. Verify by clicking `<` until it sticks at `-4` and
+`>` until it sticks at `+4` (click more times than the range needs so a missing clamp would
+overshoot). Empty lanes show `-` and stepping them is a harmless no-op.
 
 ## Churning UI scale reliably
 

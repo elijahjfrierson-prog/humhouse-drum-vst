@@ -469,9 +469,9 @@ namespace hhx
         }
 
         addAndMakeVisible (scaleBox);
-        scaleBox.addItemList ({ "75%", "85%", "100%", "115%", "130%", "150%" }, 1);
+        scaleBox.addItemList ({ "75%", "85%", "100%", "115%", "125%", "150%" }, 1);
         {
-            const float scales[] { 0.75f, 0.85f, 1.0f, 1.15f, 1.3f, 1.5f };
+            const float scales[] { 0.75f, 0.85f, 1.0f, 1.15f, 1.25f, 1.5f };
             int best = 2;
             for (int i = 0; i < 6; ++i)
                 if (std::abs (scales[i] - proc.getUiScale()) < std::abs (scales[best] - proc.getUiScale()))
@@ -480,7 +480,7 @@ namespace hhx
         }
         scaleBox.onChange = [this]
         {
-            static const float scales[] = { 0.75f, 0.85f, 1.0f, 1.15f, 1.30f, 1.50f };
+            static const float scales[] = { 0.75f, 0.85f, 1.0f, 1.15f, 1.25f, 1.50f };
             const int idx = juce::jlimit (0, 5, scaleBox.getSelectedId() - 1);
             proc.setUiScale (scales[idx]);
             applyScale();
@@ -642,6 +642,9 @@ namespace hhx
                                                      juce::Slider::SliderStyle style)
             {
                 slider = std::make_unique<juce::Slider> (style, juce::Slider::NoTextBox);
+                // The wheel belongs to the lane list: a stray wheel over a row
+                // must scroll, not silently move somebody's mix.
+                slider->setScrollWheelEnabled (false);
                 kitRowsHolder.addAndMakeVisible (*slider);
                 sliderAttachments.push_back (
                     std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
