@@ -367,9 +367,14 @@ namespace hhx
                             juce::Justification::centredLeft, true);
             }
 
+            /** Set while the editor mirrors the persisted selection into the
+                list, so re-opening the UI does not re-apply the character's
+                defaults over the saved XY position. */
+            bool suppressApply = false;
+
             void selectedRowsChanged (int row) override
             {
-                if (row < 0)
+                if (row < 0 || suppressApply)
                     return;
                 if (auto* p = proc.getAPVTS().getParameter (pid::preset))
                     p->setValueNotifyingHost (p->convertTo0to1 ((float) row));
@@ -482,13 +487,17 @@ namespace hhx
         };
 
         // ---- MAIN ---------------------------------------------------------
-        characterModel = std::make_unique<CharacterListModel> (proc);
+        auto model = std::make_unique<CharacterListModel> (proc);
+        auto* modelPtr = model.get();
+        characterModel = std::move (model);
         characterList.setModel (characterModel.get());
         characterList.setRowHeight (34);
         characterList.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
         characterList.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
+        modelPtr->suppressApply = true;
         characterList.selectRow ((int) state.getRawParameterValue (pid::preset)->load(),
                                  true, true);
+        modelPtr->suppressApply = false;
         addAndMakeVisible (characterList);
         addAndMakeVisible (pad);
         addAndMakeVisible (phraseView);
@@ -584,6 +593,10 @@ namespace hhx
         addAndMakeVisible (manualGrid);
 
         // ---- KIT ----------------------------------------------------------
+        kitViewport.setViewedComponent (&kitRowsHolder, false);
+        kitViewport.setScrollBarsShown (true, false);
+        addAndMakeVisible (kitViewport);
+
         for (int lane = 0; lane < NumLanes; ++lane)
         {
             auto& row = kitRows[(std::size_t) lane];
@@ -591,10 +604,10 @@ namespace hhx
             row.name = std::make_unique<juce::Label>();
             row.name->setText (drumsXLaneName (lane), juce::dontSendNotification);
             row.name->setFont (uiFont (12.5f));
-            addAndMakeVisible (*row.name);
+            kitRowsHolder.addAndMakeVisible (*row.name);
 
             row.enable = std::make_unique<juce::ToggleButton> ("");
-            addAndMakeVisible (*row.enable);
+            kitRowsHolder.addAndMakeVisible (*row.enable);
             row.enableAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
                 state, pid::laneEnable (lane), *row.enable);
 
@@ -613,14 +626,14 @@ namespace hhx
             row.next = std::make_unique<juce::TextButton> (">");
             row.prev->onClick = [bump] { bump (-1); };
             row.next->onClick = [bump] { bump (1); };
-            addAndMakeVisible (*row.prev);
-            addAndMakeVisible (*row.next);
+            kitRowsHolder.addAndMakeVisible (*row.prev);
+            kitRowsHolder.addAndMakeVisible (*row.next);
 
             row.layers = std::make_unique<juce::Label>();
             row.layers->setFont (uiFont (11.0f));
             row.layers->setColour (juce::Label::textColourId, DrumsXLookAndFeel::textDim());
             row.layers->setJustificationType (juce::Justification::centred);
-            addAndMakeVisible (*row.layers);
+            kitRowsHolder.addAndMakeVisible (*row.layers);
 
             // Every mixer control is an automatable parameter, so the mix is
             // saved with the project rather than living only in the UI.
@@ -629,7 +642,7 @@ namespace hhx
                                                      juce::Slider::SliderStyle style)
             {
                 slider = std::make_unique<juce::Slider> (style, juce::Slider::NoTextBox);
-                addAndMakeVisible (*slider);
+                kitRowsHolder.addAndMakeVisible (*slider);
                 sliderAttachments.push_back (
                     std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
                         state, paramID, *slider));
@@ -747,6 +760,7 @@ namespace hhx
         clearManualButton.setVisible (det);
         manualGrid.setVisible (det);
 
+        kitViewport.setVisible (kitp);
         for (auto& row : kitRows)
         {
             row.name->setVisible (kitp);
@@ -899,13 +913,13 @@ namespace hhx
             drawPanel (g, juce::Rectangle<int> (16, 70, getWidth() - 32, getHeight() - 150), "Kit & Mix");
             g.setColour (DrumsXLookAndFeel::textDim());
             g.setFont (uiFont (10.5f, true));
-            g.drawText ("ON",      juce::Rectangle<int> (34,  96, 40, 14), juce::Justification::centredLeft);
-            g.drawText ("PIECE",   juce::Rectangle<int> (74,  96, 90, 14), juce::Justification::centredLeft);
+            g.drawText ("ON",      juce::Rectangle<int> (32,  96, 40, 14), juce::Justification::centredLeft);
+            g.drawText ("PIECE",   juce::Rectangle<int> (72,  96, 90, 14), juce::Justification::centredLeft);
             g.drawText ("SAMPLE",  juce::Rectangle<int> (176, 96, 110, 14), juce::Justification::centredLeft);
             g.drawText ("LEVEL",   juce::Rectangle<int> (330, 96, 90, 14), juce::Justification::centredLeft);
             g.drawText ("PAN",     juce::Rectangle<int> (490, 96, 90, 14), juce::Justification::centredLeft);
-            g.drawText ("TUNE",    juce::Rectangle<int> (616, 96, 40, 14), juce::Justification::centredLeft);
-            g.drawText ("DAMP",    juce::Rectangle<int> (650, 96, 40, 14), juce::Justification::centredLeft);
+            g.drawText ("TUNE",    juce::Rectangle<int> (620, 96, 40, 14), juce::Justification::centredLeft);
+            g.drawText ("DAMP",    juce::Rectangle<int> (652, 96, 40, 14), juce::Justification::centredLeft);
         }
     }
 
@@ -1014,20 +1028,26 @@ namespace hhx
     {
         juce::ignoreUnused (r);
 
-        int y = 116;
+        // All 30 articulations scroll inside the panel: a fixed row list cannot
+        // fit them, and the UI scale is a transform, so it never adds room.
         const int rowH = 30;
+        const int viewTop = 112;
+        kitViewport.setBounds (24, viewTop, 700, 580 - viewTop - 4);
+        kitRowsHolder.setSize (kitViewport.getMaximumVisibleWidth(), rowH * NumLanes + 6);
+
+        int y = 4;
         for (int lane = 0; lane < NumLanes; ++lane)
         {
             auto& row = kitRows[(std::size_t) lane];
-            row.enable->setBounds (32, y + 4, 24, 22);
-            row.name->setBounds (72, y, 100, rowH);
-            row.prev->setBounds (176, y + 3, 26, 24);
-            row.layers->setBounds (204, y, 60, rowH);
-            row.next->setBounds (266, y + 3, 26, 24);
-            row.gain->setBounds (330, y + 4, 150, 22);
-            row.pan->setBounds (490, y + 4, 120, 22);
-            row.tune->setBounds (620, y + 2, 26, 26);
-            row.damp->setBounds (652, y + 2, 26, 26);
+            row.enable->setBounds (8,   y + 4, 24, 22);
+            row.name->setBounds (48,  y, 100, rowH);
+            row.prev->setBounds (152, y + 3, 26, 24);
+            row.layers->setBounds (180, y, 60, rowH);
+            row.next->setBounds (242, y + 3, 26, 24);
+            row.gain->setBounds (306, y + 4, 150, 22);
+            row.pan->setBounds (466, y + 4, 120, 22);
+            row.tune->setBounds (596, y + 2, 26, 26);
+            row.damp->setBounds (628, y + 2, 26, 26);
             y += rowH;
         }
 

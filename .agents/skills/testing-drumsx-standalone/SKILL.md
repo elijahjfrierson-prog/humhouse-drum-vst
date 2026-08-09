@@ -1,6 +1,6 @@
 ---
 name: testing-drumsx-standalone
-description: How to run and GUI-test the HumHouse Drums X JUCE standalone on a headless Linux VM - launching, working around the intermittent degenerate window, measuring CPU correctly, and validating MIDI export.
+description: How to run and GUI-test the HumHouse Drums X JUCE standalone on a headless Linux VM - launching, working around the intermittent degenerate window, measuring CPU correctly, verifying dense 30-lane layouts, and validating MIDI export.
 ---
 
 # Testing the HumHouse Drums X standalone (JUCE)
@@ -132,6 +132,86 @@ grep -rn $'\u2014' SourceX/          # then confirm each hit is a comment, not a
 
 The places to eyeball for mojibake: MAIN character list, KIT panel header, KIT empty-lane marker,
 the EXPORT MIDI popup menu, and the LOAD KIT FOLDER button.
+
+## The KIT page does not scale with lane count (regression watch)
+
+`GrooveCorpus.h` `NumLanes` grew from 14 to 30, but `layoutKit()` still places rows at a fixed
+`y = 116 + 30*lane` inside a panel of `(16, 70, W-32, H-150)` (bottom edge y=580 in a 660px editor).
+Consequence observed at 82be826: rows from **Hat Bell (lane 15)** onward are drawn *outside* the KIT
+panel border, and lanes 18-29 (`Ride Edge`, `Ride Crash`, `Crash L/R/3`, `China`, `Splash`,
+`Tom 1-4`, `Perc`) fall past the bottom of the editor and are **completely unreachable** — there is no
+scrolling or paging. Changing the UI scale does **not** help, because the scale is a transform on a
+fixed 1040x660 canvas, so the identical rows are clipped at 75%, 100% and 150%.
+
+Whenever `NumLanes` changes, re-check every page that enumerates lanes:
+- KIT rows (`layoutKit`) — the fixed `116 + 30*lane` maths above.
+- The DETAILS manual step grid — this one *does* divide its height by the lane count, so it survives,
+  but at 30 lanes each row is ~6px at 100% and ~4px at 75%, i.e. the lane labels become effectively
+  unreadable at 75%. Zoom the label column and judge legibility at native size, not at zoom.
+
+Count the rows you can actually see and name the first clipped lane and the last visible one; that is
+the evidence that makes the bug actionable.
+
+## Verifying "X changes the rendered pattern" on a dense view
+
+The MAIN performance/phrase view packs 30 lanes into ~85px, so a real content change (e.g. toggling a
+ghost lane) can be only a few dozen pixels and is invisible to the eye. Two techniques:
+
+1. **Isolate.** The lane strip below the XY pad has 7 group buttons (KICK/SNARE/HATS/RIDE/CRASH/TOMS/
+   PERC) each with an adjacent small `G` ghost button; each group button flips enable for all lanes in
+   the group. Switch every group off except the one under test — then the change is dramatic and
+   obvious on camera (all 7 off renders a completely empty phrase view).
+2. **Pixel-diff.** Screenshot the same zoom region before and after, then diff, excluding the button
+   strip so you are not just re-detecting the button's own highlight:
+
+```bash
+python3 -c "
+from PIL import Image, ImageChops
+a=Image.open('before.png').convert('RGB'); b=Image.open('after.png').convert('RGB')
+d=ImageChops.difference(a.crop(box), b.crop(box))
+print(d.getbbox(), sum(1 for p in list(d.getdata()) if sum(p)>20))"
+```
+
+The same diff trick is the only reliable way to check the tiny per-lane TUNE/DAMP rotaries on KIT
+(x=620 / x=652, ~10px, **no numeric readout**): crop each lane's TUNE and DAMP cell separately and
+assert the dragged one changed and the neighbours changed by **0** pixels. Boosting GHOST NOTES to
+100% on DETAILS first makes ghost-toggle differences larger but still only ~50px.
+
+## Landing-zone rings on the XY pad
+
+`PerformancePad::paint` draws small rings for `proc.getLandingZone(12)` — the nearest real corpus
+takes. Verify they *track* the puck: capture at centre, drag to lower-left, then use
+`left_mouse_down` / `mouse_move` / `left_mouse_up` (note: `left_mouse_down` takes **no** coordinate,
+move first) and screenshot mid-drag before releasing. The ring cluster must sit near the puck in each
+state.
+
+## Persisted UI scale and parameter state
+
+The scale picker reflects `proc.getUiScale()` at construction, so after close+relaunch the picker
+shows the previously chosen scale and the window reopens at that geometry (e.g. 782x523 for 75%).
+Kit params (Output / Mic Blend / Bleed / Mono Crush and per-lane gain/pan/tune/damp) are real APVTS
+parameters and do restore — verify by diffing the same zoom region before and after relaunch.
+
+**Known state-restore hole:** Complexity/Intensity do *not* survive a relaunch — they come back at the
+selected character's defaults (Ethan 35/45) even though Fills/Swing and all kit params persist,
+because the persisted character selection is re-applied on editor open and overwrites them. Test it
+by moving the XY pad **without** clicking a character, then relaunching.
+
+## Churning UI scale reliably
+
+The combo's screen position moves with the scale, so hard-coded click coordinates break after the
+first resize — and a missed click lands on whatever is behind the window (e.g. Chrome), which both
+loses the app focus and pollutes the recording. Two mitigations:
+
+- Click the combo, then drive it with `Down`/`Up` + `Return` instead of clicking a popup item; the
+  arrow keys work regardless of where the popup rendered.
+- Compute the combo position from the scale. Empirically, with the window at (30,30),
+  `screenshot_x = 0.64*(30 + 978*s)` and `screenshot_y = 0.64*(54.6 + 28.2*s)`; that gives (645,53) at
+  100%, (958,62) at 150%, (488,49) at 75%, (551,50) at 85%.
+- Re-raise the window between batches: `xdotool search --name "^HumHouse Drums X$"` then
+  `windowactivate` + `windowraise`, and re-check geometry to learn which scale is actually active.
+
+The six scales are 75 / 85 / 100 / 115 / 130 / 150%.
 
 ## Validating MIDI export
 

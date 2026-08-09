@@ -154,6 +154,8 @@ namespace hhx
 
         // KIT
         std::array<KitRow, NumLanes> kitRows;
+        juce::Viewport    kitViewport;
+        juce::Component   kitRowsHolder;
         juce::TextButton  loadKitButton { "LOAD KIT FOLDER..." };
         juce::Label       kitNameLabel;
         std::unique_ptr<LabelledKnob> outputKnob;

@@ -22,6 +22,18 @@ namespace hhx
                             * (1.0 / 9007199254740992.0));
         }
 
+        /** Sine of `turns` full cycles, built only from multiply/add/abs so the
+            result is bit-identical on every platform. libm's sin is not, and the
+            golden-render fixtures depend on it being. */
+        float cycleSin (float turns)
+        {
+            const float frac = turns - std::floor (turns);
+            const float x = 2.0f * frac - 1.0f;              // sin(2*pi*t) = -sin(pi*x)
+            float s = 4.0f * x * (1.0f - std::abs (x));      // parabola approximation
+            s = 0.775f * s + 0.225f * s * std::abs (s);      // shape correction
+            return -s;
+        }
+
         /** Skeleton lanes come from the primary take, colour from a neighbour. */
         bool isSkeletonLane (int lane)
         {
@@ -309,7 +321,12 @@ namespace hhx
                    { return (s.laneMask & (1u << h.lane)) == 0; }), raw.end());
 
         std::sort (raw.begin(), raw.end(),
-                   [] (const Raw& a, const Raw& b) { return a.beat < b.beat; });
+                   [] (const Raw& a, const Raw& b)
+                   {
+                       if (a.beat != b.beat) return a.beat < b.beat;
+                       if (a.lane != b.lane) return a.lane < b.lane;
+                       return a.velocity < b.velocity;
+                   });
 
         // --- feel, swing, drift, dynamics -----------------------------------
         const float gridUnit   = s.swingSixteenth ? 0.25f : 0.5f;
@@ -343,7 +360,7 @@ namespace hhx
                 beat += swingShift;
 
             beat += 0.014f * s.humanize
-                    * std::sin (6.2831853f * (driftPhase + beat / (8.0f * dstBar)));
+                    * cycleSin (driftPhase + beat / (8.0f * dstBar));
 
             if (beat < -0.02f || beat >= phraseBeats)
                 continue;

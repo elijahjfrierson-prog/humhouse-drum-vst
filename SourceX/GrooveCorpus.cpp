@@ -267,10 +267,17 @@ namespace hhx
                     phrase.hits.push_back (hit);
             }
 
+            // Total order, including the lane and velocity: simultaneous hits
+            // must land in the same order on every platform, or the round-robin
+            // and variant choices downstream diverge between builds.
             std::sort (phrase.hits.begin(), phrase.hits.end(),
                        [] (const SourceHit& a, const SourceHit& b)
                        {
-                           return a.gridBeat() + a.devBeats() < b.gridBeat() + b.devBeats();
+                           const float ta = a.gridBeat() + a.devBeats();
+                           const float tb = b.gridBeat() + b.devBeats();
+                           if (ta != tb)      return ta < tb;
+                           if (a.lane != b.lane) return a.lane < b.lane;
+                           return a.velocity < b.velocity;
                        });
 
             (phrase.isFill ? fillPhrases : beatPhrases).push_back (std::move (phrase));

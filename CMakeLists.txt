@@ -14,11 +14,13 @@ if(MSVC)
         CACHE STRING "" FORCE)
 endif()
 
-# Warnings
+# Warnings, plus strict floating point so a render is bit-identical on every
+# platform: the golden-render fixtures compare hashes across Linux, Windows
+# and macOS, and fused or reassociated arithmetic breaks that.
 if(MSVC)
-    add_compile_options(/W4)
+    add_compile_options(/W4 /fp:precise)
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
+    add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter -ffp-contract=off)
 endif()
 
 # ---------------------------------------------------------------------------
