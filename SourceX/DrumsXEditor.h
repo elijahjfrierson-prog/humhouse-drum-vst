@@ -148,6 +148,9 @@ namespace hhx
         juce::TextButton  loadKitButton { "LOAD KIT FOLDER..." };
         juce::Label       kitNameLabel;
         std::unique_ptr<LabelledKnob> outputKnob;
+        std::unique_ptr<LabelledKnob> micBlendKnob;
+        std::unique_ptr<LabelledKnob> bleedKnob;
+        std::unique_ptr<LabelledKnob> crushKnob;
         std::unique_ptr<juce::FileChooser> chooser;
         int startupChecks = 16;
 

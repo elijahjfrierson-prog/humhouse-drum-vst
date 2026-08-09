@@ -587,6 +587,12 @@ namespace hhx
         outputKnob = std::make_unique<LabelledKnob> (state, pid::outputLevel, "Output");
         addAndMakeVisible (*outputKnob);
 
+        micBlendKnob = std::make_unique<LabelledKnob> (state, pid::micBlend, "Mic Blend");
+        bleedKnob    = std::make_unique<LabelledKnob> (state, pid::bleed,    "Bleed");
+        crushKnob    = std::make_unique<LabelledKnob> (state, pid::crush,    "Mono Crush");
+        for (auto* k : { micBlendKnob.get(), bleedKnob.get(), crushKnob.get() })
+            addAndMakeVisible (*k);
+
         setResizable (false, false);
         proc.setUiScale (proc.getUiScale());
         applyScale();
@@ -673,6 +679,8 @@ namespace hhx
         loadKitButton.setVisible (kitp);
         kitNameLabel.setVisible (kitp);
         outputKnob->setVisible (kitp);
+        for (auto* k : { micBlendKnob.get(), bleedKnob.get(), crushKnob.get() })
+            k->setVisible (kitp);
 
         resized();
         repaint();
@@ -910,6 +918,9 @@ namespace hhx
 
         kitNameLabel.setBounds (740, 110, 260, 24);
         loadKitButton.setBounds (740, 142, 200, 28);
-        outputKnob->setBounds (760, 190, 110, 110);
+        outputKnob->setBounds (740, 190, 110, 110);
+        micBlendKnob->setBounds (860, 190, 110, 110);
+        bleedKnob->setBounds (740, 306, 110, 110);
+        crushKnob->setBounds (860, 306, 110, 110);
     }
 }

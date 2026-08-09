@@ -41,6 +41,9 @@ namespace hhx
         inline constexpr const char* variationCymbal = "varCymbal";
         inline constexpr const char* manualMode     = "manualMode";
         inline constexpr const char* outputLevel    = "outputLevel";
+        inline constexpr const char* micBlend       = "micBlend";
+        inline constexpr const char* bleed          = "bleed";
+        inline constexpr const char* crush          = "crush";
 
         juce::String laneEnable (int lane);
         juce::String laneGhost (int lane);

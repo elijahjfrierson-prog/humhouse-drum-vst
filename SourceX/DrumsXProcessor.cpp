@@ -138,6 +138,15 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterBool> (ParameterID { pid::manualMode, 1 }, "Manual Pattern", false));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::outputLevel, 1 },
                                                            "Output", NormalisableRange<float> (-24.0f, 12.0f, 0.1f), 0.0f));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::micBlend, 1 }, "Mic Blend",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::bleed, 1 }, "Bleed",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.15f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::crush, 1 }, "Mono Crush",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
 
         for (int lane = 0; lane < NumLanes; ++lane)
         {
@@ -181,6 +190,9 @@ namespace hhx
         engine.setCorpus (&corpus);
 
         kit.loadBundledKit ("SoCalRock");
+        kit.setMicBlend (apvts.getRawParameterValue (pid::micBlend)->load());
+        kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
+        kit.setCrush (apvts.getRawParameterValue (pid::crush)->load());
 
         // A conventional rock song form. Hosts that expose markers can replace
         // it through setSections(); the performance only follows it when
@@ -215,6 +227,10 @@ namespace hhx
             else if (id == pid::laneTune (lane)) kit.setLaneTune (lane, value);
             else if (id == pid::laneDamp (lane)) kit.setLaneDamp (lane, value);
         }
+
+        if (id == pid::micBlend)   kit.setMicBlend (value);
+        else if (id == pid::bleed) kit.setBleed (value);
+        else if (id == pid::crush) kit.setCrush (value);
 
         // Re-render off the audio thread. Nothing the user typed into the
         // manual grid is touched by this.
