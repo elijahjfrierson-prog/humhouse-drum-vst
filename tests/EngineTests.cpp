@@ -5,6 +5,8 @@
 #include "../SourceX/GrooveCorpus.h"
 #include "../SourceX/PerformanceEngine.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -287,6 +289,41 @@ int main (int argc, char** argv)
     {
         const auto zone = engine.landingZone (s, 8);
         check (zone.size() >= 4, "XY position has several real takes within reach");
+    }
+
+    // 17. Every cell of the 10x10 XY grid holds a take, for every character,
+    //     so no pad position has to reach across the plane for material.
+    {
+        int worst = 100;
+        for (int c = 0; c < corpus.numCharacters(); ++c)
+        {
+            std::vector<bool> cell ((std::size_t) 100, false);
+            const std::uint16_t mask = (std::uint16_t) (1u << c);
+            for (int i = 0; i < corpus.numBeats(); ++i)
+            {
+                const auto& p = corpus.beat (i);
+                if ((p.charMask & mask) == 0)
+                    continue;
+                const int x = std::min (9, (int) (p.complexity * 10.0f));
+                const int y = std::min (9, (int) (p.intensity  * 10.0f));
+                cell[(std::size_t) (y * 10 + x)] = true;
+            }
+            int filled = 0;
+            for (bool b : cell)
+                filled += b ? 1 : 0;
+            worst = std::min (worst, filled);
+        }
+        check (worst == 100, "every character populates all 100 XY cells");
+    }
+
+    // 18. Load time: the corpus is parsed well inside the 150 ms budget.
+    {
+        const auto start = std::chrono::steady_clock::now();
+        hhx::GrooveCorpus timed;
+        const bool ok = timed.loadFromMemory (bytes.data(), bytes.size());
+        const auto ms = std::chrono::duration<double, std::milli> (
+                            std::chrono::steady_clock::now() - start).count();
+        check (ok && ms < 150.0, "corpus loads in under 150 ms");
     }
 
     std::printf ("\n%s\n", failures == 0 ? "All engine tests passed." : "Engine tests FAILED.");

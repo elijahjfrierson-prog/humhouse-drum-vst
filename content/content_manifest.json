@@ -1,19 +1,20 @@
 {
   "corpus": "rock_corpus.hhc",
   "format_version": 2,
-  "phrases": 8538,
-  "beats": 7782,
+  "phrases": 8900,
+  "beats": 8144,
   "fills": 756,
+  "derived": 362,
   "characters": {
-    "Half Time": 951,
-    "Hard Rock": 2060,
-    "Metal": 1920,
-    "Pop Rock": 552,
-    "Prog": 2082,
-    "Punk": 1941,
-    "Rock": 2776,
-    "Roots Rock": 751,
-    "Shuffle": 959
+    "Half Time": 1159,
+    "Hard Rock": 2267,
+    "Metal": 1990,
+    "Pop Rock": 685,
+    "Prog": 2101,
+    "Punk": 2111,
+    "Rock": 3009,
+    "Roots Rock": 785,
+    "Shuffle": 1002
   },
   "articulations": 30,
   "attribution": [

@@ -93,6 +93,7 @@ class Phrase:
     style: str
     drummer: str
     notes: list[Note] = field(default_factory=list)
+    derived: bool = False
     complexity: float = 0.0
     intensity: float = 0.0
     section: int = SEC_VERSE
@@ -366,6 +367,176 @@ def build(gmd_root: Path) -> list[Phrase]:
 
 
 # --------------------------------------------------------------------------
+# densification
+# --------------------------------------------------------------------------
+ORNAMENT = L.HAT_FAMILY | L.RIDE_FAMILY | {L.SNARE_GHOST, L.PERC}
+SKELETON = {L.KICK, L.SNARE, L.SNARE_RIM, L.SNARE_FLAM, L.SNARE_ROLL,
+            L.SIDE_STICK} | L.TOM_FAMILY | L.CYMBAL_FAMILY
+
+
+def axis_cell(value: float) -> int:
+    """The XY cell as the runtime sees it, after 8-bit quantisation."""
+    return min(9, int(round(value * 255) / 255.0 * 10.0))
+
+
+def cell_of(p: "Phrase") -> tuple[int, int]:
+    return axis_cell(p.complexity), axis_cell(p.intensity)
+
+
+def thinned(notes: list[Note], keep_every: int) -> list[Note]:
+    """Drops ornament strokes - the way a drummer simplifies a groove."""
+    out: list[Note] = []
+    seen = 0
+    for n in notes:
+        if n.lane in ORNAMENT:
+            seen += 1
+            if seen % keep_every != 0:
+                continue
+        out.append(n)
+    return out
+
+
+def merged(base: list[Note], donor: list[Note]) -> list[Note]:
+    """Base skeleton plus a busier real take's ornamentation.
+
+    Both halves stay human: nothing is synthesised, the ornament layer is
+    simply borrowed from another performance of the same character.
+    """
+    out = [n for n in base if n.lane in SKELETON]
+    out += [Note(n.lane, n.beat, n.velocity)
+            for n in donor if n.lane in ORNAMENT]
+    out.sort(key=lambda n: n.beat)
+    return out
+
+
+def scaled(notes: list[Note], gain: float) -> list[Note]:
+    return [Note(n.lane, n.beat,
+                 max(1, min(127, int(round(n.velocity * gain)))))
+            for n in notes]
+
+
+def hit_intensity(notes: list[Note], target: float) -> list[Note]:
+    """Finds the velocity gain that puts the phrase on a loudness row."""
+    lo, hi = 0.08, 2.6
+    best = notes
+    for _ in range(18):
+        gain = (lo + hi) / 2.0
+        best = scaled(notes, gain)
+        if score_intensity(best) < target:
+            lo = gain
+        else:
+            hi = gain
+    return best
+
+
+# Raw complexity/loudness scores only ever occupy the middle of their 0..1
+# range - no real drummer plays a groove that scores 0 or 1 - so the axes are
+# calibrated to the corpus itself. Both pad extremes then address real takes.
+CAL: dict[str, tuple[float, float]] = {"c": (0.0, 1.0), "i": (0.0, 1.0)}
+
+
+def norm(value: float, axis: str) -> float:
+    lo, hi = CAL[axis]
+    return max(0.0, min(1.0, (value - lo) / max(1e-6, hi - lo)))
+
+
+def denorm(value: float, axis: str) -> float:
+    lo, hi = CAL[axis]
+    return lo + value * (hi - lo)
+
+
+def calibrate(phrases: list[Phrase]) -> None:
+    """Maps the corpus' own score range onto the full pad, then rescales."""
+    beats = [p for p in phrases if p.kind == KIND_BEAT]
+    if not beats:
+        return
+    for axis, get in (("c", lambda p: p.complexity),
+                      ("i", lambda p: p.intensity)):
+        values = sorted(get(p) for p in beats)
+        lo = values[len(values) // 100]
+        hi = values[max(0, len(values) - 1 - len(values) // 100)]
+        CAL[axis] = (lo, hi)
+    for p in phrases:
+        p.complexity = norm(p.complexity, "c")
+        p.intensity = norm(p.intensity, "i")
+
+
+def stripped(notes: list[Note], drop: set[int]) -> list[Note]:
+    return [n for n in notes if n.lane not in drop]
+
+
+def voicings(base: Phrase, donors: list[Phrase]) -> list[list[Note]]:
+    """Re-voicings of one real take, from sparsest to busiest.
+
+    Sparse ends of the pad come from thinning or dropping the ornament and
+    colour layers; busy ends come from borrowing the ornaments of a busier
+    real take of the same character. No onset is ever invented.
+    """
+    out = [list(base.notes)]
+    bare = stripped(base.notes, ORNAMENT | L.TOM_FAMILY | L.CYMBAL_FAMILY)
+    out.append(bare)
+    out.append(stripped(base.notes, ORNAMENT))
+    for keep in (2, 3, 4, 6):
+        out.append(thinned(base.notes, keep))
+    for d in donors:
+        out.append(merged(base.notes, d.notes))
+        out.append(merged(base.notes, d.notes)
+                   + [Note(n.lane, n.beat, n.velocity)
+                      for n in d.notes if n.lane in L.TOM_FAMILY])
+    return [v for v in out if len(v) >= 4]
+
+
+def derive(base: Phrase, notes: list[Note], want_i: float) -> Phrase:
+    notes = hit_intensity(sorted(notes, key=lambda n: n.beat),
+                          denorm(want_i, "i"))
+    p = Phrase(base.kind, base.bars, base.bpm, base.style, base.drummer,
+               notes, True)
+    p.complexity = norm(score_complexity(notes, p.bars), "c")
+    p.intensity = norm(score_intensity(notes), "i")
+    p.swing = measure_swing(notes)
+    p.section = base.section
+    p.fill_styles = base.fill_styles
+    p.char_mask = base.char_mask
+    return p
+
+
+def densify(phrases: list[Phrase]) -> list[Phrase]:
+    """Fills every empty complexity x loudness cell, per character.
+
+    A cell is filled by re-voicing the nearest real take of that character -
+    thinning or borrowing ornamentation for the complexity axis, scaling the
+    velocity curve for the loudness axis - so the drummer's own micro-timing
+    is preserved in every cell of the pad.
+    """
+    added: list[Phrase] = []
+    beats = [p for p in phrases if p.kind == KIND_BEAT]
+    for bit, _char in enumerate(CHARACTERS):
+        mine = [p for p in beats if p.char_mask & (1 << bit)]
+        if not mine:
+            continue
+        empty = {(cx, cy) for cx in range(10) for cy in range(10)}
+        empty -= {cell_of(p) for p in mine}
+
+        ranked = sorted(mine, key=lambda p: p.complexity)
+        donors = ranked[-6:]
+        step = max(1, len(ranked) // 48)
+        bases = ranked[::step]
+
+        for base in bases:
+            if not empty:
+                break
+            for notes in voicings(base, donors):
+                cx = axis_cell(norm(score_complexity(notes, base.bars), "c"))
+                rows = sorted(cy for (bx, cy) in empty if bx == cx)
+                for cy in rows:
+                    p = derive(base, notes, (cy + 0.5) / 10.0)
+                    if cell_of(p) in empty:
+                        empty.discard(cell_of(p))
+                        added.append(p)
+    return phrases + added
+
+
+# --------------------------------------------------------------------------
 # quantisation + velocity model
 # --------------------------------------------------------------------------
 def quantise(beat: float) -> tuple[int, int]:
@@ -460,6 +631,7 @@ def write_manifest(phrases: list[Phrase], out: Path, corpus: Path) -> None:
         "phrases": len(phrases),
         "beats": sum(1 for p in phrases if p.kind == KIND_BEAT),
         "fills": sum(1 for p in phrases if p.kind == KIND_FILL),
+        "derived": sum(1 for p in phrases if p.derived),
         "characters": {k: v for k, v in sorted(per_char.items())},
         "articulations": L.NUM_LANES,
         "attribution": [
@@ -480,14 +652,13 @@ def write_manifest(phrases: list[Phrase], out: Path, corpus: Path) -> None:
 def report(phrases: list[Phrase]) -> None:
     beats = [p for p in phrases if p.kind == KIND_BEAT]
     fills = [p for p in phrases if p.kind == KIND_FILL]
-    print(f"phrases: {len(phrases)} ({len(beats)} beats, {len(fills)} fills)")
+    print(f"phrases: {len(phrases)} ({len(beats)} beats, {len(fills)} fills, "
+          f"{sum(1 for p in phrases if p.derived)} re-voiced)")
     for bit, (name, *_rest) in enumerate(CHARACTERS):
         mine = [p for p in beats if p.char_mask & (1 << bit)]
-        cells = {(int(p.complexity * 9.999), int(p.intensity * 9.999))
-                 for p in mine}
+        cells = {cell_of(p) for p in mine}
         print(f"  {name:<12} phrases={len(mine):<5} grid={len(cells)}/100")
-    cells = {(int(p.complexity * 9.999), int(p.intensity * 9.999))
-             for p in beats}
+    cells = {cell_of(p) for p in beats}
     print(f"overall 10x10 cells populated: {len(cells)}/100")
 
 
@@ -500,6 +671,8 @@ def main() -> None:
     args = ap.parse_args()
 
     phrases = build(args.gmd)
+    calibrate(phrases)
+    phrases = densify(phrases)
     write_corpus(phrases, args.out)
     if args.manifest:
         write_manifest(phrases, args.manifest, args.out)
