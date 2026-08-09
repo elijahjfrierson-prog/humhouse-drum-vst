@@ -112,8 +112,16 @@ namespace hhx
             std::unique_ptr<juce::ToggleButton> enable;
             std::unique_ptr<juce::TextButton>   prev, next;
             std::unique_ptr<juce::Label>        name, layers;
-            std::unique_ptr<juce::Slider>       gain, pan;
+            std::unique_ptr<juce::Slider>       gain, pan, tune, damp;
             std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enableAttach;
+        };
+
+        /** One kit-piece group on the performance page: in/out of the take plus
+            a ghost-note state, mirroring Logic's kit-piece selector. */
+        struct LaneGroup
+        {
+            std::unique_ptr<juce::TextButton> in, ghost;
+            std::vector<int>                  lanes;
         };
 
         DrumsXProcessor&  proc;
@@ -132,6 +140,7 @@ namespace hhx
         std::unique_ptr<LabelledKnob> fillsKnob, swingKnob, complexityKnob, intensityKnob;
         std::vector<std::unique_ptr<juce::TextButton>> variationButtons;
         juce::Label       padCaption;
+        std::vector<LaneGroup> laneGroups;
 
         // DETAILS
         std::vector<std::unique_ptr<LabelledKnob>> detailKnobs;

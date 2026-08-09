@@ -144,6 +144,20 @@ namespace hhx
             }
         }
 
+        // Landing zone: the real takes the engine would actually reach for from
+        // here, so the pad never promises a position the corpus cannot play.
+        for (const auto index : proc.getLandingZone (12))
+        {
+            if (index < 0 || index >= proc.getCorpus().numBeats())
+                continue;
+
+            const auto& phrase = proc.getCorpus().beat (index);
+            const float px = r.getX() + juce::jlimit (0.0f, 1.0f, phrase.complexity) * r.getWidth();
+            const float py = r.getBottom() - juce::jlimit (0.0f, 1.0f, phrase.intensity) * r.getHeight();
+            g.setColour (DrumsXLookAndFeel::accent().withAlpha (0.45f));
+            g.drawEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ px, py }), 1.2f);
+        }
+
         const float x = proc.getAPVTS().getRawParameterValue (pid::complexity)->load();
         const float y = proc.getAPVTS().getRawParameterValue (pid::intensity)->load();
         const juce::Point<float> puck { r.getX() + x * r.getWidth(),
@@ -398,9 +412,67 @@ namespace hhx
         addAndMakeVisible (exportButton);
         exportButton.onClick = [this] { exportMenu(); };
 
+        // Kit-piece lane strip: each group can be dropped out of the performance
+        // or pushed down to ghost notes without touching the mix.
+        {
+            struct GroupSpec { const char* name; int first, last; };
+            const GroupSpec specs[]
+            {
+                { "KICK",   LaneKick,      LaneKick },
+                { "SNARE",  LaneSnare,     LaneSnareRoll },
+                { "HATS",   LaneHatClosed, LaneHatBell },
+                { "RIDE",   LaneRideBow,   LaneRideCrash },
+                { "CRASH",  LaneCrashL,    LaneSplash },
+                { "TOMS",   LaneTom1,      LaneTom4 },
+                { "PERC",   LanePerc,      LanePerc }
+            };
+
+            for (const auto& spec : specs)
+            {
+                LaneGroup group;
+                for (int lane = spec.first; lane <= spec.last; ++lane)
+                    group.lanes.push_back (lane);
+
+                const auto lanes = group.lanes;
+                const auto flip = [this, lanes] (bool ghost)
+                {
+                    auto& apvts = proc.getAPVTS();
+                    const auto id = [ghost] (int lane)
+                    { return ghost ? pid::laneGhost (lane) : pid::laneEnable (lane); };
+
+                    bool on = false;
+                    if (const auto* raw = apvts.getRawParameterValue (id (lanes.front())))
+                        on = raw->load() > 0.5f;
+
+                    for (const auto lane : lanes)
+                        if (auto* param = apvts.getParameter (id (lane)))
+                            param->setValueNotifyingHost (on ? 0.0f : 1.0f);
+                };
+
+                group.in = std::make_unique<juce::TextButton> (spec.name);
+                group.in->setClickingTogglesState (false);
+                group.in->onClick = [flip] { flip (false); };
+                addAndMakeVisible (*group.in);
+
+                group.ghost = std::make_unique<juce::TextButton> ("G");
+                group.ghost->setClickingTogglesState (false);
+                group.ghost->onClick = [flip] { flip (true); };
+                addAndMakeVisible (*group.ghost);
+
+                laneGroups.push_back (std::move (group));
+            }
+        }
+
         addAndMakeVisible (scaleBox);
         scaleBox.addItemList ({ "75%", "85%", "100%", "115%", "130%", "150%" }, 1);
-        scaleBox.setSelectedId (3, juce::dontSendNotification);
+        {
+            const float scales[] { 0.75f, 0.85f, 1.0f, 1.15f, 1.3f, 1.5f };
+            int best = 2;
+            for (int i = 0; i < 6; ++i)
+                if (std::abs (scales[i] - proc.getUiScale()) < std::abs (scales[best] - proc.getUiScale()))
+                    best = i;
+            scaleBox.setSelectedId (best + 1, juce::dontSendNotification);
+        }
         scaleBox.onChange = [this]
         {
             static const float scales[] = { 0.75f, 0.85f, 1.0f, 1.15f, 1.30f, 1.50f };
@@ -550,19 +622,23 @@ namespace hhx
             row.layers->setJustificationType (juce::Justification::centred);
             addAndMakeVisible (*row.layers);
 
-            row.gain = std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
-            row.gain->setRange (-24.0, 12.0, 0.1);
-            row.gain->setValue (proc.getKit().getLaneGainDb (lane), juce::dontSendNotification);
-            row.gain->onValueChange = [this, lane, s = row.gain.get()]
-            { proc.getKit().setLaneGainDb (lane, (float) s->getValue()); };
-            addAndMakeVisible (*row.gain);
+            // Every mixer control is an automatable parameter, so the mix is
+            // saved with the project rather than living only in the UI.
+            const auto mixerSlider = [this, &state] (std::unique_ptr<juce::Slider>& slider,
+                                                     const juce::String& paramID,
+                                                     juce::Slider::SliderStyle style)
+            {
+                slider = std::make_unique<juce::Slider> (style, juce::Slider::NoTextBox);
+                addAndMakeVisible (*slider);
+                sliderAttachments.push_back (
+                    std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+                        state, paramID, *slider));
+            };
 
-            row.pan = std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
-            row.pan->setRange (-1.0, 1.0, 0.01);
-            row.pan->setValue (proc.getKit().getLanePan (lane), juce::dontSendNotification);
-            row.pan->onValueChange = [this, lane, s = row.pan.get()]
-            { proc.getKit().setLanePan (lane, (float) s->getValue()); };
-            addAndMakeVisible (*row.pan);
+            mixerSlider (row.gain, pid::laneGain (lane), juce::Slider::LinearHorizontal);
+            mixerSlider (row.pan,  pid::lanePan (lane),  juce::Slider::LinearHorizontal);
+            mixerSlider (row.tune, pid::laneTune (lane), juce::Slider::RotaryHorizontalVerticalDrag);
+            mixerSlider (row.damp, pid::laneDamp (lane), juce::Slider::RotaryHorizontalVerticalDrag);
         }
 
         addAndMakeVisible (loadKitButton);
@@ -654,6 +730,11 @@ namespace hhx
             k->setVisible (main);
         for (auto& b : variationButtons)
             b->setVisible (main);
+        for (auto& group : laneGroups)
+        {
+            group.in->setVisible (main);
+            group.ghost->setVisible (main);
+        }
 
         for (auto& k : detailKnobs)
             k->setVisible (det);
@@ -675,6 +756,8 @@ namespace hhx
             row.layers->setVisible (kitp);
             row.gain->setVisible (kitp);
             row.pan->setVisible (kitp);
+            row.tune->setVisible (kitp);
+            row.damp->setVisible (kitp);
         }
         loadKitButton.setVisible (kitp);
         kitNameLabel.setVisible (kitp);
@@ -697,6 +780,22 @@ namespace hhx
             ensureWindowSize();
         }
 
+        if (page == Page::main)
+        {
+            for (auto& group : laneGroups)
+            {
+                const auto flag = [this] (const juce::String& id)
+                {
+                    const auto* raw = proc.getAPVTS().getRawParameterValue (id);
+                    return raw != nullptr && raw->load() > 0.5f;
+                };
+                group.in->setToggleState (flag (pid::laneEnable (group.lanes.front())),
+                                          juce::dontSendNotification);
+                group.ghost->setToggleState (flag (pid::laneGhost (group.lanes.front())),
+                                            juce::dontSendNotification);
+            }
+        }
+
         if (page == Page::kit)
         {
             kitNameLabel.setText ("KIT - " + proc.getKit().getKitName().toUpperCase(),
@@ -706,7 +805,9 @@ namespace hhx
                 const int layers = proc.getKit().numLayersForLane (lane);
                 const int offset = proc.getKit().getLaneSampleSwitch (lane);
                 kitRows[(std::size_t) lane].layers->setText (
-                    layers == 0 ? "-" : juce::String (offset) + " / " + juce::String (layers),
+                    layers == 0 ? "-"
+                                : juce::String (offset) + " / " + juce::String (layers)
+                                      + "x" + juce::String (proc.getKit().numVariantsForLane (lane, 0)),
                     juce::dontSendNotification);
             }
         }
@@ -801,7 +902,9 @@ namespace hhx
             g.drawText ("PIECE",   juce::Rectangle<int> (74,  96, 90, 14), juce::Justification::centredLeft);
             g.drawText ("SAMPLE",  juce::Rectangle<int> (176, 96, 110, 14), juce::Justification::centredLeft);
             g.drawText ("LEVEL",   juce::Rectangle<int> (330, 96, 90, 14), juce::Justification::centredLeft);
-            g.drawText ("PAN",     juce::Rectangle<int> (530, 96, 90, 14), juce::Justification::centredLeft);
+            g.drawText ("PAN",     juce::Rectangle<int> (490, 96, 90, 14), juce::Justification::centredLeft);
+            g.drawText ("TUNE",    juce::Rectangle<int> (616, 96, 40, 14), juce::Justification::centredLeft);
+            g.drawText ("DAMP",    juce::Rectangle<int> (650, 96, 40, 14), juce::Justification::centredLeft);
         }
     }
 
@@ -843,6 +946,15 @@ namespace hhx
 
         auto bottom = r.removeFromBottom (150);
         phraseView.setBounds (bottom.withTrimmedTop (18));
+
+        auto strip = r.removeFromBottom (34).reduced (0, 4);
+        const int cells = juce::jmax (1, (int) laneGroups.size());
+        for (int i = 0; i < (int) laneGroups.size(); ++i)
+        {
+            auto cell = strip.removeFromLeft (strip.getWidth() / (cells - i)).reduced (3, 0);
+            laneGroups[(std::size_t) i].ghost->setBounds (cell.removeFromRight (26));
+            laneGroups[(std::size_t) i].in->setBounds (cell.withTrimmedRight (2));
+        }
 
         auto right = r.removeFromRight (240);
         auto knobRow = right.removeFromTop (110);
@@ -911,8 +1023,10 @@ namespace hhx
             row.prev->setBounds (176, y + 3, 26, 24);
             row.layers->setBounds (204, y, 60, rowH);
             row.next->setBounds (266, y + 3, 26, 24);
-            row.gain->setBounds (330, y + 4, 180, 22);
-            row.pan->setBounds (530, y + 4, 180, 22);
+            row.gain->setBounds (330, y + 4, 150, 22);
+            row.pan->setBounds (490, y + 4, 120, 22);
+            row.tune->setBounds (620, y + 2, 26, 26);
+            row.damp->setBounds (652, y + 2, 26, 26);
             y += rowH;
         }
 
