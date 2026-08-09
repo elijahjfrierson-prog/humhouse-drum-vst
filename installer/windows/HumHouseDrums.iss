@@ -1,15 +1,15 @@
-; Inno Setup script for HumHouse Drums
-; Produces HumHouse-Drums-Windows-Setup.exe that installs the VST3 into
+; Inno Setup script for HumHouse Drums X
+; Produces HumHouse-Drums-X-Windows-Setup.exe that installs the VST3 into
 ; C:\Program Files\Common Files\VST3\ and the Standalone into Program Files.
 ;
 ; Run from the repository root on Windows after a Release build:
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\HumHouseDrums.iss
 
-#define MyAppName "HumHouse Drums"
+#define MyAppName "HumHouse Drums X"
 #define MyAppVersion "1.6.1"
 #define MyAppPublisher "HumHouse"
 #define MyAppURL "https://github.com/elijahjfrierson-prog/humhouse-drum-vst"
-#define MyAppExeName "HumHouse Drums.exe"
+#define MyAppExeName "HumHouse Drums X.exe"
 
 [Setup]
 AppId={{7A3E9C12-4F1B-4D21-9B0C-HUMHOUSEDRUMS}}
@@ -20,12 +20,12 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
-DefaultDirName={autopf}\HumHouse\HumHouse Drums
+DefaultDirName={autopf}\HumHouse\HumHouse Drums X
 DefaultGroupName=HumHouse
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE.txt
 OutputDir=..\..\
-OutputBaseFilename=HumHouse-Drums-Windows-Setup
+OutputBaseFilename=HumHouse-Drums-X-Windows-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -45,29 +45,29 @@ SetupIconFile=..\..\Resources\Icons\HumHouseAppIcon.ico
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut for HumHouse Drums (Standalone)"; GroupDescription: "Additional shortcuts:"
+Name: "desktopicon"; Description: "Create a &desktop shortcut for HumHouse Drums X (Standalone)"; GroupDescription: "Additional shortcuts:"
 
 [Files]
-; Standalone .exe -> Program Files\HumHouse\HumHouse Drums\
-Source: "..\..\build\AIDrumVST_artefacts\Release\Standalone\HumHouse Drums.exe"; \
+; Standalone .exe -> Program Files\HumHouse\HumHouse Drums X\
+Source: "..\..\build\AIDrumVST_artefacts\Release\Standalone\HumHouse Drums X.exe"; \
   DestDir: "{app}"; Flags: ignoreversion
 
-; VST3 bundle -> C:\Program Files\Common Files\VST3\HumHouse Drums.vst3\
+; VST3 bundle -> C:\Program Files\Common Files\VST3\HumHouse Drums X.vst3\
 ; VST3 is a *folder*; recurse the whole bundle.
-Source: "..\..\build\AIDrumVST_artefacts\Release\VST3\HumHouse Drums.vst3\*"; \
-  DestDir: "{commoncf64}\VST3\HumHouse Drums.vst3"; \
+Source: "..\..\build\AIDrumVST_artefacts\Release\VST3\HumHouse Drums X.vst3\*"; \
+  DestDir: "{commoncf64}\VST3\HumHouse Drums X.vst3"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; EULA in install dir for reference
 Source: "..\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\HumHouse Drums"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\Uninstall HumHouse Drums"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\HumHouse Drums"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\HumHouse Drums X"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Uninstall HumHouse Drums X"; Filename: "{uninstallexe}"
+Name: "{commondesktop}\HumHouse Drums X"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch HumHouse Drums Standalone"; \
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch HumHouse Drums X Standalone"; \
   Flags: nowait postinstall skipifsilent unchecked
 
 [Messages]

@@ -90,11 +90,11 @@ endif()
 # change in lockstep.
 juce_add_plugin(AIDrumVST
     COMPANY_NAME              "HumHouse"
-    BUNDLE_ID                 "com.humhouse.humhousedrums.mk4"
-    PLUGIN_MANUFACTURER_CODE  Hhm4
-    PLUGIN_CODE               Hh30
+    BUNDLE_ID                 "com.humhouse.humhousedrumsx"
+    PLUGIN_MANUFACTURER_CODE  Hhm5
+    PLUGIN_CODE               HhX1
     FORMATS                   ${AIDRUM_FORMATS}
-    PRODUCT_NAME              "HumHouse Drums"
+    PRODUCT_NAME              "HumHouse Drums X"
     IS_SYNTH                  TRUE
     NEEDS_MIDI_INPUT          TRUE
     NEEDS_MIDI_OUTPUT         TRUE
@@ -112,10 +112,10 @@ juce_add_plugin(AIDrumVST
 
 juce_generate_juce_header(AIDrumVST)
 
-# v1.4.0 — bundle the CC0 default drum kit so the plugin makes
-# real-sample sound out of the box, no user setup required.
+# HumHouse Drums X ships exactly one kit: the SoCal rock kit sliced from
+# HumHouse's own recordings by tools/kitx/slice_kit.py.
 file(GLOB AIDRUM_DEFAULT_KIT_FILES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/DefaultKit/*.wav")
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/KitX/*.wav")
 if(AIDRUM_DEFAULT_KIT_FILES)
     juce_add_binary_data(AIDrumBundledKit
         HEADER_NAME BundledKitData.h
@@ -143,25 +143,27 @@ else()
     target_compile_definitions(AIDrumVST PRIVATE AIDRUM_HAS_BRANDING=0)
 endif()
 
+# The compiled human-performance corpus (Magenta Groove MIDI Dataset, CC-BY 4.0,
+# rebuilt by tools/corpusx/build_corpus.py). This is what makes X play real
+# takes instead of computing notes from probability tables.
+juce_add_binary_data(AIDrumCorpus
+    HEADER_NAME CorpusData.h
+    NAMESPACE   CorpusData
+    SOURCES     "${CMAKE_CURRENT_SOURCE_DIR}/content/rock_corpus.hhc")
+target_link_libraries(AIDrumVST PRIVATE AIDrumCorpus)
+
 target_sources(AIDrumVST PRIVATE
-    Source/PluginProcessor.cpp
-    Source/PluginProcessor.h
-    Source/PluginEditor.cpp
-    Source/PluginEditor.h
-    Source/AIBackend.cpp
-    Source/AIBackend.h
-    Source/DrumKit.cpp
-    Source/DrumKit.h
-    Source/DrumSynth.h
-    Source/DrumBusMixer.h
-    Source/SampleKit.h
-    Source/SampleKit.cpp
-    Source/MixerPanel.h
-    Source/MidiPattern.h
-    Source/GothicLookAndFeel.h
-    Source/PatternStrip.h
-    Source/ArrangementStrip.h
-    Source/ManualGrid.h
+    SourceX/DrumsXProcessor.cpp
+    SourceX/DrumsXProcessor.h
+    SourceX/DrumsXEditor.cpp
+    SourceX/DrumsXEditor.h
+    SourceX/DrumsXLookAndFeel.h
+    SourceX/GrooveCorpus.cpp
+    SourceX/GrooveCorpus.h
+    SourceX/PerformanceEngine.cpp
+    SourceX/PerformanceEngine.h
+    SourceX/KitEngine.cpp
+    SourceX/KitEngine.h
 )
 
 target_compile_definitions(AIDrumVST PUBLIC
@@ -182,3 +184,15 @@ target_link_libraries(AIDrumVST PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
 )
+
+# --- Engine tests ------------------------------------------------------------
+# The corpus and performance engine are deliberately JUCE-free so the
+# determinism / fill-variation guarantees can be tested as a plain executable.
+enable_testing()
+add_executable(HHDXEngineTests
+    tests/EngineTests.cpp
+    SourceX/GrooveCorpus.cpp
+    SourceX/PerformanceEngine.cpp)
+target_compile_features(HHDXEngineTests PRIVATE cxx_std_20)
+add_test(NAME HHDXEngineTests
+         COMMAND HHDXEngineTests "${CMAKE_CURRENT_SOURCE_DIR}/content/rock_corpus.hhc")
