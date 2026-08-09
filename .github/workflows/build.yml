@@ -122,6 +122,48 @@ jobs:
                  C:\Program Files\Common Files\VST3\
           '@ | Out-File -FilePath artifacts/README.txt -Encoding ASCII
 
+      # ---------- Prove the installers actually install ----------
+      - name: Verify Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = 'artifacts/HumHouse-Drums-X-Windows-Setup.exe'
+          $len = (Get-Item $exe).Length
+          if ($len -lt 5MB) { throw "installer is only $len bytes" }
+          Start-Process -Wait -FilePath $exe `
+            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'
+          $expected = @(
+            "$env:CommonProgramFiles\VST3\HumHouse Drums X.vst3",
+            "$env:ProgramFiles\HumHouse\HumHouse Drums X\HumHouse Drums X.exe",
+            "$env:ProgramData\HumHouse\Drums X\Content\content_manifest.json"
+          )
+          foreach ($p in $expected) {
+            if (-not (Test-Path -LiteralPath $p)) { throw "installer did not create $p" }
+            Write-Host "installed: $p"
+          }
+          $manifest = Get-Content -LiteralPath "$env:ProgramData\HumHouse\Drums X\Content\content_manifest.json" -Raw | ConvertFrom-Json
+          if (-not $manifest.format_version) { throw 'installed content has no format_version' }
+          Write-Host "installed content format_version $($manifest.format_version)"
+
+      - name: Verify macOS installer
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          pkg="artifacts/HumHouse-Drums-X-macOS.pkg"
+          pkgutil --expand "$pkg" /tmp/pkg_expanded
+          test -f /tmp/pkg_expanded/Resources/license.txt \
+            || { echo "no EULA pane in the installer"; exit 1; }
+          for part in content.pkg vst3.pkg; do
+            test -d "/tmp/pkg_expanded/$part" || { echo "missing $part"; exit 1; }
+          done
+          sudo installer -pkg "$pkg" -target /
+          for p in "/Library/Audio/Plug-Ins/VST3/HumHouse Drums X.vst3" \
+                   "/Library/Application Support/HumHouse/Drums X/Content/content_manifest.json"; do
+            test -e "$p" || { echo "installer did not create $p"; exit 1; }
+            echo "installed: $p"
+          done
+          python3 -c "import json,sys; m=json.load(open('/Library/Application Support/HumHouse/Drums X/Content/content_manifest.json')); print('installed content format_version', m['format_version'])"
+
       # ---------- Linux: copy VST3 bundle + Standalone binary ----------
       - name: Stage artifacts (Linux)
         if: runner.os == 'Linux'
