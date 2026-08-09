@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -35,6 +36,30 @@ namespace
     {
         std::ifstream in (path, std::ios::binary);
         return { std::istreambuf_iterator<char> (in), std::istreambuf_iterator<char>() };
+    }
+
+    /** A stable fingerprint of a render.
+
+        Beats are quantised to MIDI ticks before hashing so the fixture holds
+        across compilers, but any change to what is actually played - a lane, a
+        velocity, a round-robin slot, a note moving by a tick - changes it.
+    */
+    std::uint64_t renderHash (const std::vector<hhx::Hit>& hits)
+    {
+        std::uint64_t h = 0xCBF29CE484222325ull;
+        const auto eat = [&h] (std::uint64_t v)
+        {
+            h = (h ^ v) * 0x100000001B3ull;
+        };
+        for (const auto& hit : hits)
+        {
+            eat ((std::uint64_t) (std::int64_t) std::llround (hit.beat * 960.0));
+            eat (hit.lane);
+            eat (hit.velocity);
+            eat (hit.variant);
+        }
+        eat (hits.size());
+        return h;
     }
 
     bool sameHits (const std::vector<hhx::Hit>& a, const std::vector<hhx::Hit>& b)
@@ -351,6 +376,62 @@ int main (int argc, char** argv)
         const auto ms = std::chrono::duration<double, std::milli> (
                             std::chrono::steady_clock::now() - start).count();
         check (ok && ms < 150.0, "corpus loads in under 150 ms");
+    }
+
+    // 19. Golden renders: fixed settings must keep producing the exact same
+    //     performance. Run with --update-golden after an intended change.
+    {
+        const std::string goldenPath = argc > 2 ? argv[2] : "tests/golden_renders.txt";
+        const bool update = argc > 3 && std::string (argv[3]) == "--update-golden";
+
+        struct Fixture { std::string name; hhx::PerformanceSettings settings; int bars; };
+        std::vector<Fixture> fixtures;
+        {
+            auto rock = s;
+            fixtures.push_back ({ "rock-8", rock, 8 });
+
+            auto loud = s;
+            loud.character = 3;
+            loud.complexity = 0.8f; loud.intensity = 0.9f;
+            loud.fillAmount = 1.0f; loud.fillLengthBars = 2.0f;
+            fixtures.push_back ({ "hard-fills-8", loud, 8 });
+
+            auto waltz = s;
+            waltz.timeSigNum = 3; waltz.timeSigDen = 4; waltz.beatsPerBar = 3.0f;
+            fixtures.push_back ({ "waltz-8", waltz, 8 });
+
+            auto shuffled = s;
+            shuffled.swing = 0.6f; shuffled.halfTime = true; shuffled.humanize = 0.9f;
+            fixtures.push_back ({ "shuffle-halftime-8", shuffled, 8 });
+        }
+
+        std::map<std::string, std::uint64_t> golden;
+        {
+            std::ifstream in (goldenPath);
+            std::string name;
+            std::uint64_t hash = 0;
+            while (in >> name >> hash)
+                golden[name] = hash;
+        }
+
+        if (update)
+        {
+            std::ofstream out (goldenPath, std::ios::trunc);
+            for (const auto& f : fixtures)
+                out << f.name << ' ' << renderHash (engine.renderBars (f.settings, 0, f.bars)) << '\n';
+            std::printf ("note  golden fixtures rewritten: %s\n", goldenPath.c_str());
+        }
+        else
+        {
+            check (golden.size() == fixtures.size(), "golden fixture file is present");
+            for (const auto& f : fixtures)
+            {
+                const auto it = golden.find (f.name);
+                check (it != golden.end()
+                       && it->second == renderHash (engine.renderBars (f.settings, 0, f.bars)),
+                       "golden render matches: " + f.name);
+            }
+        }
     }
 
     std::printf ("\n%s\n", failures == 0 ? "All engine tests passed." : "Engine tests FAILED.");

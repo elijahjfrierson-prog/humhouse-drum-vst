@@ -195,4 +195,40 @@ add_executable(HHDXEngineTests
     SourceX/PerformanceEngine.cpp)
 target_compile_features(HHDXEngineTests PRIVATE cxx_std_20)
 add_test(NAME HHDXEngineTests
-         COMMAND HHDXEngineTests "${CMAKE_CURRENT_SOURCE_DIR}/content/rock_corpus.hhc")
+         COMMAND HHDXEngineTests "${CMAKE_CURRENT_SOURCE_DIR}/content/rock_corpus.hhc"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden_renders.txt")
+
+# --- Processor tests ---------------------------------------------------------
+# Edit preservation, the CPU budget and project-state round-trip need the real
+# processor, so this one links JUCE and the bundled content.
+juce_add_console_app(HHDXProcessorTests PRODUCT_NAME "HHDXProcessorTests")
+juce_generate_juce_header(HHDXProcessorTests)
+target_sources(HHDXProcessorTests PRIVATE
+    tests/ProcessorTests.cpp
+    SourceX/DrumsXProcessor.cpp
+    SourceX/DrumsXEditor.cpp
+    SourceX/GrooveCorpus.cpp
+    SourceX/PerformanceEngine.cpp
+    SourceX/KitEngine.cpp)
+target_compile_definitions(HHDXProcessorTests PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_STANDALONE_APPLICATION=1
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    JucePlugin_Name="HumHouse Drums X"
+    AIDRUM_HAS_BUNDLED_KIT=$<BOOL:${AIDRUM_DEFAULT_KIT_FILES}>
+    AIDRUM_HAS_BRANDING=0)
+target_link_libraries(HHDXProcessorTests PRIVATE
+    AIDrumCorpus
+    juce::juce_audio_utils
+    juce::juce_audio_formats
+    juce::juce_dsp
+    juce::juce_gui_extra
+    PUBLIC
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_warning_flags)
+if(AIDRUM_DEFAULT_KIT_FILES)
+    target_link_libraries(HHDXProcessorTests PRIVATE AIDrumBundledKit)
+endif()
+add_test(NAME HHDXProcessorTests COMMAND HHDXProcessorTests)
