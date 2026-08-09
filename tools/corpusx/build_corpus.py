@@ -40,7 +40,7 @@ import mido
 import lanes as L
 
 MAGIC = b"HHCX"
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 
 BEATS_PER_BAR = 4.0
 GRID = 48                      # grid units per beat (holds 16ths and triplets)
@@ -92,6 +92,8 @@ class Phrase:
     bpm: int
     style: str
     drummer: str
+    sig_num: int = 4
+    sig_den: int = 4
     notes: list[Note] = field(default_factory=list)
     derived: bool = False
     complexity: float = 0.0
@@ -100,6 +102,10 @@ class Phrase:
     fill_styles: int = 0
     swing: float = 0.0
     char_mask: int = 0
+
+    @property
+    def beats_per_bar(self) -> float:
+        return self.sig_num * 4.0 / self.sig_den
 
 
 # --------------------------------------------------------------------------
@@ -178,8 +184,12 @@ def refine_snare(notes: list[Note]) -> list[Note]:
 # --------------------------------------------------------------------------
 # scoring
 # --------------------------------------------------------------------------
-def score_complexity(notes: list[Note], bars: int) -> float:
-    """0..1 from onset density, syncopation and limb independence."""
+def score_complexity(notes: list[Note], bars: float) -> float:
+    """0..1 from onset density, syncopation and limb independence.
+
+    `bars` is measured in 4/4 bars, so an odd metre is scored on the same
+    density scale as everything else.
+    """
     if not notes:
         return 0.0
     span = bars * BEATS_PER_BAR
@@ -310,10 +320,12 @@ def assign_characters(p: Phrase) -> int:
 # slicing
 # --------------------------------------------------------------------------
 def slice_phrases(notes: list[Note], bars: int, bpm: int, style: str,
-                  drummer: str, kind: int, min_notes: int) -> list[Phrase]:
+                  drummer: str, kind: int, min_notes: int,
+                  sig: tuple[int, int] = (4, 4)) -> list[Phrase]:
     if not notes:
         return []
-    span = bars * BEATS_PER_BAR
+    beats_per_bar = sig[0] * 4.0 / sig[1]
+    span = bars * beats_per_bar
     buckets: dict[int, list[Note]] = defaultdict(list)
     for n in notes:
         buckets[int(n.beat // span)].append(n)
@@ -328,8 +340,8 @@ def slice_phrases(notes: list[Note], bars: int, bpm: int, style: str,
         rel = [Note(n.lane, n.beat - idx * span, n.velocity) for n in window]
         rel = [n for n in rel if -0.05 <= n.beat < span]
         p = Phrase(kind=kind, bars=bars, bpm=bpm, style=style, drummer=drummer,
-                   notes=rel)
-        p.complexity = score_complexity(rel, bars)
+                   sig_num=sig[0], sig_den=sig[1], notes=rel)
+        p.complexity = score_complexity(rel, span / BEATS_PER_BAR)
         p.intensity = score_intensity(rel)
         p.swing = measure_swing(rel)
         p.section = classify_section(p)
@@ -346,8 +358,7 @@ def build(gmd_root: Path) -> list[Phrase]:
         style = row["style"]
         if not any(style == s or style.startswith(s) for s in STYLE_PREFIXES):
             continue
-        if row["time_signature"] != "4-4":
-            continue
+        num, den = (int(v) for v in row["time_signature"].split("-"))
         path = gmd_root / row["midi_filename"]
         if not path.exists():
             continue
@@ -357,12 +368,18 @@ def build(gmd_root: Path) -> list[Phrase]:
             continue
         bpm = int(row["bpm"])
         drummer = row["drummer"]
+        sig = (num, den)
+        scale = num * 4.0 / den / BEATS_PER_BAR
         if row["beat_type"] == "fill":
-            phrases += slice_phrases(notes, 1, bpm, style, drummer, KIND_FILL, 5)
-            phrases += slice_phrases(notes, 2, bpm, style, drummer, KIND_FILL, 10)
+            phrases += slice_phrases(notes, 1, bpm, style, drummer, KIND_FILL,
+                                     max(3, int(5 * scale)), sig)
+            phrases += slice_phrases(notes, 2, bpm, style, drummer, KIND_FILL,
+                                     max(6, int(10 * scale)), sig)
         else:
-            phrases += slice_phrases(notes, 2, bpm, style, drummer, KIND_BEAT, 8)
-            phrases += slice_phrases(notes, 4, bpm, style, drummer, KIND_BEAT, 16)
+            phrases += slice_phrases(notes, 2, bpm, style, drummer, KIND_BEAT,
+                                     max(5, int(8 * scale)), sig)
+            phrases += slice_phrases(notes, 4, bpm, style, drummer, KIND_BEAT,
+                                     max(10, int(16 * scale)), sig)
     return phrases
 
 
@@ -490,8 +507,9 @@ def derive(base: Phrase, notes: list[Note], want_i: float) -> Phrase:
     notes = hit_intensity(sorted(notes, key=lambda n: n.beat),
                           denorm(want_i, "i"))
     p = Phrase(base.kind, base.bars, base.bpm, base.style, base.drummer,
-               notes, True)
-    p.complexity = norm(score_complexity(notes, p.bars), "c")
+               base.sig_num, base.sig_den, notes, True)
+    p.complexity = norm(score_complexity(notes, p.bars * p.beats_per_bar
+                                                  / BEATS_PER_BAR), "c")
     p.intensity = norm(score_intensity(notes), "i")
     p.swing = measure_swing(notes)
     p.section = base.section
@@ -526,7 +544,8 @@ def densify(phrases: list[Phrase]) -> list[Phrase]:
             if not empty:
                 break
             for notes in voicings(base, donors):
-                cx = axis_cell(norm(score_complexity(notes, base.bars), "c"))
+                cx = axis_cell(norm(score_complexity(
+                    notes, base.bars * base.beats_per_bar / BEATS_PER_BAR), "c"))
                 rows = sorted(cy for (bx, cy) in empty if bx == cx)
                 for cy in rows:
                     p = derive(base, notes, (cy + 0.5) / 10.0)
@@ -603,9 +622,11 @@ def write_corpus(phrases: list[Phrase], out: Path) -> None:
             f.write(bytes(row))
         for p in phrases:
             f.write(struct.pack(
-                "<BBBBHBHBBH",
+                "<BBBBBBHBHBBH",
                 p.kind,
                 p.bars,
+                p.sig_num,
+                p.sig_den,
                 int(round(p.complexity * 255)),
                 int(round(p.intensity * 255)),
                 p.bpm,

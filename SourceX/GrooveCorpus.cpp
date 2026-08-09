@@ -10,7 +10,7 @@ namespace hhx
     namespace
     {
         constexpr char          kMagic[4] = { 'H', 'H', 'C', 'X' };
-        constexpr std::uint32_t kVersion  = 2;
+        constexpr std::uint32_t kVersion  = 3;
 
         struct Reader
         {
@@ -234,8 +234,11 @@ namespace hhx
         for (std::uint32_t i = 0; i < count; ++i)
         {
             std::uint8_t  kind = 0, bars = 0, cx = 0, in = 0, section = 0, styles = 0, swing = 0;
+            std::uint8_t  sigNum = 4, sigDen = 4;
             std::uint16_t bpm = 0, charMask = 0, numHits = 0;
-            if (! r.take (&kind, 1) || ! r.take (&bars, 1) || ! r.take (&cx, 1)
+            if (! r.take (&kind, 1) || ! r.take (&bars, 1)
+                || ! r.take (&sigNum, 1) || ! r.take (&sigDen, 1)
+                || ! r.take (&cx, 1)
                 || ! r.take (&in, 1) || ! r.take (&bpm, 2) || ! r.take (&section, 1)
                 || ! r.take (&charMask, 2) || ! r.take (&styles, 1)
                 || ! r.take (&swing, 1) || ! r.take (&numHits, 2))
@@ -244,6 +247,8 @@ namespace hhx
             Phrase phrase;
             phrase.isFill     = kind != 0;
             phrase.bars       = bars;
+            phrase.sigNum     = sigNum > 0 ? sigNum : (std::uint8_t) 4;
+            phrase.sigDen     = sigDen > 0 ? sigDen : (std::uint8_t) 4;
             phrase.bpm        = bpm;
             phrase.complexity = (float) cx / 255.0f;
             phrase.intensity  = (float) in / 255.0f;
@@ -282,7 +287,9 @@ namespace hhx
                                          std::uint16_t charMask,
                                          int   bars,
                                          int   section,
-                                         int   maxResults) const
+                                         int   maxResults,
+                                         int   sigNum,
+                                         int   sigDen) const
     {
         std::vector<int> idx;
         idx.reserve (pool.size());
@@ -313,6 +320,10 @@ namespace hhx
             // Section is a preference, not a filter.
             if (section >= 0 && p.section != (std::uint8_t) section)
                 d += 0.02f;
+            // A take played in the requested metre always beats a 4/4 take
+            // folded into it, but a fold still beats an empty bar.
+            if (sigNum > 0 && (p.sigNum != sigNum || p.sigDen != sigDen))
+                d += 4.0f;
             return d;
         };
 
@@ -331,11 +342,14 @@ namespace hhx
                                                float intensity,
                                                std::uint16_t charMask,
                                                int   bars,
-                                               int   maxResults) const
+                                               int   maxResults,
+                                               int   sigNum,
+                                               int   sigDen) const
     {
         if (beatPhrases.empty())
             return {};
-        return rank (beatPhrases, complexity, intensity, charMask, bars, -1, maxResults);
+        return rank (beatPhrases, complexity, intensity, charMask, bars, -1,
+                     maxResults, sigNum, sigDen);
     }
 
     int GrooveCorpus::pickBeat (float complexity,
@@ -343,7 +357,9 @@ namespace hhx
                                 int   variation,
                                 std::uint16_t charMask,
                                 int   bars,
-                                int   section) const
+                                int   section,
+                                int   sigNum,
+                                int   sigDen) const
     {
         if (beatPhrases.empty())
             return -1;
@@ -351,7 +367,7 @@ namespace hhx
         // 24 nearest real takes form the neighbourhood an XY position can
         // resolve to; the variation index walks that list.
         const auto ranked = rank (beatPhrases, complexity, intensity, charMask,
-                                  bars, section, 24);
+                                  bars, section, 24, sigNum, sigDen);
         if (ranked.empty())
             return -1;
 
@@ -366,7 +382,9 @@ namespace hhx
                                 int   variation,
                                 const std::vector<int>& avoid,
                                 std::uint32_t laneMask,
-                                std::uint8_t  styleMask) const
+                                std::uint8_t  styleMask,
+                                int   sigNum,
+                                int   sigDen) const
     {
         if (fillPhrases.empty())
             return -1;
@@ -374,16 +392,20 @@ namespace hhx
         std::vector<int> candidates;
         candidates.reserve (fillPhrases.size());
 
-        for (int pass = 0; pass < 2 && candidates.empty(); ++pass)
+        // Pass 0 wants the requested style in the requested metre; the later
+        // passes relax the metre, then the style, so a narrow request still
+        // yields a fill.
+        for (int pass = 0; pass < 3 && candidates.empty(); ++pass)
         {
-            // Pass 0 honours the requested style; pass 1 drops it so a narrow
-            // style request still yields a fill.
             for (int i = 0; i < (int) fillPhrases.size(); ++i)
             {
                 const auto& p = fillPhrases[(std::size_t) i];
                 if (p.bars != bars)
                     continue;
-                if (pass == 0 && styleMask != 0 && (p.fillStyles & styleMask) == 0)
+                if (pass == 0 && sigNum > 0
+                    && (p.sigNum != sigNum || p.sigDen != sigDen))
+                    continue;
+                if (pass < 2 && styleMask != 0 && (p.fillStyles & styleMask) == 0)
                     continue;
 
                 int allowed = 0, total = 0;

@@ -34,8 +34,6 @@ namespace hhx
                                GrooveCorpus::kVelocityBuckets - 1);
         }
 
-        constexpr float kSourceBar = 4.0f;   // the corpus is compiled in 4/4
-
         constexpr int kRoundRobins = 4;
 
         int wrap (int value, int size)
@@ -67,7 +65,8 @@ namespace hhx
         if (corpus == nullptr || ! corpus->isLoaded())
             return {};
         return corpus->neighbours (s.complexity, s.intensity, characterMask (s),
-                                   std::max (1, s.phraseBars), maxResults);
+                                   std::max (1, s.phraseBars), maxResults,
+                                   s.timeSigNum, s.timeSigDen);
     }
 
     PerformanceEngine::Sources PerformanceEngine::pickSources (const PerformanceSettings& s,
@@ -79,7 +78,8 @@ namespace hhx
         const int section = sectionAtBar (s, phraseIndex * std::max (1, s.phraseBars));
         const auto ranked = corpus->neighbours (s.complexity, s.intensity,
                                                 characterMask (s),
-                                                std::max (1, s.phraseBars), 12);
+                                                std::max (1, s.phraseBars), 12,
+                                                s.timeSigNum, s.timeSigDen);
         if (ranked.empty())
             return out;
 
@@ -130,7 +130,8 @@ namespace hhx
             const std::uint64_t seed = mix (s.seed ^ mix ((std::uint64_t) idx + 1));
             return corpus->pickFill (s.fillComplexity, s.intensity, bars,
                                      (int) (mix (seed ^ 0xF111ull) % 16u), avoid,
-                                     s.fillLaneMask & s.laneMask, s.fillStyleMask);
+                                     s.fillLaneMask & s.laneMask, s.fillStyleMask,
+                                     s.timeSigNum, s.timeSigDen);
         };
 
         // Recently-used ring buffer: the last few fills are excluded so the
@@ -155,8 +156,9 @@ namespace hhx
         if (fillIdx < 0)
             return;
 
-        const auto& f        = corpus->fill (fillIdx);
-        const float dstBar   = std::max (1.0f, s.beatsPerBar);
+        const auto& f         = corpus->fill (fillIdx);
+        const float dstBar    = std::max (1.0f, s.beatsPerBar);
+        const float kSourceBar = f.sourceBeatsPerBar();
         const bool  halfFill = s.fillLengthBars < 0.75f;
         // A half-bar fill is the tail of a one-bar fill, which is how it is
         // actually played, rather than a squashed whole fill.
@@ -220,10 +222,10 @@ namespace hhx
             return out;
 
         // --- gather, folded onto the target metre -------------------------
-        // The corpus is 4/4. Bars shorter than four quarters drop the tail,
-        // longer bars wrap round to the top of the source bar, which keeps the
-        // backbeat where a drummer would put it in 5/4 or 7/8.
-        const bool  compound = (s.timeSigDen == 8 && s.timeSigNum % 3 == 0);
+        // Takes played in the requested metre are preferred, so most bars need
+        // no folding at all. When only 4/4 material is available, bars shorter
+        // than the source drop the tail and longer bars wrap round to the top
+        // of the source bar, keeping the backbeat where a drummer would put it.
         const float stretch  = s.halfTime || sec.halfTime ? 2.0f : 1.0f;
 
         std::vector<Raw> raw;
@@ -231,7 +233,12 @@ namespace hhx
 
         const auto gather = [&] (const Phrase& phrase, bool wantSkeleton)
         {
-            const int srcBars = std::max (1, phrase.bars);
+            const int   srcBars   = std::max (1, phrase.bars);
+            const float kSourceBar = phrase.sourceBeatsPerBar();
+            // Only a 4/4 take folded into a compound metre needs its grid
+            // re-read as triplets; a take actually played in 6/8 already is.
+            const bool  compound  = s.timeSigDen == 8 && s.timeSigNum % 3 == 0
+                                    && std::abs (kSourceBar - dstBar) > 0.01f;
             for (int bar = 0; bar < bars; ++bar)
             {
                 const int srcBarIndex = bar % srcBars;

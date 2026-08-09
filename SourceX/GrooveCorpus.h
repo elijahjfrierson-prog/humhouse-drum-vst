@@ -133,7 +133,15 @@ namespace hhx
         std::uint16_t charMask   = 0;
         std::uint8_t  section    = SectionVerse;
         std::uint8_t  fillStyles = 0;
+        std::uint8_t  sigNum     = 4;
+        std::uint8_t  sigDen     = 4;
         bool          isFill     = false;
+
+        /** The metre the take was actually played in, in quarter notes. */
+        float sourceBeatsPerBar() const
+        {
+            return (float) sigNum * 4.0f / (float) sigDen;
+        }
     };
 
     /** Human-performance groove library.
@@ -171,7 +179,9 @@ namespace hhx
                                      float intensity,
                                      std::uint16_t charMask,
                                      int   bars,
-                                     int   maxResults) const;
+                                     int   maxResults,
+                                     int   sigNum = 0,
+                                     int   sigDen = 0) const;
 
         /** Index of a beat phrase near (complexity, intensity).
 
@@ -185,7 +195,9 @@ namespace hhx
                       int   variation,
                       std::uint16_t charMask,
                       int   bars,
-                      int   section) const;
+                      int   section,
+                      int   sigNum = 0,
+                      int   sigDen = 0) const;
 
         /** Fill selection, filtered by bar length, by the lanes the user
             allows fills to use, and by requested playing style. `avoid` holds
@@ -197,7 +209,9 @@ namespace hhx
                       int   variation,
                       const std::vector<int>& avoid,
                       std::uint32_t laneMask,
-                      std::uint8_t  styleMask) const;
+                      std::uint8_t  styleMask,
+                      int   sigNum = 0,
+                      int   sigDen = 0) const;
 
         /** Learned velocity transition row for a lane: given the bucket of the
             previous stroke, the probability (0..255) of each next bucket.
@@ -211,7 +225,9 @@ namespace hhx
                                std::uint16_t charMask,
                                int   bars,
                                int   section,
-                               int   maxResults) const;
+                               int   maxResults,
+                               int   sigNum,
+                               int   sigDen) const;
 
         std::vector<Phrase>      beatPhrases;
         std::vector<Phrase>      fillPhrases;

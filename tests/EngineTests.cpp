@@ -162,6 +162,33 @@ int main (int argc, char** argv)
         check (! pastBarEnd, "3/4 rendering stays inside the requested bars");
     }
 
+    // 7b. Odd metres are played, not folded: the corpus carries takes that were
+    //     recorded in them and selection prefers those over a folded 4/4 bar.
+    {
+        int native34 = 0, native68 = 0;
+        for (int i = 0; i < corpus.numBeats(); ++i)
+        {
+            const auto& p = corpus.beat (i);
+            native34 += (p.sigNum == 3 && p.sigDen == 4) ? 1 : 0;
+            native68 += (p.sigNum == 6 && p.sigDen == 8) ? 1 : 0;
+        }
+        check (native34 > 0 && native68 > 0, "corpus holds real 3/4 and 6/8 takes");
+
+        // 6/8 and 3/4 are both three quarter notes long, so the metre has to
+        // be matched as a signature, not as a bar length.
+        for (const auto sig : { std::pair { 3, 4 }, std::pair { 6, 8 } })
+        {
+            const auto near = corpus.neighbours (0.5f, 0.5f, 0, 2, 4,
+                                                 sig.first, sig.second);
+            bool allNative = ! near.empty();
+            for (const int i : near)
+                if (corpus.beat (i).sigNum != sig.first
+                    || corpus.beat (i).sigDen != sig.second)
+                    allNative = false;
+            check (allNative, "odd-metre selection lands on takes played in it");
+        }
+    }
+
     // 8. Intensity actually changes how hard the kit is hit.
     {
         auto soft = s, loud = s;
