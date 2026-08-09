@@ -46,6 +46,9 @@ int main()
     proc.prepareToPlay (48000.0, 128);
 
     check (proc.getCorpus().isLoaded(), "the bundled corpus loads inside the plugin");
+        check (proc.getContentDescription().isNotEmpty()
+               && proc.getKit().numLoadedSamples() > 0,
+               "the instrument reports where its content came from");
 
     // 1. Non-destructive editing: 100 randomised control moves must not touch a
     //    single user-entered note.

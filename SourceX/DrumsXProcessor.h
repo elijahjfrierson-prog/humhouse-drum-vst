@@ -167,6 +167,14 @@ namespace hhx
         bool exportArrangementMidi (const juce::File& dest, int numBars) const;
         int  exportPerInstrumentMidi (const juce::File& folder, int numBars) const;
 
+        /** Where installed content lives, or an invalid file when only the
+            bundled fallback content is present. */
+        static juce::File findSharedContentFolder();
+
+        /** Human-readable description of what the instrument is playing from,
+            e.g. "installed content 3" or "bundled content". */
+        juce::String getContentDescription() const { return contentDescription; }
+
         // --- UI state ---------------------------------------------------------
         float getUiScale() const { return uiScale.load(); }
         void  setUiScale (float s) { uiScale.store (juce::jlimit (0.7f, 1.6f, s)); }
@@ -176,6 +184,7 @@ namespace hhx
         void parameterChanged (const juce::String& id, float value) override;
         void handleAsyncUpdate() override;
         void rebuildTimeline();
+        void loadContent();
         std::uint64_t settingsHash() const;
 
         juce::MidiMessageSequence buildSequence (int numBars, int laneFilter) const;
@@ -184,6 +193,8 @@ namespace hhx
         GrooveCorpus       corpus;
         PerformanceEngine  engine;
         KitEngine          kit;
+
+        juce::String contentDescription { "bundled content" };
 
         std::atomic<std::uint64_t> seed { 20260809 };
         std::atomic<float>         uiScale { 1.0f };

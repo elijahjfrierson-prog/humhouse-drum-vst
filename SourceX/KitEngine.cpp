@@ -190,6 +190,18 @@ namespace hhx
         layer.variants[(std::size_t) p.variant].mics[(std::size_t) p.mic] = std::move (s);
     }
 
+    int KitEngine::numLoadedSamples() const
+    {
+        int total = 0;
+        for (const auto& slot : lanes)
+            for (const auto& layer : slot.layers)
+                for (const auto& variant : layer.variants)
+                    for (const auto& sample : variant.mics)
+                        if (sample != nullptr)
+                            ++total;
+        return total;
+    }
+
     void KitEngine::sortLayersByLoudness()
     {
         const auto loudness = [] (const Layer& l) -> float

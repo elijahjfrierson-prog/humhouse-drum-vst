@@ -798,7 +798,8 @@ namespace hhx
 
         if (page == Page::kit)
         {
-            kitNameLabel.setText ("KIT - " + proc.getKit().getKitName().toUpperCase(),
+            kitNameLabel.setText ("KIT - " + proc.getKit().getKitName().toUpperCase()
+                                      + "   (" + proc.getContentDescription() + ")",
                                   juce::dontSendNotification);
             for (int lane = 0; lane < NumLanes; ++lane)
             {

@@ -157,6 +157,11 @@ namespace hhx
     public:
         static constexpr int kVelocityBuckets = 8;
 
+        /** Binary layout the runtime understands. Installed content carries the
+            same number in content_manifest.json so a stale install is rejected
+            instead of half-loaded. */
+        static constexpr std::uint32_t kFormatVersion = 3;
+
         bool loadFromMemory (const void* data, std::size_t numBytes);
 
         bool isLoaded()      const { return loaded; }

@@ -50,6 +50,9 @@ namespace hhx
         juce::String getKitName() const;
         juce::String getKitVersion() const;
 
+        /** Total loaded samples across every lane, layer, round robin and mic. */
+        int numLoadedSamples() const;
+
         int numLayersForLane (int lane) const;
         int numVariantsForLane (int lane, int layer) const;
         bool laneHasMic (int lane, int mic) const;

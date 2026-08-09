@@ -182,14 +182,9 @@ namespace hhx
         : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
           apvts (*this, nullptr, "HHDX", createLayout())
     {
-       #if HHX_HAS_CORPUS
-        int size = 0;
-        if (const auto* data = CorpusData::getNamedResource ("rock_corpus_hhc", size))
-            corpus.loadFromMemory (data, (std::size_t) size);
-       #endif
+        loadContent();
         engine.setCorpus (&corpus);
 
-        kit.loadBundledKit ("SoCalRock");
         kit.setMicBlend (apvts.getRawParameterValue (pid::micBlend)->load());
         kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
         kit.setCrush (apvts.getRawParameterValue (pid::crush)->load());
@@ -263,6 +258,72 @@ namespace hhx
                     feed (v);
         }
         return h;
+    }
+
+    juce::File DrumsXProcessor::findSharedContentFolder()
+    {
+        using SL = juce::File;
+        const juce::String leaf ("HumHouse/Drums X/Content");
+
+        for (const auto& root : { SL::getSpecialLocation (SL::commonApplicationDataDirectory),
+                                  SL::getSpecialLocation (SL::userApplicationDataDirectory) })
+        {
+            const auto folder = root.getChildFile (leaf);
+            if (folder.getChildFile ("content_manifest.json").existsAsFile())
+                return folder;
+        }
+
+        return {};
+    }
+
+    void DrumsXProcessor::loadContent()
+    {
+        // Installed content wins over the bundled fallback, but only when its
+        // manifest declares the binary layout this build can actually parse.
+        const auto shared = findSharedContentFolder();
+
+        if (shared != juce::File())
+        {
+            const auto manifest = juce::JSON::parse (shared.getChildFile ("content_manifest.json"));
+            const auto version = (int) manifest.getProperty ("format_version", -1);
+            const auto corpusFile = shared.getChildFile (manifest.getProperty ("corpus", "rock_corpus.hhc")
+                                                                 .toString());
+
+            if (version == (int) GrooveCorpus::kFormatVersion && corpusFile.existsAsFile())
+            {
+                juce::MemoryBlock block;
+                if (corpusFile.loadFileAsData (block)
+                    && corpus.loadFromMemory (block.getData(), block.getSize()))
+                {
+                    contentDescription = "installed content " + juce::String (version);
+                }
+            }
+            else
+            {
+                contentDescription = "bundled content (installed content is version "
+                                   + juce::String (version) + ")";
+            }
+
+            const auto kitFolder = shared.getChildFile ("Kits").getChildFile ("SoCalRock");
+            if (kitFolder.isDirectory() && kit.loadKitFolder (kitFolder) > 0)
+                contentDescription += " + installed kit";
+        }
+
+       #if HHX_HAS_CORPUS
+        if (! corpus.isLoaded())
+        {
+            int size = 0;
+            if (const auto* data = CorpusData::getNamedResource ("rock_corpus_hhc", size))
+                corpus.loadFromMemory (data, (std::size_t) size);
+        }
+       #endif
+
+        if (kit.numLoadedSamples() == 0)
+            kit.loadBundledKit ("SoCalRock");
+
+        kit.setMicBlend (apvts.getRawParameterValue (pid::micBlend)->load());
+        kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
+        kit.setCrush (apvts.getRawParameterValue (pid::crush)->load());
     }
 
     void DrumsXProcessor::rebuildTimeline()

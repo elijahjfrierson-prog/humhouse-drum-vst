@@ -58,6 +58,12 @@ Source: "..\..\build\AIDrumVST_artefacts\Release\VST3\HumHouse Drums X.vst3\*"; 
   DestDir: "{commoncf64}\VST3\HumHouse Drums X.vst3"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Groove corpus + kit content -> shared location, version-checked at load by
+; the plug-in (see DrumsXProcessor::loadContent).
+Source: "..\..\content\*"; \
+  DestDir: "{commonappdata}\HumHouse\Drums X\Content"; \
+  Flags: ignoreversion recursesubdirs createallsubdirs
+
 ; EULA in install dir for reference
 Source: "..\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 

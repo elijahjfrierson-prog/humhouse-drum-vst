@@ -10,7 +10,6 @@ namespace hhx
     namespace
     {
         constexpr char          kMagic[4] = { 'H', 'H', 'C', 'X' };
-        constexpr std::uint32_t kVersion  = 3;
 
         struct Reader
         {
@@ -211,7 +210,7 @@ namespace hhx
         std::uint32_t version = 0, count = 0, numChars = 0;
         if (! r.take (magic, 4) || std::memcmp (magic, kMagic, 4) != 0)
             return false;
-        if (! r.take (&version, 4) || version != kVersion)
+        if (! r.take (&version, 4) || version != GrooveCorpus::kFormatVersion)
             return false;
         if (! r.take (&count, 4) || ! r.take (&numChars, 4))
             return false;

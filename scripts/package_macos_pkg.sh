@@ -50,6 +50,12 @@ fi
 PKGDIR="$STAGE/pkgs"
 mkdir -p "$PKGDIR"
 
+# Groove corpus + kit content go to a shared location that the plug-in
+# version-checks at load (see DrumsXProcessor::loadContent).
+CONTENT_ROOT="$STAGE/content_root/Library/Application Support/HumHouse/Drums X/Content"
+mkdir -p "$CONTENT_ROOT"
+cp -R "$REPO/content/." "$CONTENT_ROOT/"
+
 # v1.6.1-rc.29 — PRE-INSTALL CLEANUP scripts. User reported rc.28
 # crashed FL Studio Mac on plugin load. Root cause is the same
 # class of issue we fixed in rc.24: AU validation cache + plugin
@@ -104,6 +110,13 @@ PREINSTALL_AU
 chmod +x "$AU_SCRIPTS/preinstall"
 
 pkgbuild \
+  --identifier "${BUNDLE_ID}.content" \
+  --version "$VERSION" \
+  --root "$STAGE/content_root" \
+  --install-location "/" \
+  "$PKGDIR/content.pkg"
+
+pkgbuild \
   --identifier "${BUNDLE_ID}.vst3" \
   --version "$VERSION" \
   --root "$STAGE/vst3_root" \
@@ -132,9 +145,13 @@ cat > "$DIST" <<XML
     <conclusion file="conclusion.html" mime-type="text/html"/>
     <options    customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
     <choices-outline>
+        <line choice="content"/>
         <line choice="vst3"/>
 $( [[ -f "$PKGDIR/au.pkg" ]] && echo '        <line choice="au"/>' )
     </choices-outline>
+    <choice id="content" title="Groove Content" visible="true" start_selected="true" enabled="false" selected="true">
+        <pkg-ref id="${BUNDLE_ID}.content"/>
+    </choice>
     <choice id="vst3" title="VST3 Plug-in" visible="true" start_selected="true">
         <pkg-ref id="${BUNDLE_ID}.vst3"/>
     </choice>
@@ -144,6 +161,7 @@ $( [[ -f "$PKGDIR/au.pkg" ]] && cat <<CH
     </choice>
 CH
 )
+    <pkg-ref id="${BUNDLE_ID}.content" version="$VERSION" onConclusion="none">content.pkg</pkg-ref>
     <pkg-ref id="${BUNDLE_ID}.vst3" version="$VERSION" onConclusion="none">vst3.pkg</pkg-ref>
 $( [[ -f "$PKGDIR/au.pkg" ]] && echo "    <pkg-ref id=\"${BUNDLE_ID}.au\" version=\"$VERSION\" onConclusion=\"none\">au.pkg</pkg-ref>" )
 </installer-gui-script>
@@ -164,6 +182,8 @@ every supported DAW can find them automatically:</p>
       <small>FL Studio, Ableton, Reaper, Cubase, Studio One, Bitwig&hellip;</small></li>
   <li><b>Audio Unit</b> &rarr; /Library/Audio/Plug-Ins/Components/<br/>
       <small>Logic Pro, GarageBand, MainStage</small></li>
+  <li><b>Groove content</b> &rarr; /Library/Application Support/HumHouse/Drums X/Content<br/>
+      <small>Shared by every plug-in format and version-checked at load.</small></li>
 </ul>
 <p>After installation, rescan plug-ins in your DAW. HumHouse Drums X will
 appear as an Instrument.</p>
