@@ -323,7 +323,8 @@ namespace hhx
         std::sort (raw.begin(), raw.end(),
                    [] (const Raw& a, const Raw& b)
                    {
-                       if (a.beat != b.beat) return a.beat < b.beat;
+                       if (a.beat < b.beat) return true;
+                       if (b.beat < a.beat) return false;
                        if (a.lane != b.lane) return a.lane < b.lane;
                        return a.velocity < b.velocity;
                    });

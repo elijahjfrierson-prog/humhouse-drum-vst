@@ -275,7 +275,8 @@ namespace hhx
                        {
                            const float ta = a.gridBeat() + a.devBeats();
                            const float tb = b.gridBeat() + b.devBeats();
-                           if (ta != tb)      return ta < tb;
+                           if (ta < tb) return true;
+                           if (tb < ta) return false;
                            if (a.lane != b.lane) return a.lane < b.lane;
                            return a.velocity < b.velocity;
                        });
