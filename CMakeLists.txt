@@ -234,3 +234,39 @@ if(AIDRUM_DEFAULT_KIT_FILES)
     target_link_libraries(HHDXProcessorTests PRIVATE AIDrumBundledKit)
 endif()
 add_test(NAME HHDXProcessorTests COMMAND HHDXProcessorTests)
+
+# --- Soak test ---------------------------------------------------------------
+# An hour of offline playback with the controls moving: renders far faster than
+# real time, so it is cheap enough to keep in CI.
+juce_add_console_app(HHDXSoakTest PRODUCT_NAME "HHDXSoakTest")
+juce_generate_juce_header(HHDXSoakTest)
+target_sources(HHDXSoakTest PRIVATE
+    tests/SoakTest.cpp
+    SourceX/DrumsXProcessor.cpp
+    SourceX/DrumsXEditor.cpp
+    SourceX/GrooveCorpus.cpp
+    SourceX/PerformanceEngine.cpp
+    SourceX/KitEngine.cpp)
+target_compile_definitions(HHDXSoakTest PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_STANDALONE_APPLICATION=1
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    JucePlugin_Name="HumHouse Drums X"
+    AIDRUM_HAS_BUNDLED_KIT=$<BOOL:${AIDRUM_DEFAULT_KIT_FILES}>
+    AIDRUM_HAS_BRANDING=0)
+target_link_libraries(HHDXSoakTest PRIVATE
+    AIDrumCorpus
+    juce::juce_audio_utils
+    juce::juce_audio_formats
+    juce::juce_dsp
+    juce::juce_gui_extra
+    PUBLIC
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_warning_flags)
+if(AIDRUM_DEFAULT_KIT_FILES)
+    target_link_libraries(HHDXSoakTest PRIVATE AIDrumBundledKit)
+endif()
+add_test(NAME HHDXSoakTest COMMAND HHDXSoakTest 60)
+set_tests_properties(HHDXSoakTest PROPERTIES TIMEOUT 1800)
