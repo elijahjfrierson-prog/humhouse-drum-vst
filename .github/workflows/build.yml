@@ -56,8 +56,10 @@ jobs:
         if: runner.os == 'Windows'
         run: cmake -S . -B build -A x64
 
+      # Three targets each compile the whole of JUCE; an unbounded -j runs the
+      # hosted runners out of memory (cc1plus killed), so cap the job count.
       - name: Build
-        run: cmake --build build --config Release -j
+        run: cmake --build build --config Release --parallel 2
 
       - name: Engine tests
         run: ctest --test-dir build -C Release --output-on-failure
