@@ -41,6 +41,7 @@ namespace hhx
         slider.getProperties().set ("bipolar", bipolar);
         slider.setDoubleClickReturnValue (true, state.getParameter (paramID) != nullptr
                                                 ? state.getParameter (paramID)->getDefaultValue() : 0.5);
+        slider.onValueChange = [this] { repaint(); };
         addAndMakeVisible (slider);
         attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, paramID, slider);
     }
@@ -173,10 +174,19 @@ namespace hhx
 
     void PhraseView::timerCallback()
     {
+        bool needsRepaint = proc.isPlaying();
+
         if (auto tl = proc.getTimeline())
+        {
             if (tl->hash != lastHash)
+            {
                 lastHash = tl->hash;
-        repaint();
+                needsRepaint = true;
+            }
+        }
+
+        if (needsRepaint)
+            repaint();
     }
 
     void PhraseView::paint (juce::Graphics& g)
@@ -592,10 +602,32 @@ namespace hhx
 
     void DrumsXEditor::applyScale()
     {
-        const float s = proc.getUiScale();
-        setSize (juce::roundToInt (kBaseWidth * s), juce::roundToInt (kBaseHeight * s));
+        const float s = juce::jlimit (0.5f, 2.0f, proc.getUiScale());
+
         setTransform (juce::AffineTransform::scale (s));
+
+        // The host/standalone window only follows us when our bounds actually
+        // change, so nudge the size when the transform is the only difference.
+        if (getWidth() == kBaseWidth && getHeight() == kBaseHeight)
+            setSize (kBaseWidth, kBaseHeight - 1);
+
         setSize (kBaseWidth, kBaseHeight);
+    }
+
+    void DrumsXEditor::ensureWindowSize()
+    {
+        auto* top = getTopLevelComponent();
+        if (top == nullptr || top == this)
+            return;
+
+        const float s = juce::jlimit (0.5f, 2.0f, proc.getUiScale());
+        const int wantW = juce::roundToInt (kBaseWidth  * s);
+        const int wantH = juce::roundToInt (kBaseHeight * s);
+
+        // Some window managers hand back a collapsed frame if they answer the
+        // first resize request before the editor exists; re-apply if so.
+        if (top->getWidth() < wantW / 2 || top->getHeight() < wantH / 2)
+            applyScale();
     }
 
     void DrumsXEditor::setPage (Page p)
@@ -651,16 +683,22 @@ namespace hhx
         playButton.setToggleState (proc.isPlaying(), juce::dontSendNotification);
         playButton.setButtonText (proc.isPlaying() ? "STOP" : "PLAY");
 
+        if (startupChecks > 0)
+        {
+            --startupChecks;
+            ensureWindowSize();
+        }
+
         if (page == Page::kit)
         {
-            kitNameLabel.setText ("KIT — " + proc.getKit().getKitName().toUpperCase(),
+            kitNameLabel.setText ("KIT - " + proc.getKit().getKitName().toUpperCase(),
                                   juce::dontSendNotification);
             for (int lane = 0; lane < NumLanes; ++lane)
             {
                 const int layers = proc.getKit().numLayersForLane (lane);
                 const int offset = proc.getKit().getLaneSampleSwitch (lane);
                 kitRows[(std::size_t) lane].layers->setText (
-                    layers == 0 ? "—" : juce::String (offset) + " / " + juce::String (layers),
+                    layers == 0 ? "-" : juce::String (offset) + " / " + juce::String (layers),
                     juce::dontSendNotification);
             }
         }
@@ -669,11 +707,11 @@ namespace hhx
     void DrumsXEditor::exportMenu()
     {
         juce::PopupMenu m;
-        m.addItem (1, "Export 8 bars…");
-        m.addItem (2, "Export 16 bars…");
-        m.addItem (3, "Export 32 bars…");
+        m.addItem (1, "Export 8 bars...");
+        m.addItem (2, "Export 16 bars...");
+        m.addItem (3, "Export 32 bars...");
         m.addSeparator();
-        m.addItem (4, "Export per-instrument MIDI (16 bars)…");
+        m.addItem (4, "Export per-instrument MIDI (16 bars)...");
 
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (exportButton),
                          [this] (int result)
@@ -738,6 +776,13 @@ namespace hhx
         {
             drawPanel (g, juce::Rectangle<int> (16, 70, getWidth() - 32, 150), "Feel & Fills");
             drawPanel (g, juce::Rectangle<int> (16, 230, getWidth() - 32, 110), "Metre & Tempo");
+
+            g.setColour (DrumsXLookAndFeel::textDim());
+            g.setFont (uiFont (10.5f, true));
+            g.drawText ("TIME SIG",   juce::Rectangle<int> (150, 240, 120, 13), juce::Justification::centredLeft);
+            g.drawText ("TEMPO",      juce::Rectangle<int> (330, 240, 120, 13), juce::Justification::centredLeft);
+            g.drawText ("BPM",        juce::Rectangle<int> (478, 240, 120, 13), juce::Justification::centredLeft);
+            g.drawText ("SWING GRID", juce::Rectangle<int> (736, 240, 120, 13), juce::Justification::centredLeft);
         }
         else
         {
@@ -830,20 +875,16 @@ namespace hhx
         fillCol.removeFromTop (8);
         phraseBarsBox.setBounds (fillCol.removeFromTop (26));
 
-        auto metre = juce::Rectangle<int> (28, 252, getWidth() - 56, 76);
-        auto col = metre.removeFromLeft (200);
-        timeSigNumBox.setBounds (col.removeFromTop (26).removeFromLeft (86));
-        timeSigDenBox.setBounds (col.removeFromTop (0).withY (252).withHeight (26).withX (128).withWidth (72));
-        timeSigDenBox.setBounds (juce::Rectangle<int> (124, 252, 72, 26));
+        timeSigNumBox.setBounds (juce::Rectangle<int> (150, 258, 84, 26));
+        timeSigDenBox.setBounds (juce::Rectangle<int> (240, 258, 72, 26));
+        tempoModeBox.setBounds (juce::Rectangle<int> (330, 258, 130, 26));
+        bpmSlider.setBounds     (juce::Rectangle<int> (478, 258, 240, 26));
+        swingGridBox.setBounds  (juce::Rectangle<int> (736, 258, 80, 26));
 
-        tempoModeBox.setBounds (juce::Rectangle<int> (220, 252, 130, 26));
-        bpmSlider.setBounds (juce::Rectangle<int> (362, 252, 260, 26));
-        swingGridBox.setBounds (juce::Rectangle<int> (640, 252, 80, 26));
-
-        rideToggle.setBounds (juce::Rectangle<int> (28, 292, 200, 24));
-        halfTimeToggle.setBounds (juce::Rectangle<int> (232, 292, 150, 24));
-        manualToggle.setBounds (juce::Rectangle<int> (392, 292, 160, 24));
-        clearManualButton.setBounds (juce::Rectangle<int> (560, 292, 72, 24));
+        rideToggle.setBounds (juce::Rectangle<int> (28, 296, 200, 24));
+        halfTimeToggle.setBounds (juce::Rectangle<int> (232, 296, 150, 24));
+        manualToggle.setBounds (juce::Rectangle<int> (392, 296, 160, 24));
+        clearManualButton.setBounds (juce::Rectangle<int> (560, 296, 72, 24));
 
         manualGrid.setBounds (16, 348, getWidth() - 32, getHeight() - 364);
     }

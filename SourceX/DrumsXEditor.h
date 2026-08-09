@@ -105,6 +105,7 @@ namespace hhx
         void timerCallback() override;
         void exportMenu();
         void applyScale();
+        void ensureWindowSize();
 
         struct KitRow
         {
@@ -144,10 +145,11 @@ namespace hhx
 
         // KIT
         std::array<KitRow, NumLanes> kitRows;
-        juce::TextButton  loadKitButton { "LOAD KIT FOLDER…" };
+        juce::TextButton  loadKitButton { "LOAD KIT FOLDER..." };
         juce::Label       kitNameLabel;
         std::unique_ptr<LabelledKnob> outputKnob;
         std::unique_ptr<juce::FileChooser> chooser;
+        int startupChecks = 16;
 
         std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>> comboAttachments;
         std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>   buttonAttachments;

@@ -21,12 +21,12 @@ namespace hhx
         // corpus, not a different note generator — exactly how Logic's
         // drummers differ from one another.
         static const std::vector<Character> c {
-            { "Ethan  — Pop Rock",     0.35f, 0.45f, 0.06f, 0.55f, 0.10f, false },
-            { "Nikki  — Retro Rock",   0.45f, 0.50f, 0.18f, 0.70f, 0.05f, false },
-            { "Jesse  — Hard Rock",    0.55f, 0.78f, 0.00f, 0.35f, 0.20f, false },
-            { "Max    — Punk Rock",    0.72f, 0.90f, 0.00f, 0.20f, 0.35f, false },
-            { "Logan  — Garage Rock",  0.60f, 0.62f, 0.10f, 0.60f, 0.25f, false },
-            { "Darcy  — Ride Groove",  0.40f, 0.55f, 0.12f, 0.50f, 0.00f, true  },
+            { "Ethan  -  Pop Rock",    0.35f, 0.45f, 0.06f, 0.55f, 0.10f, false },
+            { "Nikki  -  Retro Rock",  0.45f, 0.50f, 0.18f, 0.70f, 0.05f, false },
+            { "Jesse  -  Hard Rock",   0.55f, 0.78f, 0.00f, 0.35f, 0.20f, false },
+            { "Max    -  Punk Rock",   0.72f, 0.90f, 0.00f, 0.20f, 0.35f, false },
+            { "Logan  -  Garage Rock", 0.60f, 0.62f, 0.10f, 0.60f, 0.25f, false },
+            { "Darcy  -  Ride Groove", 0.40f, 0.55f, 0.12f, 0.50f, 0.00f, true  },
         };
         return c;
     }
