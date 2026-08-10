@@ -318,6 +318,7 @@ namespace hhx
             mix ((std::uint32_t) sec.section);
             mix ((std::uint32_t) juce::roundToInt (sec.complexity * 1000.0f));
             mix ((std::uint32_t) juce::roundToInt (sec.intensity  * 1000.0f));
+            mix ((std::uint32_t) juce::roundToInt (sec.velocity   * 1000.0f));
             mix ((std::uint32_t) juce::roundToInt (sec.fillAmount * 1000.0f));
             mix ((std::uint32_t) juce::roundToInt (sec.swing      * 1000.0f));
             mix ((std::uint32_t) (sec.halfTime ? 1 : 0));
@@ -369,8 +370,8 @@ namespace hhx
                         r.reduced (8.0f, 4.0f).withTrimmedTop (17.0f).removeFromTop (13.0f).toNearestInt(),
                         juce::Justification::centredLeft, false);
 
-            // Intensity and complexity, so the shape of the song is readable
-            // without clicking through every block.
+            // How hard the block is played and how busy it is, so the shape of
+            // the song is readable without clicking through every block.
             const auto meters = r.reduced (8.0f, 6.0f).removeFromBottom (12.0f);
             const auto drawMeter = [&] (juce::Rectangle<float> m, float v, juce::Colour c)
             {
@@ -379,7 +380,7 @@ namespace hhx
                 g.setColour (c);
                 g.fillRoundedRectangle (m.withWidth (juce::jmax (2.0f, m.getWidth() * v)), 2.0f);
             };
-            drawMeter (meters.withHeight (4.0f), sec.intensity, DrumsXLookAndFeel::accent());
+            drawMeter (meters.withHeight (4.0f), sec.velocity, DrumsXLookAndFeel::accent());
             drawMeter (meters.withHeight (4.0f).translated (0.0f, 7.0f), sec.complexity,
                        DrumsXLookAndFeel::accent().withAlpha (0.55f));
             startBar += std::max (1, sec.numBars);
@@ -465,34 +466,93 @@ namespace hhx
 
     void ManualPatternGrid::mouseDown (const juce::MouseEvent& e)
     {
+        gestureLane = gestureStep = -1;
+        adjusting = false;
+
         int lane = 0, step = 0;
         if (! cellAt (e.getPosition(), lane, step))
             return;
-        const bool erase = e.mods.isRightButtonDown() || proc.getManualStep (lane, step) > 0.0f;
-        proc.setManualStep (lane, step, erase ? 0.0f : 0.8f);
+        erasing = e.mods.isRightButtonDown() || proc.getManualStep (lane, step) > 0.0f;
+        gestureLane  = lane;
+        gestureStep  = step;
+        gestureValue = erasing ? 0.0f : 0.8f;
+
+        proc.setManualStep (lane, step, gestureValue);
         repaint();
     }
 
     void ManualPatternGrid::mouseDrag (const juce::MouseEvent& e)
     {
-        int lane = 0, step = 0;
-        if (! cellAt (e.getPosition(), lane, step))
+        if (gestureLane < 0)
             return;
-        if (e.mods.isRightButtonDown())
+
+        int lane = 0, step = 0;
+        const bool inCell   = cellAt (e.getPosition(), lane, step);
+        const bool sameCell = ! inCell || (lane == gestureLane && step == gestureStep);
+
+        // A vertical drag that never leaves the clicked cell sets that one
+        // note's velocity, so nudging the mouse cannot place anything else.
+        if (! adjusting && sameCell && ! erasing
+            && std::abs (e.getDistanceFromDragStartY()) >= 6
+            && std::abs (e.getDistanceFromDragStartY()) > std::abs (e.getDistanceFromDragStartX()))
+            adjusting = true;
+
+        if (adjusting)
         {
-            proc.setManualStep (lane, step, 0.0f);
+            const float v = juce::jlimit (0.1f, 1.0f,
+                                          0.8f - (float) e.getDistanceFromDragStartY() / 160.0f);
+            proc.setManualStep (gestureLane, gestureStep, v);
+            repaint();
+            return;
         }
-        else if (proc.getManualStep (lane, step) > 0.0f)
-        {
-            // Vertical drag on a placed step sets its velocity.
-            const float v = juce::jlimit (0.1f, 1.0f, 0.8f - (float) e.getDistanceFromDragStartY() / 120.0f);
-            proc.setManualStep (lane, step, v);
-        }
-        else
-        {
-            proc.setManualStep (lane, step, 0.8f);
-        }
+
+        if (sameCell)
+            return;
+
+        // The pointer genuinely travelled to another cell: paint that one, in
+        // the mode the gesture started in, and continue from there.
+        proc.setManualStep (lane, step, gestureValue);
+        gestureLane = lane;
+        gestureStep = step;
         repaint();
+    }
+
+    void ManualPatternGrid::mouseUp (const juce::MouseEvent&)
+    {
+        gestureLane = gestureStep = -1;
+        adjusting = false;
+    }
+
+    //==============================================================================
+    MidiDragButton::MidiDragButton (DrumsXProcessor& p, const juce::String& caption)
+        : juce::TextButton (caption), proc (p)
+    {
+    }
+
+    void MidiDragButton::mouseDrag (const juce::MouseEvent& e)
+    {
+        if (dragging || e.getDistanceFromDragStart() < 12)
+            return juce::TextButton::mouseDrag (e);
+
+        // Written somewhere stable rather than to a TemporaryFile: the host
+        // reads the path after the drag returns, so the file has to outlive
+        // this call.
+        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("HumHouse Drums X");
+        folder.createDirectory();
+
+        dragFile = folder.getChildFile ("HumHouse Drums X.mid");
+        if (! proc.exportArrangementMidi (dragFile, proc.totalArrangementBars()))
+            return;
+
+        dragging = true;
+        juce::DragAndDropContainer::performExternalDragDropOfFiles (
+            juce::StringArray (dragFile.getFullPathName()), false, this,
+            [safe = juce::Component::SafePointer<MidiDragButton> (this)]
+            {
+                if (safe != nullptr)
+                    safe->dragging = false;
+            });
     }
 
     void ManualPatternGrid::paint (juce::Graphics& g)
@@ -582,6 +642,7 @@ namespace hhx
     //==============================================================================
     DrumsXEditor::DrumsXEditor (DrumsXProcessor& p)
         : AudioProcessorEditor (&p), proc (p),
+          exportButton (p, "EXPORT MIDI"),
           pad (p), phraseView (p), arrangement (p), manualGrid (p)
     {
         setLookAndFeel (&lnf);
@@ -609,6 +670,7 @@ namespace hhx
 
         addAndMakeVisible (exportButton);
         exportButton.onClick = [this] { exportMenu(); };
+        exportButton.setTooltip ("Click to export, or drag this straight into the host");
 
         // Kit-piece lane strip: each group can be dropped out of the performance
         // or pushed down to ghost notes without touching the mix.
@@ -702,12 +764,19 @@ namespace hhx
         arrangementView.setScrollBarsShown (false, true, false, true);
         addAndMakeVisible (arrangementView);
 
-        complexityKnob = std::make_unique<LabelledKnob> (state, pid::complexity, "Complexity");
-        intensityKnob  = std::make_unique<LabelledKnob> (state, pid::intensity,  "Intensity");
-        fillsKnob      = std::make_unique<LabelledKnob> (state, pid::fillAmount, "Fills");
-        swingKnob      = std::make_unique<LabelledKnob> (state, pid::swing,      "Swing");
-        for (auto* k : { complexityKnob.get(), intensityKnob.get(), fillsKnob.get(), swingKnob.get() })
+        complexityKnob   = std::make_unique<LabelledKnob> (state, pid::complexity,   "Complexity");
+        intensityKnob    = std::make_unique<LabelledKnob> (state, pid::intensity,    "Loud");
+        // The block's own dynamics, deliberately its own control: the pad
+        // chooses the take, this decides how hard the section is played.
+        sectionLevelKnob = std::make_unique<LabelledKnob> (state, pid::sectionLevel, "Intensity");
+        fillsKnob        = std::make_unique<LabelledKnob> (state, pid::fillAmount,   "Fills");
+        swingKnob        = std::make_unique<LabelledKnob> (state, pid::swing,        "Swing");
+        for (auto* k : { complexityKnob.get(), intensityKnob.get(), sectionLevelKnob.get(),
+                         fillsKnob.get(), swingKnob.get() })
             addAndMakeVisible (*k);
+
+        sectionLevelKnob->slider.setTooltip ("How hard this arrangement block is played. "
+                                             "Independent of the performance pad.");
 
         // Variation buttons: two rows of four, kick/snare on top, cymbals below.
         for (int group = 0; group < 2; ++group)
@@ -943,7 +1012,8 @@ namespace hhx
         pad.setVisible (main);
         phraseView.setVisible (main);
         arrangementView.setVisible (main);
-        for (auto* k : { complexityKnob.get(), intensityKnob.get(), fillsKnob.get(), swingKnob.get() })
+        for (auto* k : { complexityKnob.get(), intensityKnob.get(), sectionLevelKnob.get(),
+                         fillsKnob.get(), swingKnob.get() })
             k->setVisible (main);
         for (auto& b : variationButtons)
             b->setVisible (main);
@@ -1191,14 +1261,26 @@ namespace hhx
         }
 
         auto right = r.removeFromRight (240);
-        auto knobRow = right.removeFromTop (110);
-        const int kw = knobRow.getWidth() / 2;
-        complexityKnob->setBounds (knobRow.removeFromLeft (kw).reduced (6));
-        intensityKnob->setBounds (knobRow.reduced (6));
 
-        auto knobRow2 = right.removeFromTop (110);
-        fillsKnob->setBounds (knobRow2.removeFromLeft (kw).reduced (6));
-        swingKnob->setBounds (knobRow2.reduced (6));
+        // Three rows so the block's own Intensity sits beside the pad's knobs
+        // without pushing the variation buttons off the page.
+        const int rowH = 86;
+        const int kw   = right.getWidth() / 2;
+        LabelledKnob* const rows[3][2]
+        {
+            { complexityKnob.get(),   intensityKnob.get() },
+            { sectionLevelKnob.get(), fillsKnob.get() },
+            { swingKnob.get(),        nullptr }
+        };
+
+        for (const auto& row : rows)
+        {
+            auto area = right.removeFromTop (rowH);
+            auto leftCell = area.removeFromLeft (kw);
+            row[0]->setBounds (leftCell.reduced (6, 4));
+            if (row[1] != nullptr)
+                row[1]->setBounds (area.reduced (6, 4));
+        }
 
         // Variation button rows.
         for (int group = 0; group < 2; ++group)

@@ -49,6 +49,7 @@ namespace hhx
         bool isSectionParameter (const juce::String& id)
         {
             return id == pid::complexity || id == pid::intensity
+                || id == pid::sectionLevel
                 || id == pid::fillAmount || id == pid::swing
                 || id == pid::halfTime
                 || id == pid::variationRhythm || id == pid::variationCymbal;
@@ -84,7 +85,10 @@ namespace hhx
                                                            "Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.45f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::intensity, 1 },
-                                                           "Intensity", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
+                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::sectionLevel, 1 },
+                                                           "Section Intensity", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::fillAmount, 1 },
                                                            "Fills", NormalisableRange<float> (0.0f, 1.0f), 0.35f,
@@ -281,6 +285,7 @@ namespace hhx
                 feed ((double) sec.section);
                 feed ((double) sec.complexity);
                 feed ((double) sec.intensity);
+                feed ((double) sec.velocity);
                 feed ((double) sec.fillAmount);
                 feed ((double) sec.swing);
                 feed (sec.halfTime ? 1.0 : 0.0);
@@ -450,8 +455,9 @@ namespace hhx
         };
 
         PerformanceSettings s;
-        s.complexity     = get (pid::complexity);
-        s.intensity      = get (pid::intensity);
+        s.complexity      = get (pid::complexity);
+        s.intensity       = get (pid::intensity);
+        s.sectionVelocity = get (pid::sectionLevel);
         s.fillAmount     = get (pid::fillAmount);
         s.fillComplexity = get (pid::fillComplexity);
         const int fillLenIdx = (int) get (pid::fillBars);
@@ -528,6 +534,7 @@ namespace hhx
         auto& sec = arrangement[(std::size_t) index];
         sec.complexity      = get (pid::complexity);
         sec.intensity       = get (pid::intensity);
+        sec.velocity        = get (pid::sectionLevel);
         sec.fillAmount      = get (pid::fillAmount);
         sec.swing           = get (pid::swing);
         sec.halfTime        = get (pid::halfTime) > 0.5f;
@@ -552,9 +559,10 @@ namespace hhx
                 p->setValueNotifyingHost (p->convertTo0to1 (v));
         };
 
-        set (pid::complexity, sec.complexity);
-        set (pid::intensity,  sec.intensity);
-        set (pid::fillAmount, sec.fillAmount);
+        set (pid::complexity,   sec.complexity);
+        set (pid::intensity,    sec.intensity);
+        set (pid::sectionLevel, sec.velocity);
+        set (pid::fillAmount,   sec.fillAmount);
         set (pid::swing,      sec.swing);
         set (pid::halfTime,   sec.halfTime ? 1.0f : 0.0f);
         set (pid::variationRhythm, (float) sec.variationRhythm);
@@ -1007,6 +1015,7 @@ namespace hhx
             block.setProperty ("type", sec.section, nullptr);
             block.setProperty ("complexity", sec.complexity, nullptr);
             block.setProperty ("intensity", sec.intensity, nullptr);
+            block.setProperty ("level", sec.velocity, nullptr);
             block.setProperty ("fills", sec.fillAmount, nullptr);
             block.setProperty ("swing", sec.swing, nullptr);
             block.setProperty ("halfTime", sec.halfTime, nullptr);
@@ -1059,6 +1068,9 @@ namespace hhx
                 sec.section         = (int)   block.getProperty ("type", (int) SectionVerse);
                 sec.complexity      = (float) block.getProperty ("complexity", 0.45);
                 sec.intensity       = (float) block.getProperty ("intensity", 0.55);
+                // Sessions saved before the block had its own Intensity knob
+                // keep sounding the same: the pad's loudness becomes its level.
+                sec.velocity        = (float) block.getProperty ("level", sec.intensity);
                 sec.fillAmount      = (float) block.getProperty ("fills", 0.35);
                 sec.swing           = (float) block.getProperty ("swing", 0.0);
                 sec.halfTime        = (bool)  block.getProperty ("halfTime", false);

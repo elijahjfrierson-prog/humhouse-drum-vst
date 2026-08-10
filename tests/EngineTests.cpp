@@ -341,9 +341,9 @@ int main (int argc, char** argv)
     //      one leaves every other bar of the song bit-identical.
     {
         auto song = s;
-        song.arrangement = { { 1, 8, hhx::SectionVerse,  0.2f, 0.25f, 0.0f, 0.0f, false, 0, 0 },
-                             { 2, 8, hhx::SectionChorus, 0.9f, 0.95f, 0.8f, 0.0f, false, 0, 0 },
-                             { 3, 8, hhx::SectionVerse,  0.2f, 0.25f, 0.0f, 0.0f, false, 0, 0 } };
+        song.arrangement = { { 1, 8, hhx::SectionVerse,  0.2f, 0.25f, 0.25f, 0.0f, 0.0f, false, 0, 0 },
+                             { 2, 8, hhx::SectionChorus, 0.9f, 0.95f, 0.95f, 0.8f, 0.0f, false, 0, 0 },
+                             { 3, 8, hhx::SectionVerse,  0.2f, 0.25f, 0.25f, 0.0f, 0.0f, false, 0, 0 } };
         check (hhx::arrangementBars (song.arrangement) == 24, "the arrangement is as long as its blocks");
         check (engine.sectionAtBar (song, 9) == hhx::SectionChorus,
                "bar 9 falls in the second block");
@@ -367,6 +367,7 @@ int main (int argc, char** argv)
         // Push the middle block only.
         auto edited = song;
         edited.arrangement[1].intensity  = 0.2f;
+        edited.arrangement[1].velocity   = 0.2f;
         edited.arrangement[1].complexity = 0.15f;
         edited.arrangement[1].fillAmount = 0.0f;
         const auto after = engine.renderBars (edited, 0, 24);
@@ -402,15 +403,15 @@ int main (int argc, char** argv)
 
         // Appending never rewrites what came before it: the "+" button is safe.
         auto grown = song;
-        grown.arrangement.push_back ({ 4, 8, hhx::SectionOutro, 0.5f, 0.6f, 0.5f, 0.0f, false, 0, 0 });
+        grown.arrangement.push_back ({ 4, 8, hhx::SectionOutro, 0.5f, 0.6f, 0.6f, 0.5f, 0.0f, false, 0, 0 });
         check (sameHits (before, engine.renderBars (grown, 0, 24)),
                "appending a block leaves the existing song identical");
         check (hhx::arrangementBars (grown.arrangement) == 32, "the appended block extends the song");
 
         // Two blocks with the same settings still play different takes.
         auto twins = s;
-        twins.arrangement = { { 1, 8, hhx::SectionVerse, 0.5f, 0.6f, 0.3f, 0.0f, false, 0, 0 },
-                              { 2, 8, hhx::SectionVerse, 0.5f, 0.6f, 0.3f, 0.0f, false, 0, 0 } };
+        twins.arrangement = { { 1, 8, hhx::SectionVerse, 0.5f, 0.6f, 0.6f, 0.3f, 0.0f, false, 0, 0 },
+                              { 2, 8, hhx::SectionVerse, 0.5f, 0.6f, 0.6f, 0.3f, 0.0f, false, 0, 0 } };
         const auto twinHits = engine.renderBars (twins, 0, 16);
         check (! sameHits (barsOnly (twinHits, 0, 8), barsOnly (twinHits, 8, 16)),
                "identical blocks still play different takes");
@@ -422,9 +423,9 @@ int main (int argc, char** argv)
         // Block lengths the user picks need not divide by the phrase length.
         auto ragged = s;
         ragged.phraseBars  = 4;
-        ragged.arrangement = { { 1, 3,  hhx::SectionVerse,  0.2f, 0.25f, 0.2f, 0.0f, false, 0, 0 },
-                               { 2, 5,  hhx::SectionChorus, 0.9f, 0.95f, 0.6f, 0.0f, false, 0, 0 },
-                               { 3, 7,  hhx::SectionBridge, 0.5f, 0.5f,  0.3f, 0.0f, false, 0, 0 } };
+        ragged.arrangement = { { 1, 3,  hhx::SectionVerse,  0.2f, 0.25f, 0.25f, 0.2f, 0.0f, false, 0, 0 },
+                               { 2, 5,  hhx::SectionChorus, 0.9f, 0.95f, 0.95f, 0.6f, 0.0f, false, 0, 0 },
+                               { 3, 7,  hhx::SectionBridge, 0.5f, 0.5f,  0.5f,  0.3f, 0.0f, false, 0, 0 } };
         const auto raggedHits = engine.renderBars (ragged, 0, 15);
         check (hhx::arrangementBars (ragged.arrangement) == 15
                && ! raggedHits.empty()
@@ -432,6 +433,114 @@ int main (int argc, char** argv)
                "blocks that do not divide by the phrase length still render");
         check (velocityIn (raggedHits, 3, 8) > velocityIn (raggedHits, 0, 3) + 4.0,
                "a block that starts mid-phrase still plays its own dynamics");
+    }
+
+    const auto isCrash = [] (int lane)
+    {
+        return lane == hhx::LaneCrashL || lane == hhx::LaneCrashR
+            || lane == hhx::LaneCrash3 || lane == hhx::LaneChina
+            || lane == hhx::LaneSplash;
+    };
+
+    // 15c. The block's Intensity knob is its own control: it moves how hard
+    //      the section is played without the pad re-picking the take.
+    {
+        const auto meanVel = [] (const std::vector<hhx::Hit>& hits)
+        {
+            double sum = 0.0;
+            for (const auto& h : hits)
+                sum += h.velocity;
+            return hits.empty() ? 0.0 : sum / (double) hits.size();
+        };
+        const auto skeleton = [&] (const std::vector<hhx::Hit>& hits)
+        {
+            std::vector<std::string> out;
+            for (const auto& h : hits)
+                if (! isCrash (h.lane))
+                    out.push_back (std::to_string (h.lane) + "@"
+                                   + std::to_string ((int) (h.beat * 480.0f)));
+            return out;
+        };
+
+        auto quiet = s, loud = s;
+        quiet.sectionVelocity = 0.15f;
+        loud.sectionVelocity  = 0.95f;
+        const auto quietHits = engine.renderBars (quiet, 0, 8);
+        const auto loudHits  = engine.renderBars (loud,  0, 8);
+
+        check (meanVel (loudHits) > meanVel (quietHits) + 8.0,
+               "the block's Intensity knob plays the section harder");
+        check (skeleton (quietHits) == skeleton (loudHits),
+               "Intensity moves dynamics only, it never re-picks the take");
+
+        // The pad, by contrast, is a take chooser.
+        auto padUp = s;
+        padUp.intensity = 0.95f;
+        check (! sameHits (engine.renderBars (s, 0, 8), engine.renderBars (padUp, 0, 8)),
+               "the pad still chooses a different take");
+    }
+
+    // 15d. Density: the pad stays inside what a drummer would actually play,
+    //      instead of reaching for the busiest bars in the corpus.
+    {
+        const auto perBar = [&] (float x, float y)
+        {
+            auto t = s;
+            t.complexity = x;
+            t.intensity  = y;
+            return (double) engine.renderBars (t, 0, 16).size() / 16.0;
+        };
+        const double top = perBar (1.0f, 1.0f);
+        const double mid = perBar (0.5f, 0.5f);
+        const double low = perBar (0.0f, 0.2f);
+
+        check (top <= 26.0, "the top of the pad is still a playable bar");
+        check (mid <= 17.0, "the middle of the pad stays sparse-to-moderate");
+        check (low <= 12.0 && low >= 3.0, "the bottom of the pad plays a simple beat");
+        check (top > mid && mid > low, "the pad gets busier from left to right");
+    }
+
+    // 15e. Crashes arrive with the energy, on landmarks rather than everywhere.
+    {
+        const auto crashes = [&] (float energy)
+        {
+            auto t = s;
+            t.sectionVelocity = energy;
+            int n = 0;
+            for (const auto& h : engine.renderBars (t, 0, 16))
+                if (isCrash (h.lane))
+                    ++n;
+            return n;
+        };
+        const int soft = crashes (0.2f);
+        const int hard = crashes (1.0f);
+        check (hard > soft, "higher intensity brings more crashes");
+        check (hard <= 16 * 4, "crashes still land on landmarks, not on every beat");
+    }
+
+    // 15f. Fills: every block ends with one, and cadences carry them too.
+    {
+        auto t = s;
+        t.phraseBars  = 2;
+        t.fillAmount  = 0.4f;
+        t.arrangement = { { 1, 8, hhx::SectionVerse,  0.4f, 0.5f, 0.5f, 0.4f, 0.0f, false, 0, 0 },
+                          { 2, 8, hhx::SectionChorus, 0.6f, 0.7f, 0.8f, 0.4f, 0.0f, false, 0, 0 } };
+
+        check (engine.phraseEndsWithFill (t, 3), "the block hands over with a fill");
+        check (engine.phraseEndsWithFill (t, 7), "the song's last block ends with a fill");
+
+        int filled = 0;
+        for (int phrase = 0; phrase < 8; ++phrase)
+            filled += engine.phraseEndsWithFill (t, phrase) ? 1 : 0;
+        check (filled >= 2, "fills turn up through the song, not only at the end");
+
+        auto none = t;
+        none.arrangement.clear();
+        none.fillAmount = 0.0f;
+        int stillFilled = 0;
+        for (int phrase = 0; phrase < 8; ++phrase)
+            stillFilled += engine.phraseEndsWithFill (none, phrase) ? 1 : 0;
+        check (stillFilled == 0, "Fills at zero really means no fills");
     }
 
     // 16. Landing zone: the XY position resolves to real neighbouring takes.

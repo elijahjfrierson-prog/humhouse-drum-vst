@@ -23,7 +23,7 @@ namespace
     /** Every automatable control that can plausibly re-render the performance. */
     juce::StringArray performanceParams()
     {
-        juce::StringArray ids { hhx::pid::complexity, hhx::pid::intensity,
+        juce::StringArray ids { hhx::pid::complexity, hhx::pid::intensity, hhx::pid::sectionLevel,
                                 hhx::pid::fillAmount, hhx::pid::fillComplexity,
                                 hhx::pid::fillBars, hhx::pid::fillStyle,
                                 hhx::pid::fillVelVar, hhx::pid::kickVariation,
@@ -191,16 +191,20 @@ int main()
         song.setSelectedSection (7);
         song.getAPVTS().getParameter (hhx::pid::intensity)->setValueNotifyingHost (0.9f);
         song.getAPVTS().getParameter (hhx::pid::complexity)->setValueNotifyingHost (0.85f);
+        song.getAPVTS().getParameter (hhx::pid::sectionLevel)->setValueNotifyingHost (0.7f);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
 
         const auto blocks = song.getArrangement();
         check (std::abs (blocks[7].intensity - 0.9f) < 0.01f
                && std::abs (blocks[7].complexity - 0.85f) < 0.01f,
                "a knob move lands in the selected section");
+        check (std::abs (blocks[7].velocity - 0.7f) < 0.01f,
+               "the section's own Intensity knob lands in that section");
         bool neighboursIntact = true;
         for (std::size_t i = 0; i < blocks.size(); ++i)
             if (i != 7 && (std::abs (blocks[i].intensity - 0.9f) < 0.01f
-                           || std::abs (blocks[i].complexity - 0.85f) < 0.01f))
+                           || std::abs (blocks[i].complexity - 0.85f) < 0.01f
+                           || std::abs (blocks[i].velocity - 0.7f) < 0.01f))
                 neighboursIntact = false;
         check (neighboursIntact, "the other sections keep their own settings");
 
@@ -208,7 +212,9 @@ int main()
         song.setSelectedSection (6);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
         check (std::abs (song.getAPVTS().getRawParameterValue (hhx::pid::intensity)->load()
-                         - blocks[6].intensity) < 0.01f,
+                         - blocks[6].intensity) < 0.01f
+               && std::abs (song.getAPVTS().getRawParameterValue (hhx::pid::sectionLevel)->load()
+                            - blocks[6].velocity) < 0.01f,
                "selecting a section loads its settings onto the knobs");
 
         song.setSectionType (2, hhx::SectionChorus);
@@ -223,7 +229,8 @@ int main()
         const auto restored = reloaded.getArrangement();
         check ((int) restored.size() == 41 && restored[2].numBars == 16
                && restored[2].section == hhx::SectionChorus
-               && std::abs (restored[7].intensity - 0.9f) < 0.01f,
+               && std::abs (restored[7].intensity - 0.9f) < 0.01f
+               && std::abs (restored[7].velocity - 0.7f) < 0.01f,
                "the whole arrangement is saved with the project");
 
         song.removeSection (2);

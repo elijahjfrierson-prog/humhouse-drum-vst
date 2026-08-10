@@ -16,6 +16,7 @@ namespace hhx
     {
         inline constexpr const char* complexity     = "complexity";
         inline constexpr const char* intensity      = "intensity";
+        inline constexpr const char* sectionLevel   = "sectionLevel";
         inline constexpr const char* fillAmount     = "fillAmount";
         inline constexpr const char* fillComplexity = "fillComplexity";
         inline constexpr const char* fillBars       = "fillBars";

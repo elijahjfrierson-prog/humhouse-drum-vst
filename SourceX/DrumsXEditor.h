@@ -95,7 +95,11 @@ namespace hhx
     };
 
     /** The manual step editor: click to place, drag up/down for velocity,
-        right-click to erase. Never overwritten by the generator. */
+        right-click to erase. Never overwritten by the generator.
+
+        A gesture stays on the cell it started in unless the pointer really
+        travels to another one, and it never writes the same cell twice, so a
+        small hand movement no longer sprays notes across the kit. */
     class ManualPatternGrid : public juce::Component
     {
     public:
@@ -104,10 +108,32 @@ namespace hhx
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
 
     private:
         bool cellAt (juce::Point<int> p, int& lane, int& step) const;
+
         DrumsXProcessor& proc;
+        int   gestureLane = -1, gestureStep = -1;
+        bool  erasing = false;
+        bool  adjusting = false;          // dragging one note's velocity
+        float gestureValue = 0.0f;
+    };
+
+    /** Drag this out of the plugin to drop the arrangement into the host as a
+        MIDI file, the way a Logic drummer region drags out. Clicking it still
+        opens the export menu. */
+    class MidiDragButton : public juce::TextButton
+    {
+    public:
+        MidiDragButton (DrumsXProcessor&, const juce::String& text);
+
+        void mouseDrag (const juce::MouseEvent&) override;
+
+    private:
+        DrumsXProcessor& proc;
+        juce::File dragFile;              // outlives the drag for the host
+        bool       dragging = false;
     };
 
     //==============================================================================
@@ -154,7 +180,8 @@ namespace hhx
         DrumsXLookAndFeel lnf;
 
         juce::TextButton  mainTab { "MAIN" }, detailsTab { "DETAILS" }, kitTab { "KIT" };
-        juce::TextButton  playButton { "PLAY" }, regenButton { "REGENERATE" }, exportButton { "EXPORT MIDI" };
+        juce::TextButton  playButton { "PLAY" }, regenButton { "REGENERATE" };
+        MidiDragButton    exportButton;
         juce::ComboBox    scaleBox;
         Page              page = Page::main;
 
@@ -166,6 +193,7 @@ namespace hhx
         ArrangementStrip  arrangement;
         juce::Viewport    arrangementView;
         std::unique_ptr<LabelledKnob> fillsKnob, swingKnob, complexityKnob, intensityKnob;
+        std::unique_ptr<LabelledKnob> sectionLevelKnob;
         std::vector<std::unique_ptr<juce::TextButton>> variationButtons;
         juce::Label       padCaption;
         std::vector<LaneGroup> laneGroups;
