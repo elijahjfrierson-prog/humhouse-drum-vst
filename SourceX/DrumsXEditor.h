@@ -68,6 +68,31 @@ namespace hhx
         std::uint64_t lastHash = 0;
     };
 
+    /** Logic's arrangement track. One block per stretch of the song, and a "+"
+        on the end that keeps appending for as long as the song needs. Clicking
+        a block selects it; the performance knobs then edit only that block. */
+    class ArrangementStrip : public juce::Component,
+                             private juce::Timer
+    {
+    public:
+        explicit ArrangementStrip (DrumsXProcessor&);
+
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+
+        /** How wide the strip needs to be inside its viewport. */
+        int preferredWidth() const;
+
+    private:
+        void timerCallback() override;
+        juce::Rectangle<int> blockBounds (int index) const;
+        juce::Rectangle<int> plusBounds() const;
+        void showBlockMenu (int index);
+
+        DrumsXProcessor& proc;
+        int lastCount = -1, lastSelected = -1, lastBars = -1;
+    };
+
     /** The manual step editor: click to place, drag up/down for velocity,
         right-click to erase. Never overwritten by the generator. */
     class ManualPatternGrid : public juce::Component
@@ -137,6 +162,8 @@ namespace hhx
         std::unique_ptr<juce::ListBoxModel> characterModel;
         PerformancePad    pad;
         PhraseView        phraseView;
+        ArrangementStrip  arrangement;
+        juce::Viewport    arrangementView;
         std::unique_ptr<LabelledKnob> fillsKnob, swingKnob, complexityKnob, intensityKnob;
         std::vector<std::unique_ptr<juce::TextButton>> variationButtons;
         juce::Label       padCaption;

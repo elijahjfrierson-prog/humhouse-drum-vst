@@ -255,6 +255,173 @@ namespace hhx
     }
 
     //==============================================================================
+    namespace
+    {
+        constexpr int kBlockWidth = 124;
+        constexpr int kBlockGap   = 8;
+        constexpr int kPlusWidth  = 46;
+
+        juce::Colour sectionColour (int section)
+        {
+            switch (section)
+            {
+                case SectionIntro:  return juce::Colour (0xff3c5a7a);
+                case SectionChorus: return juce::Colour (0xff8a5a1e);
+                case SectionBridge: return juce::Colour (0xff5a3c7a);
+                case SectionOutro:  return juce::Colour (0xff3c6a58);
+                case SectionFill:   return juce::Colour (0xff7a3c46);
+                default:            return juce::Colour (0xff44484f);
+            }
+        }
+    }
+
+    ArrangementStrip::ArrangementStrip (DrumsXProcessor& p) : proc (p)
+    {
+        startTimerHz (8);
+    }
+
+    int ArrangementStrip::preferredWidth() const
+    {
+        return proc.numSections() * (kBlockWidth + kBlockGap) + kPlusWidth + kBlockGap * 2;
+    }
+
+    juce::Rectangle<int> ArrangementStrip::blockBounds (int index) const
+    {
+        return { kBlockGap + index * (kBlockWidth + kBlockGap), 4,
+                 kBlockWidth, getHeight() - 8 };
+    }
+
+    juce::Rectangle<int> ArrangementStrip::plusBounds() const
+    {
+        return { kBlockGap + proc.numSections() * (kBlockWidth + kBlockGap), 4,
+                 kPlusWidth, getHeight() - 8 };
+    }
+
+    void ArrangementStrip::timerCallback()
+    {
+        const int count    = proc.numSections();
+        const int selected = proc.getSelectedSection();
+        const int bars     = proc.totalArrangementBars();
+
+        if (count == lastCount && selected == lastSelected && bars == lastBars)
+            return;
+
+        lastCount    = count;
+        lastSelected = selected;
+        lastBars     = bars;
+
+        if (getWidth() != preferredWidth())
+            setSize (preferredWidth(), getHeight());
+        repaint();
+    }
+
+    void ArrangementStrip::paint (juce::Graphics& g)
+    {
+        const auto blocks   = proc.getArrangement();
+        const int  selected = proc.getSelectedSection();
+
+        int startBar = 0;
+        for (int i = 0; i < (int) blocks.size(); ++i)
+        {
+            const auto& sec = blocks[(std::size_t) i];
+            const auto  r   = blockBounds (i).toFloat();
+            const bool  on  = i == selected;
+
+            g.setColour (sectionColour (sec.section).withAlpha (on ? 1.0f : 0.6f));
+            g.fillRoundedRectangle (r, 5.0f);
+            g.setColour (on ? DrumsXLookAndFeel::accent() : DrumsXLookAndFeel::line());
+            g.drawRoundedRectangle (r.reduced (0.5f), 5.0f, on ? 2.0f : 1.0f);
+
+            g.setColour (DrumsXLookAndFeel::text());
+            g.setFont (uiFont (12.0f, true));
+            g.drawText (juce::String (sectionName (sec.section)).toUpperCase(),
+                        r.reduced (8.0f, 5.0f).removeFromTop (15.0f).toNearestInt(),
+                        juce::Justification::centredLeft, false);
+
+            g.setColour (DrumsXLookAndFeel::textDim());
+            g.setFont (uiFont (10.5f));
+            g.drawText ("BARS " + juce::String (startBar + 1) + "-"
+                            + juce::String (startBar + std::max (1, sec.numBars)),
+                        r.reduced (8.0f, 4.0f).withTrimmedTop (17.0f).removeFromTop (13.0f).toNearestInt(),
+                        juce::Justification::centredLeft, false);
+
+            // Intensity and complexity, so the shape of the song is readable
+            // without clicking through every block.
+            const auto meters = r.reduced (8.0f, 6.0f).removeFromBottom (12.0f);
+            const auto drawMeter = [&] (juce::Rectangle<float> m, float v, juce::Colour c)
+            {
+                g.setColour (juce::Colours::black.withAlpha (0.35f));
+                g.fillRoundedRectangle (m, 2.0f);
+                g.setColour (c);
+                g.fillRoundedRectangle (m.withWidth (juce::jmax (2.0f, m.getWidth() * v)), 2.0f);
+            };
+            drawMeter (meters.withHeight (4.0f), sec.intensity, DrumsXLookAndFeel::accent());
+            drawMeter (meters.withHeight (4.0f).translated (0.0f, 7.0f), sec.complexity,
+                       DrumsXLookAndFeel::accent().withAlpha (0.55f));
+            startBar += std::max (1, sec.numBars);
+        }
+
+        const auto plus = plusBounds().toFloat();
+        g.setColour (DrumsXLookAndFeel::panelHi());
+        g.fillRoundedRectangle (plus, 5.0f);
+        g.setColour (DrumsXLookAndFeel::accent());
+        g.drawRoundedRectangle (plus.reduced (0.5f), 5.0f, 1.0f);
+        g.setFont (uiFont (22.0f, true));
+        g.drawText ("+", plus.toNearestInt(), juce::Justification::centred, false);
+    }
+
+    void ArrangementStrip::showBlockMenu (int index)
+    {
+        juce::PopupMenu types;
+        for (int t = 0; t < (int) NumSections; ++t)
+            types.addItem (100 + t, sectionName (t));
+
+        juce::PopupMenu lengths;
+        for (const int bars : { 2, 4, 8, 16, 32 })
+            lengths.addItem (200 + bars, juce::String (bars) + " bars");
+
+        juce::PopupMenu m;
+        m.addSubMenu ("Section", types);
+        m.addSubMenu ("Length", lengths);
+        m.addItem (2, "Duplicate");
+        m.addItem (3, "Delete", proc.numSections() > 1);
+
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                         [this, index] (int result)
+                         {
+                             if (result >= 200)      proc.setSectionBars (index, result - 200);
+                             else if (result >= 100) proc.setSectionType (index, result - 100);
+                             else if (result == 2)   proc.duplicateSection (index);
+                             else if (result == 3)   proc.removeSection (index);
+                             repaint();
+                         });
+    }
+
+    void ArrangementStrip::mouseDown (const juce::MouseEvent& e)
+    {
+        if (plusBounds().contains (e.getPosition()))
+        {
+            proc.addSection();
+            setSize (preferredWidth(), getHeight());
+            repaint();
+            return;
+        }
+
+        for (int i = 0; i < proc.numSections(); ++i)
+        {
+            if (! blockBounds (i).contains (e.getPosition()))
+                continue;
+
+            if (e.mods.isPopupMenu())
+                showBlockMenu (i);
+            else
+                proc.setSelectedSection (i);
+            repaint();
+            return;
+        }
+    }
+
+    //==============================================================================
     ManualPatternGrid::ManualPatternGrid (DrumsXProcessor& p) : proc (p) {}
 
     bool ManualPatternGrid::cellAt (juce::Point<int> p, int& lane, int& step) const
@@ -389,7 +556,7 @@ namespace hhx
     //==============================================================================
     DrumsXEditor::DrumsXEditor (DrumsXProcessor& p)
         : AudioProcessorEditor (&p), proc (p),
-          pad (p), phraseView (p), manualGrid (p)
+          pad (p), phraseView (p), arrangement (p), manualGrid (p)
     {
         setLookAndFeel (&lnf);
         auto& state = proc.getAPVTS();
@@ -501,6 +668,13 @@ namespace hhx
         addAndMakeVisible (characterList);
         addAndMakeVisible (pad);
         addAndMakeVisible (phraseView);
+
+        // The arrangement scrolls sideways, so the song can keep growing past
+        // the width of the window.
+        arrangement.setSize (arrangement.preferredWidth(), 62);
+        arrangementView.setViewedComponent (&arrangement, false);
+        arrangementView.setScrollBarsShown (false, true, false, true);
+        addAndMakeVisible (arrangementView);
 
         complexityKnob = std::make_unique<LabelledKnob> (state, pid::complexity, "Complexity");
         intensityKnob  = std::make_unique<LabelledKnob> (state, pid::intensity,  "Intensity");
@@ -742,6 +916,7 @@ namespace hhx
         characterList.setVisible (main);
         pad.setVisible (main);
         phraseView.setVisible (main);
+        arrangementView.setVisible (main);
         for (auto* k : { complexityKnob.get(), intensityKnob.get(), fillsKnob.get(), swingKnob.get() })
             k->setVisible (main);
         for (auto& b : variationButtons)
@@ -837,6 +1012,8 @@ namespace hhx
         m.addItem (1, "Export 8 bars...");
         m.addItem (2, "Export 16 bars...");
         m.addItem (3, "Export 32 bars...");
+        m.addItem (5, "Export the whole arrangement ("
+                      + juce::String (proc.totalArrangementBars()) + " bars)...");
         m.addSeparator();
         m.addItem (4, "Export per-instrument MIDI (16 bars)...");
 
@@ -846,7 +1023,10 @@ namespace hhx
                              if (result == 0)
                                  return;
 
-                             const int bars = result == 1 ? 8 : (result == 2 ? 16 : (result == 3 ? 32 : 16));
+                             const int bars = result == 1 ? 8
+                                            : result == 2 ? 16
+                                            : result == 3 ? 32
+                                            : result == 5 ? proc.totalArrangementBars() : 16;
                              const bool perInstrument = result == 4;
 
                              chooser = std::make_unique<juce::FileChooser> (
@@ -898,6 +1078,8 @@ namespace hhx
         {
             drawPanel (g, characterList.getBounds().expanded (10, 26), "Character");
             drawPanel (g, phraseView.getBounds().expanded (0, 18).withTrimmedBottom (18), "Performance");
+            drawPanel (g, arrangementView.getBounds().expanded (0, 16).withTrimmedBottom (16),
+                       "Arrangement  -  click a section to edit it, + to add another");
         }
         else if (page == Page::details)
         {
@@ -962,7 +1144,12 @@ namespace hhx
         characterList.setBounds (left.removeFromTop (250).reduced (10, 26).withTrimmedTop (-16));
         r.removeFromLeft (16);
 
-        auto bottom = r.removeFromBottom (150);
+        auto strip2 = r.removeFromBottom (66);
+        arrangementView.setBounds (strip2.withTrimmedTop (16));
+        arrangement.setSize (arrangement.preferredWidth(),
+                             juce::jmax (24, arrangementView.getMaximumVisibleHeight()));
+
+        auto bottom = r.removeFromBottom (132);
         phraseView.setBounds (bottom.withTrimmedTop (18));
 
         auto strip = r.removeFromBottom (34).reduced (0, 4);

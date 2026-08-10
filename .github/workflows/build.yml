@@ -132,8 +132,27 @@ jobs:
           $exe = 'artifacts/HumHouse-Drums-X-Windows-Setup.exe'
           $len = (Get-Item $exe).Length
           if ($len -lt 5MB) { throw "installer is only $len bytes" }
+
+          # Stand in for a previous version: a kit and a plug-in file that the
+          # new setup has to sweep away rather than leave behind.
+          $stale = "$env:ProgramData\HumHouse\Drums X\Content\Kits\OldKit"
+          New-Item -ItemType Directory -Force -Path $stale | Out-Null
+          Set-Content -LiteralPath "$stale\stale.flac" -Value 'old'
+          $staleVst3 = "$env:CommonProgramFiles\VST3\HumHouse Drums X.vst3\Contents\stale.txt"
+          New-Item -ItemType Directory -Force -Path (Split-Path $staleVst3) | Out-Null
+          Set-Content -LiteralPath $staleVst3 -Value 'old'
+
           Start-Process -Wait -FilePath $exe `
             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'
+          # Installing again must succeed as an in-place upgrade, not a second copy.
+          Start-Process -Wait -FilePath $exe `
+            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'
+
+          foreach ($p in @("$stale\stale.flac", $staleVst3)) {
+            if (Test-Path -LiteralPath $p) { throw "upgrade left the old version behind: $p" }
+          }
+          $kit = "$env:ProgramData\HumHouse\Drums X\Content\Kits\NakedRock\kit.json"
+          if (-not (Test-Path -LiteralPath $kit)) { throw 'the shipped kit was not installed' }
           $expected = @(
             "$env:CommonProgramFiles\VST3\HumHouse Drums X.vst3",
             "$env:ProgramFiles\HumHouse\HumHouse Drums X\HumHouse Drums X.exe",
@@ -158,7 +177,17 @@ jobs:
           for part in content.pkg vst3.pkg; do
             test -d "/tmp/pkg_expanded/$part" || { echo "missing $part"; exit 1; }
           done
+          # Stand in for a previous version, then install twice: the second
+          # run is the upgrade path a user actually hits.
+          sudo mkdir -p "/Library/Application Support/HumHouse/Drums X/Content/Kits/OldKit"
+          echo old | sudo tee "/Library/Application Support/HumHouse/Drums X/Content/Kits/OldKit/stale.flac" >/dev/null
           sudo installer -pkg "$pkg" -target /
+          sudo installer -pkg "$pkg" -target /
+          if [ -e "/Library/Application Support/HumHouse/Drums X/Content/Kits/OldKit/stale.flac" ]; then
+            echo "upgrade left the old content behind"; exit 1
+          fi
+          test -f "/Library/Application Support/HumHouse/Drums X/Content/Kits/NakedRock/kit.json" \
+            || { echo "the shipped kit was not installed"; exit 1; }
           for p in "/Library/Audio/Plug-Ins/VST3/HumHouse Drums X.vst3" \
                    "/Library/Application Support/HumHouse/Drums X/Content/content_manifest.json"; do
             test -e "$p" || { echo "installer did not create $p"; exit 1; }

@@ -12,7 +12,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 
-VERSION="${VERSION:-0.9.0}"
+VERSION="${VERSION:-1.7.0}"
 BUNDLE_ID="com.humhouse.humhousedrums.installer"
 PKG_OUT="${PKG_OUT:-HumHouse-Drums-X-macOS.pkg}"
 
@@ -72,7 +72,18 @@ cp -R "$REPO/content/." "$CONTENT_ROOT/"
 # runs it as root before the payload is laid down.
 VST3_SCRIPTS="$STAGE/vst3_scripts"
 AU_SCRIPTS="$STAGE/au_scripts"
-mkdir -p "$VST3_SCRIPTS" "$AU_SCRIPTS"
+CONTENT_SCRIPTS="$STAGE/content_scripts"
+mkdir -p "$VST3_SCRIPTS" "$AU_SCRIPTS" "$CONTENT_SCRIPTS"
+
+cat > "$CONTENT_SCRIPTS/preinstall" <<'PREINSTALL_CONTENT'
+#!/bin/sh
+# Content is laid down as a whole tree, so an older version's corpus and
+# kits have to go first: a leftover kit folder would otherwise still be
+# listed in the manifest the new build reads.
+rm -rf "/Library/Application Support/HumHouse/Drums X/Content" 2>/dev/null || true
+exit 0
+PREINSTALL_CONTENT
+chmod +x "$CONTENT_SCRIPTS/preinstall"
 
 cat > "$VST3_SCRIPTS/preinstall" <<'PREINSTALL_VST3'
 #!/bin/sh
@@ -113,6 +124,7 @@ pkgbuild \
   --identifier "${BUNDLE_ID}.content" \
   --version "$VERSION" \
   --root "$STAGE/content_root" \
+  --scripts "$CONTENT_SCRIPTS" \
   --install-location "/" \
   "$PKGDIR/content.pkg"
 

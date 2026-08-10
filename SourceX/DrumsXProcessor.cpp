@@ -41,7 +41,14 @@ namespace hhx
 
     namespace
     {
-        constexpr int kTimelineBars = 64;
+        /** The knobs that belong to an arrangement block rather than the song. */
+        bool isSectionParameter (const juce::String& id)
+        {
+            return id == pid::complexity || id == pid::intensity
+                || id == pid::fillAmount || id == pid::swing
+                || id == pid::halfTime
+                || id == pid::variationRhythm || id == pid::variationCymbal;
+        }
 
         int laneToMidiNote (int lane) { return laneToNote (lane); }
 
@@ -192,6 +199,11 @@ namespace hhx
         // A conventional rock song form. Hosts that expose markers can replace
         // it through setSections(); the performance only follows it when
         // "Follow Arrangement" is on.
+        // One eight-bar block to start with; "+" appends as many more as the
+        // song needs, each with its own settings.
+        arrangement.push_back ({ nextSectionId++, 8, SectionVerse });
+        captureParamsIntoSelectedSection();
+
         hostSections = { { 0,  4, SectionIntro },  { 4,  8, SectionVerse },
                          { 12, 8, SectionChorus }, { 20, 8, SectionVerse },
                          { 28, 8, SectionChorus }, { 36, 4, SectionBridge },
@@ -227,6 +239,11 @@ namespace hhx
         else if (id == pid::bleed) kit.setBleed (value);
         else if (id == pid::crush) kit.setCrush (value);
 
+        // A performance knob edits the block that is selected, and only that
+        // block; the rest of the arrangement re-renders to exactly what it was.
+        if (! syncingSection.load() && isSectionParameter (id))
+            captureParamsIntoSelectedSection();
+
         // Re-render off the audio thread. Nothing the user typed into the
         // manual grid is touched by this.
         triggerAsyncUpdate();
@@ -250,6 +267,24 @@ namespace hhx
             feed (p->getValue());
 
         feed ((double) seed.load());
+
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            for (const auto& sec : arrangement)
+            {
+                feed ((double) sec.id);
+                feed ((double) sec.numBars);
+                feed ((double) sec.section);
+                feed ((double) sec.complexity);
+                feed ((double) sec.intensity);
+                feed ((double) sec.fillAmount);
+                feed ((double) sec.swing);
+                feed (sec.halfTime ? 1.0 : 0.0);
+                feed ((double) sec.variationRhythm);
+                feed ((double) sec.variationCymbal);
+            }
+        }
+
         if (isManualMode())
         {
             const std::lock_guard<std::mutex> lock (manualMutex);
@@ -264,6 +299,16 @@ namespace hhx
     {
         using SL = juce::File;
         const juce::String leaf ("HumHouse/Drums X/Content");
+
+        // Development and CI runs point at a content tree that was never
+        // installed, so an override wins over the installed locations.
+        const auto override_ = juce::SystemStats::getEnvironmentVariable ("HHX_CONTENT_DIR", {});
+        if (override_.isNotEmpty())
+        {
+            const juce::File folder (override_);
+            if (folder.getChildFile ("content_manifest.json").existsAsFile())
+                return folder;
+        }
 
         for (const auto& root : { SL::getSpecialLocation (SL::commonApplicationDataDirectory),
                                   SL::getSpecialLocation (SL::userApplicationDataDirectory) })
@@ -304,9 +349,19 @@ namespace hhx
                                    + juce::String (version) + ")";
             }
 
-            const auto kitFolder = shared.getChildFile ("Kits").getChildFile ("SoCalRock");
-            if (kitFolder.isDirectory() && kit.loadKitFolder (kitFolder) > 0)
-                contentDescription += " + installed kit";
+            // Installed kits are multi-mic and multi-layer; the compiled-in kit
+            // is only the fallback for a plug-in running without content.
+            if (const auto* kits = manifest["kits"].getArray())
+            {
+                for (const auto& entry : *kits)
+                {
+                    const auto folder = shared.getChildFile (entry["folder"].toString());
+                    if (! folder.isDirectory() || kit.loadKitFolder (folder) <= 0)
+                        continue;
+                    contentDescription += " + kit " + kit.getKitName();
+                    break;
+                }
+            }
         }
 
        #if HHX_HAS_CORPUS
@@ -319,7 +374,10 @@ namespace hhx
        #endif
 
         if (kit.numLoadedSamples() == 0)
+        {
             kit.loadBundledKit ("SoCalRock");
+            contentDescription += " + bundled kit";
+        }
 
         kit.setMicBlend (apvts.getRawParameterValue (pid::micBlend)->load());
         kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
@@ -331,9 +389,11 @@ namespace hhx
         auto next = std::make_shared<Timeline>();
         const auto s = buildSettings();
         next->beatsPerBar = s.beatsPerBar;
-        next->numBars     = kTimelineBars;
+        // The song is as long as the arrangement, so the loop point is the end
+        // of the last block rather than a fixed window.
+        next->numBars     = std::max (1, arrangementBars (s.arrangement));
         next->hash        = settingsHash();
-        next->hits        = renderBars (0, kTimelineBars);
+        next->hits        = renderBars (0, next->numBars);
 
         const juce::SpinLock::ScopedLockType sl (timelineLock);
         timeline = std::move (next);
@@ -433,11 +493,163 @@ namespace hhx
 
         {
             const juce::SpinLock::ScopedLockType sl (sectionLock);
-            s.sections = hostSections;
+            s.sections    = hostSections;
+            s.arrangement = arrangement;
         }
 
         s.seed = seed.load();
         return s;
+    }
+
+    //==============================================================================
+    void DrumsXProcessor::captureParamsIntoSelectedSection()
+    {
+        const auto get = [this] (const juce::String& id)
+        {
+            const auto* p = apvts.getRawParameterValue (id);
+            return p != nullptr ? p->load() : 0.0f;
+        };
+
+        const juce::SpinLock::ScopedLockType sl (sectionLock);
+        const int index = selectedSection.load();
+        if (index < 0 || index >= (int) arrangement.size())
+            return;
+
+        auto& sec = arrangement[(std::size_t) index];
+        sec.complexity      = get (pid::complexity);
+        sec.intensity       = get (pid::intensity);
+        sec.fillAmount      = get (pid::fillAmount);
+        sec.swing           = get (pid::swing);
+        sec.halfTime        = get (pid::halfTime) > 0.5f;
+        sec.variationRhythm = (int) get (pid::variationRhythm);
+        sec.variationCymbal = (int) get (pid::variationCymbal);
+    }
+
+    void DrumsXProcessor::pushSectionToParams (int index)
+    {
+        ArrangementSection sec;
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            if (index < 0 || index >= (int) arrangement.size())
+                return;
+            sec = arrangement[(std::size_t) index];
+        }
+
+        syncingSection.store (true);
+        const auto set = [this] (const char* id, float v)
+        {
+            if (auto* p = apvts.getParameter (id))
+                p->setValueNotifyingHost (p->convertTo0to1 (v));
+        };
+
+        set (pid::complexity, sec.complexity);
+        set (pid::intensity,  sec.intensity);
+        set (pid::fillAmount, sec.fillAmount);
+        set (pid::swing,      sec.swing);
+        set (pid::halfTime,   sec.halfTime ? 1.0f : 0.0f);
+        set (pid::variationRhythm, (float) sec.variationRhythm);
+        set (pid::variationCymbal, (float) sec.variationCymbal);
+        syncingSection.store (false);
+    }
+
+    std::vector<ArrangementSection> DrumsXProcessor::getArrangement() const
+    {
+        const juce::SpinLock::ScopedLockType sl (sectionLock);
+        return arrangement;
+    }
+
+    int DrumsXProcessor::numSections() const
+    {
+        const juce::SpinLock::ScopedLockType sl (sectionLock);
+        return (int) arrangement.size();
+    }
+
+    int DrumsXProcessor::totalArrangementBars() const
+    {
+        const juce::SpinLock::ScopedLockType sl (sectionLock);
+        return std::max (1, arrangementBars (arrangement));
+    }
+
+    int DrumsXProcessor::sectionStartBar (int index) const
+    {
+        const juce::SpinLock::ScopedLockType sl (sectionLock);
+        int bar = 0;
+        for (int i = 0; i < index && i < (int) arrangement.size(); ++i)
+            bar += std::max (1, arrangement[(std::size_t) i].numBars);
+        return bar;
+    }
+
+    void DrumsXProcessor::setSelectedSection (int index)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            if (index < 0 || index >= (int) arrangement.size() || index == selectedSection.load())
+                return;
+        }
+        selectedSection.store (index);
+        pushSectionToParams (index);
+        triggerAsyncUpdate();
+    }
+
+    void DrumsXProcessor::addSection()
+    {
+        duplicateSection (selectedSection.load());
+    }
+
+    void DrumsXProcessor::duplicateSection (int index)
+    {
+        int added = 0;
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            ArrangementSection sec;
+            if (index >= 0 && index < (int) arrangement.size())
+                sec = arrangement[(std::size_t) index];
+            sec.id = nextSectionId++;
+            arrangement.push_back (sec);
+            added = (int) arrangement.size() - 1;
+        }
+        selectedSection.store (added);
+        pushSectionToParams (added);
+        rebuildTimeline();
+        updateHostDisplay();
+    }
+
+    void DrumsXProcessor::removeSection (int index)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            if (index < 0 || index >= (int) arrangement.size() || arrangement.size() <= 1)
+                return;
+            arrangement.erase (arrangement.begin() + index);
+        }
+        selectedSection.store (juce::jlimit (0, numSections() - 1, index));
+        pushSectionToParams (selectedSection.load());
+        rebuildTimeline();
+        updateHostDisplay();
+    }
+
+    void DrumsXProcessor::setSectionBars (int index, int bars)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            if (index < 0 || index >= (int) arrangement.size())
+                return;
+            arrangement[(std::size_t) index].numBars = juce::jlimit (1, 64, bars);
+        }
+        rebuildTimeline();
+        updateHostDisplay();
+    }
+
+    void DrumsXProcessor::setSectionType (int index, int section)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            if (index < 0 || index >= (int) arrangement.size())
+                return;
+            arrangement[(std::size_t) index].section = juce::jlimit (0, (int) NumSections - 1, section);
+        }
+        rebuildTimeline();
+        updateHostDisplay();
     }
 
     void DrumsXProcessor::setSections (std::vector<SectionSpan> spans)
@@ -774,6 +986,26 @@ namespace hhx
         }
         state.setProperty ("manualGrid", grid.getMemoryBlock().toBase64Encoding(), nullptr);
 
+        state.removeChild (state.getChildWithName ("arrangement"), nullptr);
+        juce::ValueTree blocks ("arrangement");
+        blocks.setProperty ("selected", selectedSection.load(), nullptr);
+        for (const auto& sec : getArrangement())
+        {
+            juce::ValueTree block ("section");
+            block.setProperty ("id", sec.id, nullptr);
+            block.setProperty ("bars", sec.numBars, nullptr);
+            block.setProperty ("type", sec.section, nullptr);
+            block.setProperty ("complexity", sec.complexity, nullptr);
+            block.setProperty ("intensity", sec.intensity, nullptr);
+            block.setProperty ("fills", sec.fillAmount, nullptr);
+            block.setProperty ("swing", sec.swing, nullptr);
+            block.setProperty ("halfTime", sec.halfTime, nullptr);
+            block.setProperty ("varRhythm", sec.variationRhythm, nullptr);
+            block.setProperty ("varCymbal", sec.variationCymbal, nullptr);
+            blocks.appendChild (block, nullptr);
+        }
+        state.appendChild (blocks, nullptr);
+
         if (auto xml = state.createXml())
             copyXmlToBinary (*xml, destData);
     }
@@ -804,6 +1036,38 @@ namespace hhx
                     for (float& v : lane)
                         v = grid.getNumBytesRemaining() >= 4 ? grid.readFloat() : 0.0f;
             }
+        }
+
+        if (const auto blocks = state.getChildWithName ("arrangement"); blocks.isValid())
+        {
+            std::vector<ArrangementSection> restored;
+            for (const auto& block : blocks)
+            {
+                ArrangementSection sec;
+                sec.id              = (int)   block.getProperty ("id", (int) restored.size() + 1);
+                sec.numBars         = (int)   block.getProperty ("bars", 8);
+                sec.section         = (int)   block.getProperty ("type", (int) SectionVerse);
+                sec.complexity      = (float) block.getProperty ("complexity", 0.45);
+                sec.intensity       = (float) block.getProperty ("intensity", 0.55);
+                sec.fillAmount      = (float) block.getProperty ("fills", 0.35);
+                sec.swing           = (float) block.getProperty ("swing", 0.0);
+                sec.halfTime        = (bool)  block.getProperty ("halfTime", false);
+                sec.variationRhythm = (int)   block.getProperty ("varRhythm", 0);
+                sec.variationCymbal = (int)   block.getProperty ("varCymbal", 0);
+                restored.push_back (sec);
+            }
+
+            if (! restored.empty())
+            {
+                const juce::SpinLock::ScopedLockType sl (sectionLock);
+                nextSectionId = 1;
+                for (const auto& sec : restored)
+                    nextSectionId = std::max (nextSectionId, sec.id + 1);
+                arrangement = std::move (restored);
+                selectedSection.store (juce::jlimit (0, (int) arrangement.size() - 1,
+                                                     (int) blocks.getProperty ("selected", 0)));
+            }
+            state.removeChild (blocks, nullptr);
         }
 
         apvts.replaceState (state);

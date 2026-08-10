@@ -15,6 +15,30 @@ namespace hhx
         int section  = SectionVerse;
     };
 
+    /** One block of the song the user placed on the arrangement strip.
+
+        Each block carries its own performance settings, so turning a chorus up
+        cannot touch the verse either side of it, and the strip can grow for as
+        long as the song does.
+    */
+    struct ArrangementSection
+    {
+        int   id       = 1;        // stable identity: seeds this block's takes
+        int   numBars  = 8;
+        int   section  = SectionVerse;
+
+        float complexity = 0.45f;
+        float intensity  = 0.55f;
+        float fillAmount = 0.35f;
+        float swing      = 0.0f;
+        bool  halfTime   = false;
+        int   variationRhythm = 0;
+        int   variationCymbal = 0;
+    };
+
+    /** How many bars the whole arrangement covers. */
+    int arrangementBars (const std::vector<ArrangementSection>& sections);
+
     /** Everything the performance depends on. Two identical settings structs
         always produce identical output - that is what makes golden-render
         tests possible.
@@ -58,6 +82,16 @@ namespace hhx
         bool  followSections  = false;
         std::vector<SectionSpan> sections;
 
+        /** The user's blocks. When it is empty the settings above play the
+            whole song; otherwise each block overrides them for its own bars. */
+        std::vector<ArrangementSection> arrangement;
+
+        /** Set while rendering inside a block: the block's own song section and
+            an identity salt, so two identical blocks still play different
+            takes. Both are derived, never edited directly. */
+        int           sectionHint = -1;
+        std::uint64_t sectionSalt = 0;
+
         std::uint64_t seed = 1;
     };
 
@@ -87,6 +121,14 @@ namespace hhx
         std::vector<int> landingZone (const PerformanceSettings& s, int maxResults) const;
 
         int sectionAtBar (const PerformanceSettings& s, int bar) const;
+
+        /** Which arrangement block a bar belongs to, 0 when there is none. */
+        int blockIndexForBar (const PerformanceSettings& s, int bar) const;
+
+        /** The settings in force at a bar: the base settings with the
+            arrangement block covering that bar folded in. Idempotent, so a
+            resolved struct can safely be resolved again. */
+        PerformanceSettings settingsForBar (const PerformanceSettings& s, int bar) const;
 
     private:
         /** A hit mid-render: the grid position it has been folded onto plus the

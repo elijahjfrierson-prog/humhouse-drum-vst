@@ -6,6 +6,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -103,10 +104,15 @@ namespace hhx
         float getLaneActivity (int lane) const;
 
     private:
+        /** One recording, kept as interleaved 16-bit so a kit with hundreds of
+            multisamples costs half the memory of a float copy. */
         struct Sample
         {
-            juce::AudioBuffer<float> audio;
-            double sourceRate = 44100.0;
+            std::vector<std::int16_t> data;
+            int    numChannels = 1;
+            int    numFrames   = 0;
+            double sourceRate  = 44100.0;
+            float  peak        = 0.0f;
         };
 
         struct Variant
@@ -140,6 +146,9 @@ namespace hhx
             float  gainR = 0.0f;
             float  env   = 1.0f;
             float  envDecay = 1.0f;
+            float  toneCoeff = 1.0f;   // one-pole low-pass, 1 = wide open
+            float  toneL = 0.0f;
+            float  toneR = 0.0f;
             int    lane  = -1;
             int    articulation = -1;
             int    mic   = MicClose;
@@ -158,12 +167,16 @@ namespace hhx
         void clearKit();
         void chokeArticulations (int articulation);
         void place (const Placement& p, std::shared_ptr<Sample> s);
-        void sortLayersByLoudness();
+
+        /** Drops empty layers and variants. Kits that declare their velocity
+            layers keep the order they declared; kits that do not (loose files)
+            are ordered by how loud they are. */
+        void finaliseKit (bool sortByLoudness);
         std::shared_ptr<Sample> readSample (juce::InputStream* stream);
         int loadFromManifest (const juce::File& folder, const juce::var& manifest);
         void startVoice (const std::shared_ptr<Sample>& sample, int lane, int articulation,
                          int mic, float gainL, float gainR, double increment,
-                         float envDecay);
+                         float envDecay, float toneCoeff);
 
         static int pieceNameToLane (const juce::String& piece);
         static int micNameToIndex (const juce::String& mic);
