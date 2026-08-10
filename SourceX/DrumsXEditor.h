@@ -91,6 +91,7 @@ namespace hhx
 
         DrumsXProcessor& proc;
         int lastCount = -1, lastSelected = -1, lastBars = -1;
+        std::uint32_t lastState = 0;
     };
 
     /** The manual step editor: click to place, drag up/down for velocity,

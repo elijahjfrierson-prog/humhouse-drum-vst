@@ -149,6 +149,37 @@ int main()
         check (song.numSections() == 1 && song.totalArrangementBars() == 8,
                "a new instrument starts with one eight-bar section");
 
+        // A single short block must not turn the instrument into an eight-bar
+        // loop: the render window covers several passes of the song.
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        if (const auto tl = song.getTimeline())
+        {
+            const auto barOf = [&tl] (const hhx::Hit& h)
+            {
+                return (int) (h.beat / tl->beatsPerBar);
+            };
+            bool differs = false;
+            for (const auto& h : tl->hits)
+                if (barOf (h) >= 8 && barOf (h) < 16)
+                {
+                    bool matched = false;
+                    for (const auto& e : tl->hits)
+                        if (barOf (e) < 8 && e.lane == h.lane
+                            && std::abs ((e.beat + 8.0f * tl->beatsPerBar) - h.beat) < 0.001f
+                            && e.velocity == h.velocity)
+                            matched = true;
+                    if (! matched)
+                        differs = true;
+                }
+
+            check (tl->numBars >= 64 && differs,
+                   "one eight-bar section still plays 64 bars without repeating itself");
+        }
+        else
+        {
+            check (false, "the timeline is rendered");
+        }
+
         for (int i = 0; i < 40; ++i)
             song.addSection();
         check (song.numSections() == 41 && song.totalArrangementBars() == 41 * 8,

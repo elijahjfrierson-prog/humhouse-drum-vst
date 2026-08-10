@@ -41,6 +41,10 @@ namespace hhx
 
     namespace
     {
+        /** Shortest window the timeline is rendered over, so short songs still
+            play through several times before anything repeats. */
+        constexpr int kMinRenderBars = 64;
+
         /** The knobs that belong to an arrangement block rather than the song. */
         bool isSectionParameter (const juce::String& id)
         {
@@ -355,8 +359,11 @@ namespace hhx
             {
                 for (const auto& entry : *kits)
                 {
+                    // A manifest only names kits inside its own content tree, so
+                    // a "../.." entry is rejected rather than followed.
                     const auto folder = shared.getChildFile (entry["folder"].toString());
-                    if (! folder.isDirectory() || kit.loadKitFolder (folder) <= 0)
+                    if (! folder.isAChildOf (shared)
+                        || ! folder.isDirectory() || kit.loadKitFolder (folder) <= 0)
                         continue;
                     contentDescription += " + kit " + kit.getKitName();
                     break;
@@ -389,9 +396,12 @@ namespace hhx
         auto next = std::make_shared<Timeline>();
         const auto s = buildSettings();
         next->beatsPerBar = s.beatsPerBar;
-        // The song is as long as the arrangement, so the loop point is the end
-        // of the last block rather than a fixed window.
-        next->numBars     = std::max (1, arrangementBars (s.arrangement));
+        // The loop follows the arrangement, but a short song is played through
+        // several times before it repeats: the blocks come back in order while
+        // the takes inside them keep changing, so one eight-bar block still
+        // gives 64 bars of non-repeating playing.
+        const int songBars = std::max (1, arrangementBars (s.arrangement));
+        next->numBars     = songBars * ((kMinRenderBars + songBars - 1) / songBars);
         next->hash        = settingsHash();
         next->hits        = renderBars (0, next->numBars);
 

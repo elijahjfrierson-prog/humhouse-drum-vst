@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 namespace hhx
 {
@@ -330,6 +331,10 @@ namespace hhx
         if (pieces == nullptr)
             return 0;
 
+        // Several articulations share a recording, so a file is decoded once and
+        // the buffer is handed to every placement that names it.
+        std::map<juce::String, std::shared_ptr<Sample>> decoded;
+
         int loaded = 0;
         for (const auto& entry : *pieces)
         {
@@ -342,12 +347,18 @@ namespace hhx
             p.variant = entry.hasProperty ("variant") ? std::max (0, (int) entry["variant"] - 1) : 0;
             p.mic     = micNameToIndex (entry["mic"].toString());
 
-            const auto file = folder.getChildFile (entry["file"].toString());
+            const auto name = entry["file"].toString();
+            const auto file = folder.getChildFile (name);
             if (! file.existsAsFile())
                 continue;
-            if (auto sample = readSample (new juce::FileInputStream (file)))
+
+            auto& cached = decoded[name];
+            if (cached == nullptr)
+                cached = readSample (new juce::FileInputStream (file));
+
+            if (cached != nullptr)
             {
-                place (p, std::move (sample));
+                place (p, cached);
                 ++loaded;
             }
         }

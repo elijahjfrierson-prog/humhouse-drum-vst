@@ -129,16 +129,21 @@ namespace hhx
 
     int PerformanceEngine::sectionAtBar (const PerformanceSettings& s, int bar) const
     {
+        // The host's song form wins while Follow Arrangement is on; the strip's
+        // own blocks only decide the form when it is off.
+        if (s.followSections && ! s.sections.empty())
+        {
+            for (const auto& span : s.sections)
+                if (bar >= span.startBar && bar < span.startBar + span.numBars)
+                    return span.section;
+            return SectionVerse;
+        }
+
         if (s.sectionHint >= 0)
             return s.sectionHint;
         if (! s.arrangement.empty())
             return settingsForBar (s, bar).sectionHint;
-        if (! s.followSections)
-            return -1;
-        for (const auto& span : s.sections)
-            if (bar >= span.startBar && bar < span.startBar + span.numBars)
-                return span.section;
-        return SectionVerse;
+        return s.followSections ? SectionVerse : -1;
     }
 
     std::vector<int> PerformanceEngine::landingZone (const PerformanceSettings& s,

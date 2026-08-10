@@ -303,12 +303,36 @@ namespace hhx
         const int selected = proc.getSelectedSection();
         const int bars     = proc.totalArrangementBars();
 
-        if (count == lastCount && selected == lastSelected && bars == lastBars)
+        // Knob moves write into the selected block without changing any of the
+        // counters, so the meters need the block contents in the comparison.
+        std::uint32_t state = 2166136261u;
+        const auto mix = [&state] (std::uint32_t v)
+        {
+            state = (state ^ v) * 16777619u;
+        };
+
+        for (const auto& sec : proc.getArrangement())
+        {
+            mix ((std::uint32_t) sec.id);
+            mix ((std::uint32_t) sec.numBars);
+            mix ((std::uint32_t) sec.section);
+            mix ((std::uint32_t) juce::roundToInt (sec.complexity * 1000.0f));
+            mix ((std::uint32_t) juce::roundToInt (sec.intensity  * 1000.0f));
+            mix ((std::uint32_t) juce::roundToInt (sec.fillAmount * 1000.0f));
+            mix ((std::uint32_t) juce::roundToInt (sec.swing      * 1000.0f));
+            mix ((std::uint32_t) (sec.halfTime ? 1 : 0));
+            mix ((std::uint32_t) sec.variationRhythm);
+            mix ((std::uint32_t) sec.variationCymbal);
+        }
+
+        if (count == lastCount && selected == lastSelected && bars == lastBars
+            && state == lastState)
             return;
 
         lastCount    = count;
         lastSelected = selected;
         lastBars     = bars;
+        lastState    = state;
 
         if (getWidth() != preferredWidth())
             setSize (preferredWidth(), getHeight());
@@ -387,13 +411,15 @@ namespace hhx
         m.addItem (3, "Delete", proc.numSections() > 1);
 
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-                         [this, index] (int result)
+                         [safe = juce::Component::SafePointer<ArrangementStrip> (this), index] (int result)
                          {
-                             if (result >= 200)      proc.setSectionBars (index, result - 200);
-                             else if (result >= 100) proc.setSectionType (index, result - 100);
-                             else if (result == 2)   proc.duplicateSection (index);
-                             else if (result == 3)   proc.removeSection (index);
-                             repaint();
+                             if (safe == nullptr)
+                                 return;
+                             if (result >= 200)      safe->proc.setSectionBars (index, result - 200);
+                             else if (result >= 100) safe->proc.setSectionType (index, result - 100);
+                             else if (result == 2)   safe->proc.duplicateSection (index);
+                             else if (result == 3)   safe->proc.removeSection (index);
+                             safe->repaint();
                          });
     }
 
@@ -1018,10 +1044,13 @@ namespace hhx
         m.addItem (4, "Export per-instrument MIDI (16 bars)...");
 
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (exportButton),
-                         [this] (int result)
+                         [safe = juce::Component::SafePointer<DrumsXEditor> (this)] (int result)
                          {
-                             if (result == 0)
+                             if (result == 0 || safe == nullptr)
                                  return;
+
+                             auto& proc    = safe->proc;
+                             auto& chooser = safe->chooser;
 
                              const int bars = result == 1 ? 8
                                             : result == 2 ? 16
@@ -1041,15 +1070,15 @@ namespace hhx
                                  : (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
                                     | juce::FileBrowserComponent::warnAboutOverwriting);
 
-                             chooser->launchAsync (flags, [this, bars, perInstrument] (const juce::FileChooser& fc)
+                             chooser->launchAsync (flags, [safe, bars, perInstrument] (const juce::FileChooser& fc)
                              {
                                  const auto target = fc.getResult();
-                                 if (target == juce::File())
+                                 if (safe == nullptr || target == juce::File())
                                      return;
                                  if (perInstrument)
-                                     proc.exportPerInstrumentMidi (target.getChildFile ("HumHouse Drums X"), bars);
+                                     safe->proc.exportPerInstrumentMidi (target.getChildFile ("HumHouse Drums X"), bars);
                                  else
-                                     proc.exportArrangementMidi (target.withFileExtension ("mid"), bars);
+                                     safe->proc.exportArrangementMidi (target.withFileExtension ("mid"), bars);
                              });
                          });
     }
