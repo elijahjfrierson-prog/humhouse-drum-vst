@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(AIDrumVST VERSION 1.4.0 LANGUAGES C CXX)
+project(AIDrumVST VERSION 1.7.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -220,7 +220,8 @@ target_compile_definitions(HHDXProcessorTests PRIVATE
     JUCE_MODAL_LOOPS_PERMITTED=1
     JucePlugin_Name="HumHouse Drums X"
     AIDRUM_HAS_BUNDLED_KIT=$<BOOL:${AIDRUM_DEFAULT_KIT_FILES}>
-    AIDRUM_HAS_BRANDING=0)
+    AIDRUM_HAS_BRANDING=0
+    HHX_SHIPPED_KIT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/content/Kits/NakedRock")
 target_link_libraries(HHDXProcessorTests PRIVATE
     AIDrumCorpus
     juce::juce_audio_utils

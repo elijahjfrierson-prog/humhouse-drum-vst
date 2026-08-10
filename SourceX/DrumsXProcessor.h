@@ -146,6 +146,25 @@ namespace hhx
         void setSections (std::vector<SectionSpan> spans);
         std::vector<SectionSpan> getSections() const;
 
+        // --- arrangement strip ---------------------------------------------
+        /** The song, block by block. The performance knobs always edit the
+            selected block, so a chorus can be pushed without the verses either
+            side of it changing a note. */
+        std::vector<ArrangementSection> getArrangement() const;
+        int  numSections() const;
+        int  totalArrangementBars() const;
+        int  sectionStartBar (int index) const;
+
+        int  getSelectedSection() const { return selectedSection.load(); }
+        void setSelectedSection (int index);
+
+        /** Logic's "+": append another block, for as long as the song needs. */
+        void addSection();
+        void duplicateSection (int index);
+        void removeSection (int index);
+        void setSectionBars (int index, int bars);
+        void setSectionType (int index, int section);
+
         std::shared_ptr<const Timeline> getTimeline() const;
 
         // --- transport (standalone) --------------------------------------
@@ -208,6 +227,16 @@ namespace hhx
 
         std::vector<SectionSpan>       hostSections;
         mutable juce::SpinLock         sectionLock;
+
+        std::vector<ArrangementSection> arrangement;
+        std::atomic<int>                selectedSection { 0 };
+        std::atomic<bool>               syncingSection { false };
+        int                             nextSectionId = 1;
+
+        /** Copies the performance parameters into the selected block, and the
+            other way round when the selection changes. */
+        void captureParamsIntoSelectedSection();
+        void pushSectionToParams (int index);
 
         mutable std::mutex  manualMutex;
         std::array<std::array<float, kManualSteps>, NumLanes> manualGrid {};

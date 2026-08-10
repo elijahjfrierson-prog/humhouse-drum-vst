@@ -141,6 +141,95 @@ int main()
                "user edits are saved with the project");
     }
 
+    // 3b. The arrangement strip: "+" keeps appending, the knobs edit only the
+    //     selected block, and the whole song survives a save/reload.
+    {
+        hhx::DrumsXProcessor song;
+        song.prepareToPlay (48000.0, 128);
+        check (song.numSections() == 1 && song.totalArrangementBars() == 8,
+               "a new instrument starts with one eight-bar section");
+
+        // A single short block must not turn the instrument into an eight-bar
+        // loop: the render window covers several passes of the song.
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        if (const auto tl = song.getTimeline())
+        {
+            const auto barOf = [&tl] (const hhx::Hit& h)
+            {
+                return (int) (h.beat / tl->beatsPerBar);
+            };
+            bool differs = false;
+            for (const auto& h : tl->hits)
+                if (barOf (h) >= 8 && barOf (h) < 16)
+                {
+                    bool matched = false;
+                    for (const auto& e : tl->hits)
+                        if (barOf (e) < 8 && e.lane == h.lane
+                            && std::abs ((e.beat + 8.0f * tl->beatsPerBar) - h.beat) < 0.001f
+                            && e.velocity == h.velocity)
+                            matched = true;
+                    if (! matched)
+                        differs = true;
+                }
+
+            check (tl->numBars >= 64 && differs,
+                   "one eight-bar section still plays 64 bars without repeating itself");
+        }
+        else
+        {
+            check (false, "the timeline is rendered");
+        }
+
+        for (int i = 0; i < 40; ++i)
+            song.addSection();
+        check (song.numSections() == 41 && song.totalArrangementBars() == 41 * 8,
+               "the + button keeps appending sections");
+        check (song.getSelectedSection() == 40 && song.sectionStartBar (40) == 320,
+               "the new section is selected and sits at the end of the song");
+
+        // Push the selected block only.
+        song.setSelectedSection (7);
+        song.getAPVTS().getParameter (hhx::pid::intensity)->setValueNotifyingHost (0.9f);
+        song.getAPVTS().getParameter (hhx::pid::complexity)->setValueNotifyingHost (0.85f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+
+        const auto blocks = song.getArrangement();
+        check (std::abs (blocks[7].intensity - 0.9f) < 0.01f
+               && std::abs (blocks[7].complexity - 0.85f) < 0.01f,
+               "a knob move lands in the selected section");
+        bool neighboursIntact = true;
+        for (std::size_t i = 0; i < blocks.size(); ++i)
+            if (i != 7 && (std::abs (blocks[i].intensity - 0.9f) < 0.01f
+                           || std::abs (blocks[i].complexity - 0.85f) < 0.01f))
+                neighboursIntact = false;
+        check (neighboursIntact, "the other sections keep their own settings");
+
+        // Selecting a section pulls its settings back onto the knobs.
+        song.setSelectedSection (6);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+        check (std::abs (song.getAPVTS().getRawParameterValue (hhx::pid::intensity)->load()
+                         - blocks[6].intensity) < 0.01f,
+               "selecting a section loads its settings onto the knobs");
+
+        song.setSectionType (2, hhx::SectionChorus);
+        song.setSectionBars (2, 16);
+        check (song.totalArrangementBars() == 40 * 8 + 16,
+               "a section's length changes the length of the song");
+
+        juce::MemoryBlock state;
+        song.getStateInformation (state);
+        hhx::DrumsXProcessor reloaded;
+        reloaded.setStateInformation (state.getData(), (int) state.getSize());
+        const auto restored = reloaded.getArrangement();
+        check ((int) restored.size() == 41 && restored[2].numBars == 16
+               && restored[2].section == hhx::SectionChorus
+               && std::abs (restored[7].intensity - 0.9f) < 0.01f,
+               "the whole arrangement is saved with the project");
+
+        song.removeSection (2);
+        check (song.numSections() == 40, "a section can be removed again");
+    }
+
     // 4. Kit format: a folder of 8 velocity layers x 4 round robins x 3 mics
     //    loads at full depth, through kit.json and through the filenames alone.
     {
@@ -243,6 +332,46 @@ int main()
 
         folder.deleteRecursively();
     }
+
+    // 5. The kit we actually ship: depth, articulations and attribution.
+   #ifdef HHX_SHIPPED_KIT_DIR
+    {
+        const juce::File shipped (HHX_SHIPPED_KIT_DIR);
+        hhx::KitEngine rock;
+        rock.prepare (48000.0, 128);
+        const int loaded = rock.loadKitFolder (shipped);
+        check (loaded > 600, "the shipped kit loads its multisamples");
+        check (rock.getKitName() == "Naked Rock", "the shipped kit names itself");
+        check (shipped.getChildFile ("LICENSE-NakedDrums.txt").existsAsFile(),
+               "the shipped kit carries its licence");
+
+        bool deep = true;
+        for (const int lane : { hhx::LaneKick, hhx::LaneSnare, hhx::LaneTom1,
+                                hhx::LaneHatClosed, hhx::LaneRideBow })
+        {
+            // The source recordings give three to five sampled dynamics per
+            // piece; the engine dithers between them, so this guards the
+            // content rather than the perceived resolution.
+            if (rock.numLayersForLane (lane) < 3)
+                deep = false;
+            for (int layer = 0; layer < rock.numLayersForLane (lane); ++layer)
+                if (rock.numVariantsForLane (lane, layer) < 4)
+                    deep = false;
+        }
+        check (deep, "every voiced piece has velocity layers and four round robins");
+
+        bool hats = true;
+        for (const int lane : { hhx::LaneHatTight, hhx::LaneHatClosed, hhx::LaneHatOpen1,
+                                hhx::LaneHatOpen3, hhx::LaneHatPedal })
+            if (rock.numLayersForLane (lane) == 0)
+                hats = false;
+        check (hats, "tight, closed, open and pedal hats are separate recordings");
+
+        check (rock.laneHasMic (hhx::LaneSnare, hhx::MicOverhead)
+               && rock.laneHasMic (hhx::LaneSnare, hhx::MicRoom),
+               "the shipped kit has overhead and room mics");
+    }
+   #endif
 
     std::printf ("\n%s\n", failures == 0 ? "All processor tests passed."
                                          : "Processor tests FAILED.");

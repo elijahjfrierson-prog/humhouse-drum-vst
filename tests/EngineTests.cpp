@@ -337,6 +337,103 @@ int main (int argc, char** argv)
         check (engine.sectionAtBar (arranged, 5) == hhx::SectionChorus, "bar 5 reports the chorus");
     }
 
+    // 15b. Arrangement blocks: each block plays its own settings, and editing
+    //      one leaves every other bar of the song bit-identical.
+    {
+        auto song = s;
+        song.arrangement = { { 1, 8, hhx::SectionVerse,  0.2f, 0.25f, 0.0f, 0.0f, false, 0, 0 },
+                             { 2, 8, hhx::SectionChorus, 0.9f, 0.95f, 0.8f, 0.0f, false, 0, 0 },
+                             { 3, 8, hhx::SectionVerse,  0.2f, 0.25f, 0.0f, 0.0f, false, 0, 0 } };
+        check (hhx::arrangementBars (song.arrangement) == 24, "the arrangement is as long as its blocks");
+        check (engine.sectionAtBar (song, 9) == hhx::SectionChorus,
+               "bar 9 falls in the second block");
+
+        const auto before = engine.renderBars (song, 0, 24);
+        check (! before.empty(), "an arranged song renders");
+
+        const auto velocityIn = [&] (const std::vector<hhx::Hit>& hits, int firstBar, int lastBar)
+        {
+            double sum = 0.0; int n = 0;
+            for (const auto& h : hits)
+            {
+                const int bar = (int) (h.beat / song.beatsPerBar);
+                if (bar >= firstBar && bar < lastBar) { sum += h.velocity; ++n; }
+            }
+            return n > 0 ? sum / n : 0.0;
+        };
+        check (velocityIn (before, 8, 16) > velocityIn (before, 0, 8) + 4.0,
+               "the loud block plays harder than the quiet blocks either side of it");
+
+        // Push the middle block only.
+        auto edited = song;
+        edited.arrangement[1].intensity  = 0.2f;
+        edited.arrangement[1].complexity = 0.15f;
+        edited.arrangement[1].fillAmount = 0.0f;
+        const auto after = engine.renderBars (edited, 0, 24);
+
+        const auto barsOnly = [&] (const std::vector<hhx::Hit>& hits, int firstBar, int lastBar)
+        {
+            std::vector<hhx::Hit> out;
+            for (const auto& h : hits)
+            {
+                const int bar = (int) (h.beat / song.beatsPerBar);
+                if (bar >= firstBar && bar < lastBar)
+                    out.push_back (h);
+            }
+            return out;
+        };
+        check (sameHits (barsOnly (before, 0, 8), barsOnly (after, 0, 8)),
+               "editing a block leaves the block before it untouched");
+        // Everything past the downbeat the previous block's fill resolves onto:
+        // that crash belongs to the fill, so it is the one note a neighbour may
+        // legitimately add or take away.
+        const auto pastDownbeat = [&] (const std::vector<hhx::Hit>& hits, int firstBar, int lastBar)
+        {
+            std::vector<hhx::Hit> out;
+            for (const auto& h : barsOnly (hits, firstBar, lastBar))
+                if (h.beat > (float) firstBar * song.beatsPerBar + 0.01f)
+                    out.push_back (h);
+            return out;
+        };
+        check (sameHits (pastDownbeat (before, 16, 24), pastDownbeat (after, 16, 24)),
+               "editing a block leaves the block after it untouched");
+        check (! sameHits (barsOnly (before, 8, 16), barsOnly (after, 8, 16)),
+               "editing a block does change that block");
+
+        // Appending never rewrites what came before it: the "+" button is safe.
+        auto grown = song;
+        grown.arrangement.push_back ({ 4, 8, hhx::SectionOutro, 0.5f, 0.6f, 0.5f, 0.0f, false, 0, 0 });
+        check (sameHits (before, engine.renderBars (grown, 0, 24)),
+               "appending a block leaves the existing song identical");
+        check (hhx::arrangementBars (grown.arrangement) == 32, "the appended block extends the song");
+
+        // Two blocks with the same settings still play different takes.
+        auto twins = s;
+        twins.arrangement = { { 1, 8, hhx::SectionVerse, 0.5f, 0.6f, 0.3f, 0.0f, false, 0, 0 },
+                              { 2, 8, hhx::SectionVerse, 0.5f, 0.6f, 0.3f, 0.0f, false, 0, 0 } };
+        const auto twinHits = engine.renderBars (twins, 0, 16);
+        check (! sameHits (barsOnly (twinHits, 0, 8), barsOnly (twinHits, 8, 16)),
+               "identical blocks still play different takes");
+
+        // Deterministic, like the rest of the engine.
+        check (sameHits (before, engine.renderBars (song, 0, 24)),
+               "arranged rendering is deterministic");
+
+        // Block lengths the user picks need not divide by the phrase length.
+        auto ragged = s;
+        ragged.phraseBars  = 4;
+        ragged.arrangement = { { 1, 3,  hhx::SectionVerse,  0.2f, 0.25f, 0.2f, 0.0f, false, 0, 0 },
+                               { 2, 5,  hhx::SectionChorus, 0.9f, 0.95f, 0.6f, 0.0f, false, 0, 0 },
+                               { 3, 7,  hhx::SectionBridge, 0.5f, 0.5f,  0.3f, 0.0f, false, 0, 0 } };
+        const auto raggedHits = engine.renderBars (ragged, 0, 15);
+        check (hhx::arrangementBars (ragged.arrangement) == 15
+               && ! raggedHits.empty()
+               && sameHits (raggedHits, engine.renderBars (ragged, 0, 15)),
+               "blocks that do not divide by the phrase length still render");
+        check (velocityIn (raggedHits, 3, 8) > velocityIn (raggedHits, 0, 3) + 4.0,
+               "a block that starts mid-phrase still plays its own dynamics");
+    }
+
     // 16. Landing zone: the XY position resolves to real neighbouring takes.
     {
         const auto zone = engine.landingZone (s, 8);

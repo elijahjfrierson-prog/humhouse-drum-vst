@@ -52,6 +52,56 @@ namespace hhx
         {
             return size <= 0 ? 0 : ((value % size) + size) % size;
         }
+
+        /** The seed a block renders from: the song seed folded with the block's
+            identity, so two blocks at the same XY position still pick their own
+            takes and neither changes when the other is edited. */
+        std::uint64_t blockSeed (const PerformanceSettings& s)
+        {
+            return s.seed ^ (s.sectionSalt * 0x9E3779B97F4A7C15ull);
+        }
+    }
+
+    int arrangementBars (const std::vector<ArrangementSection>& sections)
+    {
+        int total = 0;
+        for (const auto& sec : sections)
+            total += std::max (1, sec.numBars);
+        return total;
+    }
+
+    PerformanceSettings PerformanceEngine::settingsForBar (const PerformanceSettings& base,
+                                                           int bar) const
+    {
+        if (base.arrangement.empty())
+            return base;
+
+        const int total = arrangementBars (base.arrangement);
+        int pos = wrap (bar, total);
+
+        const ArrangementSection* found = &base.arrangement.back();
+        for (const auto& sec : base.arrangement)
+        {
+            const int n = std::max (1, sec.numBars);
+            if (pos < n)
+            {
+                found = &sec;
+                break;
+            }
+            pos -= n;
+        }
+
+        PerformanceSettings out = base;
+        out.complexity      = found->complexity;
+        out.intensity       = found->intensity;
+        out.fillAmount      = found->fillAmount;
+        out.swing           = found->swing;
+        out.halfTime        = found->halfTime;
+        out.variationRhythm = found->variationRhythm;
+        out.variationCymbal = found->variationCymbal;
+        out.sectionHint     = found->section;
+        out.sectionSalt     = (std::uint64_t) found->id;
+        return out;
     }
 
     std::uint16_t PerformanceEngine::characterMask (const PerformanceSettings& s) const
@@ -61,14 +111,39 @@ namespace hhx
         return (std::uint16_t) (1u << s.character);
     }
 
+    int PerformanceEngine::blockIndexForBar (const PerformanceSettings& s, int bar) const
+    {
+        if (s.arrangement.empty())
+            return 0;
+
+        int pos = wrap (bar, arrangementBars (s.arrangement));
+        for (int i = 0; i < (int) s.arrangement.size(); ++i)
+        {
+            const int n = std::max (1, s.arrangement[(std::size_t) i].numBars);
+            if (pos < n)
+                return i;
+            pos -= n;
+        }
+        return (int) s.arrangement.size() - 1;
+    }
+
     int PerformanceEngine::sectionAtBar (const PerformanceSettings& s, int bar) const
     {
-        if (! s.followSections)
-            return -1;
-        for (const auto& span : s.sections)
-            if (bar >= span.startBar && bar < span.startBar + span.numBars)
-                return span.section;
-        return SectionVerse;
+        // The host's song form wins while Follow Arrangement is on; the strip's
+        // own blocks only decide the form when it is off.
+        if (s.followSections && ! s.sections.empty())
+        {
+            for (const auto& span : s.sections)
+                if (bar >= span.startBar && bar < span.startBar + span.numBars)
+                    return span.section;
+            return SectionVerse;
+        }
+
+        if (s.sectionHint >= 0)
+            return s.sectionHint;
+        if (! s.arrangement.empty())
+            return settingsForBar (s, bar).sectionHint;
+        return s.followSections ? SectionVerse : -1;
     }
 
     std::vector<int> PerformanceEngine::landingZone (const PerformanceSettings& s,
@@ -139,7 +214,7 @@ namespace hhx
         const int  bars    = (s.fillLengthBars >= 1.5f) ? 2 : 1;
         const auto pick    = [&] (int idx, const std::vector<int>& avoid)
         {
-            const std::uint64_t seed = mix (s.seed ^ mix ((std::uint64_t) idx + 1));
+            const std::uint64_t seed = mix (blockSeed (s) ^ mix ((std::uint64_t) idx + 1));
             return corpus->pickFill (s.fillComplexity, s.intensity, bars,
                                      (int) (mix (seed ^ 0xF111ull) % 16u), avoid,
                                      s.fillLaneMask & s.laneMask, s.fillStyleMask,
@@ -148,9 +223,14 @@ namespace hhx
 
         // Recently-used ring buffer: the last few fills are excluded so the
         // same one never lands twice in a row.
+        // Only fills inside the same arrangement block count, so what a block
+        // plays never depends on the block before it.
+        const int bars_ = std::max (1, s.phraseBars);
+        const int block = blockIndexForBar (s, phraseIndex * bars_);
+
         std::vector<int> avoid;
         for (int q = std::max (0, phraseIndex - 4); q < phraseIndex; ++q)
-            if (phraseEndsWithFill (s, q))
+            if (blockIndexForBar (s, q * bars_) == block && phraseEndsWithFill (s, q))
                 if (const int i = pick (q, {}); i >= 0)
                     avoid.push_back (i);
 
@@ -194,7 +274,7 @@ namespace hhx
         }
     }
 
-    std::vector<Hit> PerformanceEngine::renderPhrase (const PerformanceSettings& s,
+    std::vector<Hit> PerformanceEngine::renderPhrase (const PerformanceSettings& base,
                                                       int  phraseIndex,
                                                       bool includeFill) const
     {
@@ -202,10 +282,12 @@ namespace hhx
         if (corpus == nullptr || ! corpus->isLoaded())
             return out;
 
-        const int   bars        = std::max (1, s.phraseBars);
+        const int   bars        = std::max (1, base.phraseBars);
+        // Whichever arrangement block owns this phrase supplies its settings.
+        const PerformanceSettings s = settingsForBar (base, phraseIndex * bars);
         const float dstBar      = std::max (1.0f, s.beatsPerBar);
         const float phraseBeats = dstBar * (float) bars;
-        const std::uint64_t seed = mix (s.seed ^ mix ((std::uint64_t) phraseIndex + 1));
+        const std::uint64_t seed = mix (blockSeed (s) ^ mix ((std::uint64_t) phraseIndex + 1));
 
         // --- section colouring -------------------------------------------
         PerformanceSettings sec = s;
@@ -428,9 +510,10 @@ namespace hhx
         return out;
     }
 
-    bool PerformanceEngine::phraseEndsWithFill (const PerformanceSettings& s,
+    bool PerformanceEngine::phraseEndsWithFill (const PerformanceSettings& base,
                                                 int phraseIndex) const
     {
+        const auto s = settingsForBar (base, phraseIndex * std::max (1, base.phraseBars));
         if (s.fillAmount <= 0.001f)
             return false;
 
@@ -440,7 +523,7 @@ namespace hhx
         const bool  cadence   = ((phraseIndex + 1) % 4) == 0;
         const float threshold = cadence ? 0.05f : 0.55f;
         return s.fillAmount > threshold
-            || rand01 (mix (s.seed ^ 0xB00Bull), (std::uint64_t) phraseIndex)
+            || rand01 (mix (blockSeed (s) ^ 0xB00Bull), (std::uint64_t) phraseIndex)
                    < s.fillAmount * (cadence ? 1.6f : 0.6f);
     }
 
@@ -483,10 +566,21 @@ namespace hhx
         // Round robin is guaranteed across the whole rendered range, not just
         // inside a phrase, so a phrase boundary cannot fire the same sample
         // twice in a row either.
+        // Each arrangement block is its own performance, so the chain restarts
+        // at a block boundary: editing one block cannot rotate the samples in
+        // the block after it.
         int lastVariant[NumLanes];
         std::fill (std::begin (lastVariant), std::end (lastVariant), -1);
+        int lastBlock = -1;
         for (auto& h : out)
         {
+            const int block = blockIndexForBar (s, (int) std::floor (h.beat / beatsPerBar));
+            if (block != lastBlock)
+            {
+                std::fill (std::begin (lastVariant), std::end (lastVariant), -1);
+                lastBlock = block;
+            }
+
             if ((int) h.variant == lastVariant[h.lane])
                 h.variant = (std::uint8_t) (((int) h.variant + 1) % kRoundRobins);
             lastVariant[h.lane] = (int) h.variant;

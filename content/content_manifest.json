@@ -23,6 +23,25 @@
       "source": "https://magenta.tensorflow.org/datasets/groove",
       "license": "CC-BY 4.0",
       "credit": "Gillick, Roberts, Engel, Eck, Bamman - Learning to Groove with Inverse Sequence Transformations (2019)"
+    },
+    {
+      "name": "Naked Drums",
+      "source": "https://github.com/sfzinstruments/WilkinsonAudio.NakedDrums",
+      "license": "CC-BY 4.0",
+      "credit": "Naked Drums by Wilkinson Audio"
+    }
+  ],
+  "kits": [
+    {
+      "name": "Naked Rock",
+      "folder": "Kits/NakedRock",
+      "default": true
+    },
+    {
+      "name": "SoCal Rock",
+      "folder": "",
+      "default": false,
+      "note": "compiled into the plug-in as a fallback"
     }
   ]
 }

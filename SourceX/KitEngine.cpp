@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 namespace hhx
 {
@@ -202,14 +203,14 @@ namespace hhx
         return total;
     }
 
-    void KitEngine::sortLayersByLoudness()
+    void KitEngine::finaliseKit (bool sortByLoudness)
     {
         const auto loudness = [] (const Layer& l) -> float
         {
             float peak = 0.0f;
             for (const auto& v : l.variants)
                 if (const auto& s = v.mics[MicClose])
-                    peak = std::max (peak, s->audio.getMagnitude (0, s->audio.getNumSamples()));
+                    peak = std::max (peak, s->peak);
             return peak;
         };
 
@@ -225,9 +226,10 @@ namespace hhx
                                                }),
                                slot.layers.end());
 
-            std::stable_sort (slot.layers.begin(), slot.layers.end(),
-                              [&loudness] (const Layer& a, const Layer& b)
-                              { return loudness (a) < loudness (b); });
+            if (sortByLoudness)
+                std::stable_sort (slot.layers.begin(), slot.layers.end(),
+                                  [&loudness] (const Layer& a, const Layer& b)
+                                  { return loudness (a) < loudness (b); });
 
             for (auto& layer : slot.layers)
                 layer.variants.erase (std::remove_if (layer.variants.begin(), layer.variants.end(),
@@ -244,12 +246,27 @@ namespace hhx
         if (reader == nullptr || reader->lengthInSamples <= 0)
             return nullptr;
 
+        const int channels = (int) juce::jmin<juce::uint32> (2u, reader->numChannels);
+        const int frames   = (int) reader->lengthInSamples;
+
+        juce::AudioBuffer<float> scratch (channels, frames);
+        reader->read (&scratch, 0, frames, 0, true, reader->numChannels > 1);
+
         auto sample = std::make_shared<Sample>();
-        sample->sourceRate = reader->sampleRate > 0.0 ? reader->sampleRate : 44100.0;
-        sample->audio.setSize ((int) juce::jmin<juce::uint32> (2u, reader->numChannels),
-                               (int) reader->lengthInSamples);
-        reader->read (&sample->audio, 0, (int) reader->lengthInSamples, 0, true,
-                      reader->numChannels > 1);
+        sample->sourceRate  = reader->sampleRate > 0.0 ? reader->sampleRate : 44100.0;
+        sample->numChannels = channels;
+        sample->numFrames   = frames;
+        sample->peak        = scratch.getMagnitude (0, frames);
+        sample->data.resize ((std::size_t) frames * (std::size_t) channels);
+
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            const auto* src = scratch.getReadPointer (ch);
+            for (int i = 0; i < frames; ++i)
+                sample->data[(std::size_t) i * (std::size_t) channels + (std::size_t) ch]
+                    = (std::int16_t) juce::jlimit (-32768, 32767,
+                                                   (int) std::lround (src[i] * 32767.0f));
+        }
         return sample;
     }
 
@@ -284,7 +301,7 @@ namespace hhx
             }
         }
 
-        sortLayersByLoudness();
+        finaliseKit (true);
         {
             const juce::ScopedLock sl (kitNameLock);
             kitName = kitPrefix;
@@ -314,6 +331,10 @@ namespace hhx
         if (pieces == nullptr)
             return 0;
 
+        // Several articulations share a recording, so a file is decoded once and
+        // the buffer is handed to every placement that names it.
+        std::map<juce::String, std::shared_ptr<Sample>> decoded;
+
         int loaded = 0;
         for (const auto& entry : *pieces)
         {
@@ -326,12 +347,18 @@ namespace hhx
             p.variant = entry.hasProperty ("variant") ? std::max (0, (int) entry["variant"] - 1) : 0;
             p.mic     = micNameToIndex (entry["mic"].toString());
 
-            const auto file = folder.getChildFile (entry["file"].toString());
+            const auto name = entry["file"].toString();
+            const auto file = folder.getChildFile (name);
             if (! file.existsAsFile())
                 continue;
-            if (auto sample = readSample (new juce::FileInputStream (file)))
+
+            auto& cached = decoded[name];
+            if (cached == nullptr)
+                cached = readSample (new juce::FileInputStream (file));
+
+            if (cached != nullptr)
             {
-                place (p, std::move (sample));
+                place (p, cached);
                 ++loaded;
             }
         }
@@ -346,16 +373,18 @@ namespace hhx
         clearKit();
 
         int loaded = 0;
+        bool declaredLayers = false;
         const auto manifestFile = folder.getChildFile ("kit.json");
         if (manifestFile.existsAsFile())
         {
             const auto manifest = juce::JSON::parse (manifestFile);
             loaded = loadFromManifest (folder, manifest);
+            declaredLayers = loaded > 0;
         }
 
         if (loaded == 0)
         {
-            for (const auto& entry : juce::RangedDirectoryIterator (folder, false, "*.wav"))
+            for (const auto& entry : juce::RangedDirectoryIterator (folder, false, "*.wav;*.flac"))
             {
                 const auto name  = entry.getFile().getFileNameWithoutExtension();
                 const auto piece = name.contains ("__") ? name.fromFirstOccurrenceOf ("__", false, false) : name;
@@ -375,7 +404,7 @@ namespace hhx
             kitVersion = "1";
         }
 
-        sortLayersByLoudness();
+        finaliseKit (! declaredLayers);
         return loaded;
     }
 
@@ -487,7 +516,8 @@ namespace hhx
     }
 
     void KitEngine::startVoice (const std::shared_ptr<Sample>& sample, int lane, int articulation,
-                                int mic, float gainL, float gainR, double increment, float envDecay)
+                                int mic, float gainL, float gainR, double increment, float envDecay,
+                                float toneCoeff)
     {
         Voice* target = nullptr;
         for (auto& v : voices)
@@ -499,8 +529,8 @@ namespace hhx
             double best = -1.0;
             for (auto& v : voices)
             {
-                const double progress = v.sample != nullptr && v.sample->audio.getNumSamples() > 0
-                                      ? v.position / (double) v.sample->audio.getNumSamples() : 1.0;
+                const double progress = v.sample != nullptr && v.sample->numFrames > 0
+                                      ? v.position / (double) v.sample->numFrames : 1.0;
                 if (progress > best) { best = progress; target = &v; }
             }
         }
@@ -515,6 +545,9 @@ namespace hhx
         target->gainR        = gainR;
         target->env          = 1.0f;
         target->envDecay     = envDecay;
+        target->toneCoeff    = toneCoeff;
+        target->toneL        = 0.0f;
+        target->toneR        = 0.0f;
         target->lane         = lane;
         target->articulation = articulation;
         target->mic          = mic;
@@ -534,16 +567,28 @@ namespace hhx
             return;
 
         const float vel = juce::jlimit (0.02f, 1.0f, velocity01);
+        const int rr = slot.roundRobin.fetch_add (1) + variant;
 
-        int layerIndex = (int) std::floor (vel * (float) numLayers);
+        // A hash of the round-robin counter, used to dither the choices below
+        // so that they stay deterministic without ever needing rand().
+        const auto dither = [rr] (int salt)
+        {
+            const auto h = (juce::uint32) rr * 2654435761u + (juce::uint32) salt * 40503u;
+            return (float) ((h >> 9) & 0xffffu) / 65535.0f;
+        };
+
+        // Velocity picks a point on the layer ladder rather than a bucket, and
+        // the boundary is dithered: a stroke sitting between two layers takes
+        // one or the other. Hard buckets are what made repeated hats step.
+        const float ladder = vel * (float) numLayers - 0.5f;
+        const int   below  = (int) std::floor (ladder);
+        int layerIndex = below + (dither (1) < (ladder - (float) below) ? 1 : 0);
         layerIndex = juce::jlimit (0, numLayers - 1, layerIndex);
 
         const auto& layer = slot.layers[(std::size_t) layerIndex];
         const int numVariants = (int) layer.variants.size();
         if (numVariants == 0)
             return;
-
-        const int rr = slot.roundRobin.fetch_add (1) + variant;
 
         // The round-robin slot rotates within the layer when the kit supplies
         // several takes of it; otherwise it nudges to a neighbouring layer so
@@ -563,13 +608,21 @@ namespace hhx
         if (chosen.mics[MicClose] == nullptr)
             return;
 
-        // Micro-variation: ±12 cents and ±0.6 dB per hit keeps repeated notes
-        // from phase-cancelling into an obvious loop.
-        const float cents = (float) ((rr * 37) % 25 - 12) + slot.tune.load() * 100.0f;
-        const float trim  = juce::Decibels::decibelsToGain (((rr * 53) % 13 - 6) * 0.1f);
+        // Micro-variation: a few cents and a fraction of a dB per hit keeps
+        // repeated notes from phase-cancelling into an obvious loop.
+        const float cents = (dither (2) - 0.5f) * 22.0f + slot.tune.load() * 100.0f;
+        const float trim  = juce::Decibels::decibelsToGain ((dither (3) - 0.5f) * 1.3f);
 
-        const float gain = vel * juce::Decibels::decibelsToGain (slot.gainDb.load()) * trim;
-        const float pan  = slot.pan.load();
+        // How much of the dynamic range the recordings already carry. On a deep
+        // kit the layers do the work and the fader only tops it up; on a
+        // one-layer kit the fader is all there is.
+        const float depth   = juce::jmin (1.0f, (float) numLayers / 5.0f);
+        const float curve   = std::pow (vel, 0.75f);
+        const float velGain = juce::jmap (depth, curve, 0.45f + 0.55f * curve);
+
+        const float gain = velGain * juce::Decibels::decibelsToGain (slot.gainDb.load()) * trim;
+        const float pan  = juce::jlimit (-1.0f, 1.0f,
+                                         slot.pan.load() + (dither (4) - 0.5f) * 0.05f);
         const float gl   = gain * std::sqrt (0.5f * (1.0f - pan));
         const float gr   = gain * std::sqrt (0.5f * (1.0f + pan));
 
@@ -578,6 +631,18 @@ namespace hhx
         const float decayTime = juce::jmap (damp, 0.0f, 1.0f, 8.0f, 0.09f);
         const float envDecay = damp <= 0.001f ? 1.0f
                              : (float) std::pow (0.001, 1.0 / (decayTime * currentRate));
+
+        // Stick hardness: a soft stroke is darker as well as quieter, because a
+        // lightly struck cymbal never excites its top octave. Without this a
+        // ladder of level-matched multisamples reads as one flat, boxy hit.
+        const float reach = juce::jmap (depth, 0.85f, 0.4f);
+        const float dark  = (1.0f - std::pow (vel, 0.8f)) * reach;
+        const float cutoff = 20000.0f * std::exp (-3.1f * dark);
+        const float tone = dark < 0.02f
+                         ? 1.0f
+                         : juce::jlimit (0.02f, 1.0f,
+                                         1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                                          * cutoff / (float) currentRate));
 
         const juce::ScopedLock sl (voiceLock);
         chokeArticulations (articulation);
@@ -589,7 +654,7 @@ namespace hhx
                 continue;
             const double increment = (sample->sourceRate / currentRate)
                                    * std::pow (2.0, cents / 1200.0);
-            startVoice (sample, lane, articulation, mic, gl, gr, increment, envDecay);
+            startVoice (sample, lane, articulation, mic, gl, gr, increment, envDecay, tone);
         }
 
         slot.activity.store (1.0f);
@@ -656,11 +721,11 @@ namespace hhx
             if (! v.active || v.sample == nullptr)
                 continue;
 
-            const auto& src = v.sample->audio;
-            const int   len = src.getNumSamples();
-            const auto* srcL = src.getReadPointer (0);
-            const auto* srcR = src.getNumChannels() > 1 ? src.getReadPointer (1) : srcL;
+            const auto* src  = v.sample->data.data();
+            const int   len  = v.sample->numFrames;
+            const int   ch   = v.sample->numChannels;
             const float mg   = micGain[(std::size_t) v.mic];
+            constexpr float toFloat = 1.0f / 32768.0f;
 
             for (int i = 0; i < numSamples; ++i)
             {
@@ -672,9 +737,16 @@ namespace hhx
                     break;
                 }
 
+                const auto* a = src + (std::size_t) pos * (std::size_t) ch;
+                const auto* b = a + ch;
                 const float frac = (float) (v.position - (double) pos);
-                const float l = srcL[pos] + frac * (srcL[pos + 1] - srcL[pos]);
-                const float r = srcR[pos] + frac * (srcR[pos + 1] - srcR[pos]);
+                float l = (a[0] + frac * (b[0] - a[0])) * toFloat;
+                float r = ch > 1 ? (a[1] + frac * (b[1] - a[1])) * toFloat : l;
+
+                v.toneL += v.toneCoeff * (l - v.toneL);
+                v.toneR += v.toneCoeff * (r - v.toneR);
+                l = v.toneL;
+                r = v.toneR;
 
                 outL[i] += l * v.gainL * v.env * mg;
                 if (outR != nullptr)

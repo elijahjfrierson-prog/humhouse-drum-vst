@@ -6,7 +6,7 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\HumHouseDrums.iss
 
 #define MyAppName "HumHouse Drums X"
-#define MyAppVersion "1.6.1"
+#define MyAppVersion "1.7.0"
 #define MyAppPublisher "HumHouse"
 #define MyAppURL "https://github.com/elijahjfrierson-prog/humhouse-drum-vst"
 #define MyAppExeName "HumHouse Drums X.exe"
@@ -40,6 +40,17 @@ UninstallDisplayName={#MyAppName} {#MyAppVersion}
 WizardImageFile=..\..\Resources\Icons\InstallerSidebar.bmp
 WizardSmallImageFile=..\..\Resources\Icons\InstallerSmall.bmp
 SetupIconFile=..\..\Resources\Icons\HumHouseAppIcon.ico
+
+; An install always replaces whatever was there before: the AppId above makes
+; Inno upgrade the previous entry in place, and these deletions clear content
+; and plug-in copies an older setup left behind, so no stale kit or corpus
+; file survives into the new version.
+[InstallDelete]
+Type: filesandordirs; Name: "{commonappdata}\HumHouse\Drums X\Content"
+Type: filesandordirs; Name: "{commoncf64}\VST3\HumHouse Drums X.vst3"
+Type: filesandordirs; Name: "{commoncf32}\VST3\HumHouse Drums X.vst3"
+Type: filesandordirs; Name: "{localappdata}\Programs\Common\VST3\HumHouse Drums X.vst3"
+Type: files; Name: "{app}\{#MyAppExeName}"
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
