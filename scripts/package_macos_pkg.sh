@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Builds HumHouse-Drums-macOS.pkg — a proper GUI installer with EULA that
-# drops HumHouse Drums.vst3 into /Library/Audio/Plug-Ins/VST3/ and
-# HumHouse Drums.component into /Library/Audio/Plug-Ins/Components/.
+# Builds HumHouse-Drums-X-macOS.pkg — a proper GUI installer with EULA that
+# drops HumHouse Drums X.vst3 into /Library/Audio/Plug-Ins/VST3/ and
+# HumHouse Drums X.component into /Library/Audio/Plug-Ins/Components/.
 #
 # Runs on macOS. Uses pkgbuild + productbuild (Xcode Command Line Tools).
 #
@@ -14,11 +14,11 @@ REPO="$(cd "$HERE/.." && pwd)"
 
 VERSION="${VERSION:-0.9.0}"
 BUNDLE_ID="com.humhouse.humhousedrums.installer"
-PKG_OUT="${PKG_OUT:-HumHouse-Drums-macOS.pkg}"
+PKG_OUT="${PKG_OUT:-HumHouse-Drums-X-macOS.pkg}"
 
 ART="$REPO/build/AIDrumVST_artefacts/Release"
-VST3_SRC="$ART/VST3/HumHouse Drums.vst3"
-AU_SRC="$ART/AU/HumHouse Drums.component"
+VST3_SRC="$ART/VST3/HumHouse Drums X.vst3"
+AU_SRC="$ART/AU/HumHouse Drums X.component"
 
 if [[ ! -d "$VST3_SRC" ]]; then
   echo "ERROR: $VST3_SRC not found. Run 'cmake --build build --config Release' first." >&2
@@ -39,16 +39,22 @@ fi
 # If APPLE_DEVELOPER_ID is exported we'd use it; otherwise ad-hoc (-).
 SIGN_IDENTITY="${APPLE_DEVELOPER_ID:--}"
 codesign --force --deep --sign "$SIGN_IDENTITY" \
-  "$VST3_ROOT/HumHouse Drums.vst3" || true
-if [[ -d "$AU_ROOT/HumHouse Drums.component" ]]; then
+  "$VST3_ROOT/HumHouse Drums X.vst3" || true
+if [[ -d "$AU_ROOT/HumHouse Drums X.component" ]]; then
   codesign --force --deep --sign "$SIGN_IDENTITY" \
-    "$AU_ROOT/HumHouse Drums.component" || true
+    "$AU_ROOT/HumHouse Drums X.component" || true
 fi
 
 # Build two component packages, then wrap them in a productbuild archive
 # that shows a Welcome + License wizard.
 PKGDIR="$STAGE/pkgs"
 mkdir -p "$PKGDIR"
+
+# Groove corpus + kit content go to a shared location that the plug-in
+# version-checks at load (see DrumsXProcessor::loadContent).
+CONTENT_ROOT="$STAGE/content_root/Library/Application Support/HumHouse/Drums X/Content"
+mkdir -p "$CONTENT_ROOT"
+cp -R "$REPO/content/." "$CONTENT_ROOT/"
 
 # v1.6.1-rc.29 — PRE-INSTALL CLEANUP scripts. User reported rc.28
 # crashed FL Studio Mac on plugin load. Root cause is the same
@@ -70,14 +76,14 @@ mkdir -p "$VST3_SCRIPTS" "$AU_SCRIPTS"
 
 cat > "$VST3_SCRIPTS/preinstall" <<'PREINSTALL_VST3'
 #!/bin/sh
-# v1.6.1-rc.29 — wipe any prior HumHouse Drums.vst3 (system-wide
+# v1.6.1-rc.29 — wipe any prior HumHouse Drums X.vst3 (system-wide
 # + every per-user Library) so FL Studio's plugin DB doesn't see
 # two competing bundles with the same path. Silent-fail on errors:
 # we never want a missing path to abort the install.
-rm -rf "/Library/Audio/Plug-Ins/VST3/HumHouse Drums.vst3" 2>/dev/null || true
+rm -rf "/Library/Audio/Plug-Ins/VST3/HumHouse Drums X.vst3" 2>/dev/null || true
 for home in /Users/*; do
   [ -d "$home" ] || continue
-  rm -rf "$home/Library/Audio/Plug-Ins/VST3/HumHouse Drums.vst3" 2>/dev/null || true
+  rm -rf "$home/Library/Audio/Plug-Ins/VST3/HumHouse Drums X.vst3" 2>/dev/null || true
 done
 exit 0
 PREINSTALL_VST3
@@ -85,16 +91,16 @@ chmod +x "$VST3_SCRIPTS/preinstall"
 
 cat > "$AU_SCRIPTS/preinstall" <<'PREINSTALL_AU'
 #!/bin/sh
-# v1.6.1-rc.29 — wipe prior HumHouse Drums.component + flush the
+# v1.6.1-rc.29 — wipe prior HumHouse Drums X.component + flush the
 # Audio Unit validation cache so Logic Pro / GarageBand / FL
 # Studio re-validate the new bundle from scratch instead of
 # serving a cached "approved" result keyed to the old binary.
 # Killing AudioComponentRegistrar is the documented way to make
 # auval re-scan on next launch (Apple devforums, JUCE forum).
-rm -rf "/Library/Audio/Plug-Ins/Components/HumHouse Drums.component" 2>/dev/null || true
+rm -rf "/Library/Audio/Plug-Ins/Components/HumHouse Drums X.component" 2>/dev/null || true
 for home in /Users/*; do
   [ -d "$home" ] || continue
-  rm -rf "$home/Library/Audio/Plug-Ins/Components/HumHouse Drums.component" 2>/dev/null || true
+  rm -rf "$home/Library/Audio/Plug-Ins/Components/HumHouse Drums X.component" 2>/dev/null || true
   rm -rf "$home/Library/Caches/AudioUnitCache" 2>/dev/null || true
 done
 rm -rf "/Library/Caches/AudioUnitCache" 2>/dev/null || true
@@ -104,6 +110,13 @@ PREINSTALL_AU
 chmod +x "$AU_SCRIPTS/preinstall"
 
 pkgbuild \
+  --identifier "${BUNDLE_ID}.content" \
+  --version "$VERSION" \
+  --root "$STAGE/content_root" \
+  --install-location "/" \
+  "$PKGDIR/content.pkg"
+
+pkgbuild \
   --identifier "${BUNDLE_ID}.vst3" \
   --version "$VERSION" \
   --root "$STAGE/vst3_root" \
@@ -111,7 +124,7 @@ pkgbuild \
   --install-location "/" \
   "$PKGDIR/vst3.pkg"
 
-if [[ -d "$AU_ROOT/HumHouse Drums.component" ]]; then
+if [[ -d "$AU_ROOT/HumHouse Drums X.component" ]]; then
   pkgbuild \
     --identifier "${BUNDLE_ID}.au" \
     --version "$VERSION" \
@@ -126,15 +139,19 @@ DIST="$STAGE/distribution.xml"
 cat > "$DIST" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>HumHouse Drums $VERSION</title>
+    <title>HumHouse Drums X $VERSION</title>
     <welcome    file="welcome.html"    mime-type="text/html"/>
     <license    file="license.txt"     mime-type="text/plain"/>
     <conclusion file="conclusion.html" mime-type="text/html"/>
     <options    customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
     <choices-outline>
+        <line choice="content"/>
         <line choice="vst3"/>
 $( [[ -f "$PKGDIR/au.pkg" ]] && echo '        <line choice="au"/>' )
     </choices-outline>
+    <choice id="content" title="Groove Content" visible="true" start_selected="true" enabled="false" selected="true">
+        <pkg-ref id="${BUNDLE_ID}.content"/>
+    </choice>
     <choice id="vst3" title="VST3 Plug-in" visible="true" start_selected="true">
         <pkg-ref id="${BUNDLE_ID}.vst3"/>
     </choice>
@@ -144,6 +161,7 @@ $( [[ -f "$PKGDIR/au.pkg" ]] && cat <<CH
     </choice>
 CH
 )
+    <pkg-ref id="${BUNDLE_ID}.content" version="$VERSION" onConclusion="none">content.pkg</pkg-ref>
     <pkg-ref id="${BUNDLE_ID}.vst3" version="$VERSION" onConclusion="none">vst3.pkg</pkg-ref>
 $( [[ -f "$PKGDIR/au.pkg" ]] && echo "    <pkg-ref id=\"${BUNDLE_ID}.au\" version=\"$VERSION\" onConclusion=\"none\">au.pkg</pkg-ref>" )
 </installer-gui-script>
@@ -156,7 +174,7 @@ cp "$REPO/installer/LICENSE.txt" "$RES/license.txt"
 
 cat > "$RES/welcome.html" <<'HTML'
 <html><body style="font-family: -apple-system, system-ui; padding: 20px;">
-<h2 style="margin-top:0;">Welcome to HumHouse Drums</h2>
+<h2 style="margin-top:0;">Welcome to HumHouse Drums X</h2>
 <p>This installer will place the plug-ins in their standard locations so
 every supported DAW can find them automatically:</p>
 <ul>
@@ -164,8 +182,10 @@ every supported DAW can find them automatically:</p>
       <small>FL Studio, Ableton, Reaper, Cubase, Studio One, Bitwig&hellip;</small></li>
   <li><b>Audio Unit</b> &rarr; /Library/Audio/Plug-Ins/Components/<br/>
       <small>Logic Pro, GarageBand, MainStage</small></li>
+  <li><b>Groove content</b> &rarr; /Library/Application Support/HumHouse/Drums X/Content<br/>
+      <small>Shared by every plug-in format and version-checked at load.</small></li>
 </ul>
-<p>After installation, rescan plug-ins in your DAW. HumHouse Drums will
+<p>After installation, rescan plug-ins in your DAW. HumHouse Drums X will
 appear as an Instrument.</p>
 </body></html>
 HTML
@@ -181,11 +201,11 @@ cat > "$RES/conclusion.html" <<'HTML'
       Find installed plug-ins.</li>
   <li><b>Ableton</b> &rarr; Preferences &rarr; Plug-Ins &rarr; Rescan.</li>
 </ul>
-<p>HumHouse Drums will appear under <b>Instruments</b> / <b>Generators</b>.</p>
+<p>HumHouse Drums X will appear under <b>Instruments</b> / <b>Generators</b>.</p>
 </body></html>
 HTML
 
-UNSIGNED_PKG="$STAGE/HumHouse-Drums-unsigned.pkg"
+UNSIGNED_PKG="$STAGE/HumHouse-Drums-X-unsigned.pkg"
 productbuild \
   --distribution "$DIST" \
   --resources "$RES" \

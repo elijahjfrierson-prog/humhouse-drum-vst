@@ -14,11 +14,13 @@ if(MSVC)
         CACHE STRING "" FORCE)
 endif()
 
-# Warnings
+# Warnings, plus strict floating point so a render is bit-identical on every
+# platform: the golden-render fixtures compare hashes across Linux, Windows
+# and macOS, and fused or reassociated arithmetic breaks that.
 if(MSVC)
-    add_compile_options(/W4)
+    add_compile_options(/W4 /fp:precise)
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
+    add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter -ffp-contract=off)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -90,11 +92,11 @@ endif()
 # change in lockstep.
 juce_add_plugin(AIDrumVST
     COMPANY_NAME              "HumHouse"
-    BUNDLE_ID                 "com.humhouse.humhousedrums.mk4"
-    PLUGIN_MANUFACTURER_CODE  Hhm4
-    PLUGIN_CODE               Hh30
+    BUNDLE_ID                 "com.humhouse.humhousedrumsx"
+    PLUGIN_MANUFACTURER_CODE  Hhm5
+    PLUGIN_CODE               HhX1
     FORMATS                   ${AIDRUM_FORMATS}
-    PRODUCT_NAME              "HumHouse Drums"
+    PRODUCT_NAME              "HumHouse Drums X"
     IS_SYNTH                  TRUE
     NEEDS_MIDI_INPUT          TRUE
     NEEDS_MIDI_OUTPUT         TRUE
@@ -112,10 +114,10 @@ juce_add_plugin(AIDrumVST
 
 juce_generate_juce_header(AIDrumVST)
 
-# v1.4.0 — bundle the CC0 default drum kit so the plugin makes
-# real-sample sound out of the box, no user setup required.
+# HumHouse Drums X ships exactly one kit: the SoCal rock kit sliced from
+# HumHouse's own recordings by tools/kitx/slice_kit.py.
 file(GLOB AIDRUM_DEFAULT_KIT_FILES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/DefaultKit/*.wav")
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/KitX/*.wav")
 if(AIDRUM_DEFAULT_KIT_FILES)
     juce_add_binary_data(AIDrumBundledKit
         HEADER_NAME BundledKitData.h
@@ -143,25 +145,27 @@ else()
     target_compile_definitions(AIDrumVST PRIVATE AIDRUM_HAS_BRANDING=0)
 endif()
 
+# The compiled human-performance corpus (Magenta Groove MIDI Dataset, CC-BY 4.0,
+# rebuilt by tools/corpusx/build_corpus.py). This is what makes X play real
+# takes instead of computing notes from probability tables.
+juce_add_binary_data(AIDrumCorpus
+    HEADER_NAME CorpusData.h
+    NAMESPACE   CorpusData
+    SOURCES     "${CMAKE_CURRENT_SOURCE_DIR}/content/rock_corpus.hhc")
+target_link_libraries(AIDrumVST PRIVATE AIDrumCorpus)
+
 target_sources(AIDrumVST PRIVATE
-    Source/PluginProcessor.cpp
-    Source/PluginProcessor.h
-    Source/PluginEditor.cpp
-    Source/PluginEditor.h
-    Source/AIBackend.cpp
-    Source/AIBackend.h
-    Source/DrumKit.cpp
-    Source/DrumKit.h
-    Source/DrumSynth.h
-    Source/DrumBusMixer.h
-    Source/SampleKit.h
-    Source/SampleKit.cpp
-    Source/MixerPanel.h
-    Source/MidiPattern.h
-    Source/GothicLookAndFeel.h
-    Source/PatternStrip.h
-    Source/ArrangementStrip.h
-    Source/ManualGrid.h
+    SourceX/DrumsXProcessor.cpp
+    SourceX/DrumsXProcessor.h
+    SourceX/DrumsXEditor.cpp
+    SourceX/DrumsXEditor.h
+    SourceX/DrumsXLookAndFeel.h
+    SourceX/GrooveCorpus.cpp
+    SourceX/GrooveCorpus.h
+    SourceX/PerformanceEngine.cpp
+    SourceX/PerformanceEngine.h
+    SourceX/KitEngine.cpp
+    SourceX/KitEngine.h
 )
 
 target_compile_definitions(AIDrumVST PUBLIC
@@ -182,3 +186,87 @@ target_link_libraries(AIDrumVST PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
 )
+
+# --- Engine tests ------------------------------------------------------------
+# The corpus and performance engine are deliberately JUCE-free so the
+# determinism / fill-variation guarantees can be tested as a plain executable.
+enable_testing()
+add_executable(HHDXEngineTests
+    tests/EngineTests.cpp
+    SourceX/GrooveCorpus.cpp
+    SourceX/PerformanceEngine.cpp)
+target_compile_features(HHDXEngineTests PRIVATE cxx_std_20)
+add_test(NAME HHDXEngineTests
+         COMMAND HHDXEngineTests "${CMAKE_CURRENT_SOURCE_DIR}/content/rock_corpus.hhc"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden_renders.txt")
+
+# --- Processor tests ---------------------------------------------------------
+# Edit preservation, the CPU budget and project-state round-trip need the real
+# processor, so this one links JUCE and the bundled content.
+juce_add_console_app(HHDXProcessorTests PRODUCT_NAME "HHDXProcessorTests")
+juce_generate_juce_header(HHDXProcessorTests)
+target_sources(HHDXProcessorTests PRIVATE
+    tests/ProcessorTests.cpp
+    SourceX/DrumsXProcessor.cpp
+    SourceX/DrumsXEditor.cpp
+    SourceX/GrooveCorpus.cpp
+    SourceX/PerformanceEngine.cpp
+    SourceX/KitEngine.cpp)
+target_compile_definitions(HHDXProcessorTests PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_STANDALONE_APPLICATION=1
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    JucePlugin_Name="HumHouse Drums X"
+    AIDRUM_HAS_BUNDLED_KIT=$<BOOL:${AIDRUM_DEFAULT_KIT_FILES}>
+    AIDRUM_HAS_BRANDING=0)
+target_link_libraries(HHDXProcessorTests PRIVATE
+    AIDrumCorpus
+    juce::juce_audio_utils
+    juce::juce_audio_formats
+    juce::juce_dsp
+    juce::juce_gui_extra
+    PUBLIC
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_warning_flags)
+if(AIDRUM_DEFAULT_KIT_FILES)
+    target_link_libraries(HHDXProcessorTests PRIVATE AIDrumBundledKit)
+endif()
+add_test(NAME HHDXProcessorTests COMMAND HHDXProcessorTests)
+
+# --- Soak test ---------------------------------------------------------------
+# An hour of offline playback with the controls moving: renders far faster than
+# real time, so it is cheap enough to keep in CI.
+juce_add_console_app(HHDXSoakTest PRODUCT_NAME "HHDXSoakTest")
+juce_generate_juce_header(HHDXSoakTest)
+target_sources(HHDXSoakTest PRIVATE
+    tests/SoakTest.cpp
+    SourceX/DrumsXProcessor.cpp
+    SourceX/DrumsXEditor.cpp
+    SourceX/GrooveCorpus.cpp
+    SourceX/PerformanceEngine.cpp
+    SourceX/KitEngine.cpp)
+target_compile_definitions(HHDXSoakTest PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_STANDALONE_APPLICATION=1
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    JucePlugin_Name="HumHouse Drums X"
+    AIDRUM_HAS_BUNDLED_KIT=$<BOOL:${AIDRUM_DEFAULT_KIT_FILES}>
+    AIDRUM_HAS_BRANDING=0)
+target_link_libraries(HHDXSoakTest PRIVATE
+    AIDrumCorpus
+    juce::juce_audio_utils
+    juce::juce_audio_formats
+    juce::juce_dsp
+    juce::juce_gui_extra
+    PUBLIC
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_warning_flags)
+if(AIDRUM_DEFAULT_KIT_FILES)
+    target_link_libraries(HHDXSoakTest PRIVATE AIDrumBundledKit)
+endif()
+add_test(NAME HHDXSoakTest COMMAND HHDXSoakTest 60)
+set_tests_properties(HHDXSoakTest PROPERTIES TIMEOUT 1800)
