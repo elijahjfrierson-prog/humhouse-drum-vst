@@ -980,6 +980,8 @@ namespace hhx
     //==============================================================================
     juce::MidiMessageSequence DrumsXProcessor::buildSequence (int numBars, int laneFilter) const
     {
+        // MidiFile::writeTo emits sequence timestamps as raw ticks, so the
+        // whole sequence lives in ticks rather than beats.
         juce::MidiMessageSequence seq;
         const auto s = buildSettings();
         const auto hits = renderBars (0, numBars);
@@ -989,8 +991,9 @@ namespace hhx
             if (laneFilter >= 0 && h.lane != laneFilter)
                 continue;
             const int note = laneToMidiNote (h.lane);
-            seq.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), (double) h.beat);
-            seq.addEvent (juce::MidiMessage::noteOff (10, note), (double) h.beat + 0.05);
+            const double tick = (double) h.beat * kTicksPerQuarter;
+            seq.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), tick);
+            seq.addEvent (juce::MidiMessage::noteOff (10, note), tick + kNoteTicks);
         }
         seq.updateMatchedPairs();
         juce::ignoreUnused (s);
@@ -1002,7 +1005,7 @@ namespace hhx
         const auto s = buildSettings();
 
         juce::MidiFile file;
-        file.setTicksPerQuarterNote (960);
+        file.setTicksPerQuarterNote (kTicksPerQuarter);
 
         juce::MidiMessageSequence meta;
         meta.addEvent (juce::MidiMessage::timeSignatureMetaEvent (s.timeSigNum, s.timeSigDen), 0.0);
@@ -1040,7 +1043,7 @@ namespace hhx
                 continue;
 
             juce::MidiFile file;
-            file.setTicksPerQuarterNote (960);
+            file.setTicksPerQuarterNote (kTicksPerQuarter);
 
             juce::MidiMessageSequence meta;
             meta.addEvent (juce::MidiMessage::timeSignatureMetaEvent (s.timeSigNum, s.timeSigDen), 0.0);

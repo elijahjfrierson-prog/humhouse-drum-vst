@@ -340,6 +340,44 @@ int main()
         folder.deleteRecursively();
     }
 
+    // 4b. Exported MIDI must span the bars it claims. MidiFile writes sequence
+    //     timestamps as ticks, so a sequence built in beats collapses the whole
+    //     performance into the first beat with zero-length notes.
+    {
+        const auto dest = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getChildFile ("hhx_export_test.mid");
+        dest.deleteFile();
+        check (proc.exportArrangementMidi (dest, 8) && dest.getSize() > 0,
+               "the arrangement exports to a MIDI file");
+
+        juce::FileInputStream in (dest);
+        juce::MidiFile read;
+        check (read.readFrom (in) && read.getNumTracks() >= 2, "the exported file parses");
+        check (read.getTimeFormat() > 0, "the exported file is tick-based");
+
+        const double ticksPerQuarter = (double) read.getTimeFormat();
+        const auto* track = read.getTrack (read.getNumTracks() - 1);
+        double lastBeat = 0.0;
+        int    notes = 0;
+        double shortest = 1.0e9;
+        for (int i = 0; track != nullptr && i < track->getNumEvents(); ++i)
+        {
+            const auto* ev = track->getEventPointer (i);
+            if (! ev->message.isNoteOn())
+                continue;
+            ++notes;
+            lastBeat = std::max (lastBeat, ev->message.getTimeStamp() / ticksPerQuarter);
+            if (ev->noteOffObject != nullptr)
+                shortest = std::min (shortest, (ev->noteOffObject->message.getTimeStamp()
+                                                - ev->message.getTimeStamp()) / ticksPerQuarter);
+        }
+        check (notes > 8, "the exported file holds the performance");
+        check (lastBeat > 24.0, "exported notes span the whole eight bars");
+        check (shortest > 0.01, "exported notes have real length, not zero");
+
+        dest.deleteFile();
+    }
+
     // 5. The kit we actually ship: depth, articulations and attribution.
    #ifdef HHX_SHIPPED_KIT_DIR
     {

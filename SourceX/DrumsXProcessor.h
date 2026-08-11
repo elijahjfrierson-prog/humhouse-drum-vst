@@ -215,6 +215,11 @@ namespace hhx
         void  setUiScale (float s) { uiScale.store (juce::jlimit (0.7f, 1.6f, s)); }
 
     private:
+        /** MidiFile timestamps are ticks, so exported sequences are built in
+            ticks and every note gets a 32nd of sounding length. */
+        static constexpr double kTicksPerQuarter = 960.0;
+        static constexpr double kNoteTicks       = 120.0;
+
         static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
         void parameterChanged (const juce::String& id, float value) override;
         void handleAsyncUpdate() override;
