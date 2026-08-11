@@ -8,6 +8,8 @@
 #include <chrono>
 #include <cstdio>
 #include <random>
+#include <set>
+#include <string>
 
 namespace
 {
@@ -201,6 +203,50 @@ int main()
                "the + button keeps appending sections");
         check (song.getSelectedSection() == 40 && song.sectionStartBar (40) == 320,
                "the new section is selected and sits at the end of the song");
+
+        // "+" writes song form rather than copies of one block, and the form
+        // itself comes from the seed instead of always being the same A/B/C.
+        {
+            const auto form = song.getArrangement();
+            int counts[hhx::NumSections] {};
+            for (const auto& sec : form)
+                ++counts[sec.section];
+
+            check (form[0].section == hhx::SectionVerse
+                   && counts[hhx::SectionVerse] > 0 && counts[hhx::SectionChorus] > 0,
+                   "+ writes a song of verses and choruses, starting on a verse");
+
+            bool chorusesLift = true, versesHold = true;
+            for (const auto& sec : form)
+            {
+                if (sec.section == hhx::SectionChorus
+                    && ! (sec.velocity > form[0].velocity && sec.complexity > form[0].complexity))
+                    chorusesLift = false;
+                if (sec.section == hhx::SectionVerse
+                    && std::abs (sec.velocity - form[0].velocity) > 0.001f)
+                    versesHold = false;
+                if (sec.section == hhx::SectionBridge && ! sec.halfTime)
+                    versesHold = false;
+            }
+            check (chorusesLift, "every chorus is played harder and busier than the verse");
+            check (versesHold, "verses return home and bridges drop to half-time");
+
+            std::set<std::string> shapes;
+            for (int take = 0; take < 8; ++take)
+            {
+                hhx::DrumsXProcessor next;
+                for (int r = 0; r < take; ++r)
+                    next.regenerate();
+                for (int i = 0; i < 5; ++i)
+                    next.addSection();
+
+                std::string shape;
+                for (const auto& sec : next.getArrangement())
+                    shape += std::to_string (sec.section);
+                shapes.insert (shape);
+            }
+            check (shapes.size() >= 3, "regenerating lays the song out differently");
+        }
 
         // Push the selected block only.
         song.setSelectedSection (7);

@@ -686,7 +686,60 @@ namespace hhx
 
     void DrumsXProcessor::addSection()
     {
-        duplicateSection (selectedSection.load());
+        // "+" writes song form, not another copy of the same block: a drummer
+        // thinks in verses and choruses and plays each of them differently.
+        // Which form a song takes is drawn from the seed, so two songs do not
+        // both march through the same A/B/C/A. The type still gets shaped
+        // further by the engine's section colouring, so the block knobs only
+        // lean in the right direction rather than doing the whole job.
+        static const std::vector<std::vector<int>> forms {
+            { SectionVerse, SectionChorus, SectionVerse, SectionChorus },
+            { SectionVerse, SectionChorus, SectionVerse, SectionBridge, SectionChorus },
+            { SectionVerse, SectionChorus, SectionChorus, SectionVerse, SectionChorus },
+            { SectionVerse, SectionVerse, SectionChorus, SectionBridge, SectionChorus, SectionChorus },
+            { SectionVerse, SectionChorus, SectionVerse, SectionChorus, SectionBridge, SectionChorus },
+        };
+        const auto& form = forms[(std::size_t) (seed.load() % forms.size())];
+
+        int added = 0;
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+
+            // The song's first block is home: every later verse returns to it
+            // instead of inheriting whatever the last chorus was set to.
+            ArrangementSection sec;
+            if (! arrangement.empty())
+                sec = arrangement.front();
+
+            sec.id      = nextSectionId++;
+            sec.section = form[arrangement.size() % form.size()];
+
+            switch (sec.section)
+            {
+                case SectionChorus:
+                    sec.complexity = juce::jmin (1.0f, sec.complexity + 0.12f);
+                    sec.velocity   = juce::jmin (1.0f, sec.velocity + 0.12f);
+                    sec.fillAmount = juce::jmin (1.0f, sec.fillAmount + 0.10f);
+                    sec.halfTime   = false;
+                    break;
+                case SectionBridge:
+                    sec.complexity = juce::jmax (0.0f, sec.complexity - 0.15f);
+                    sec.velocity   = juce::jmax (0.0f, sec.velocity - 0.08f);
+                    sec.halfTime   = true;
+                    break;
+                default:
+                    sec.halfTime = false;
+                    break;
+            }
+
+            arrangement.push_back (sec);
+            added = (int) arrangement.size() - 1;
+        }
+
+        selectedSection.store (added);
+        pushSectionToParams (added);
+        rebuildTimeline();
+        updateHostDisplay();
     }
 
     void DrumsXProcessor::duplicateSection (int index)

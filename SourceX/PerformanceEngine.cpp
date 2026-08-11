@@ -146,7 +146,12 @@ namespace hhx
         out.variationRhythm = found->variationRhythm;
         out.variationCymbal = found->variationCymbal;
         out.sectionHint     = found->section;
-        out.sectionSalt     = (std::uint64_t) found->id;
+
+        // Blocks of the same kind share a groove, so the second chorus is the
+        // same chorus played again rather than a different song: what makes the
+        // repeat live is the fills, the round robins and the humanisation,
+        // which all move with the bar.
+        out.sectionSalt     = 0x9E3779B1ull * (std::uint64_t) (found->section + 1);
         return out;
     }
 
