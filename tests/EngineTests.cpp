@@ -670,6 +670,39 @@ int main (int argc, char** argv)
         check (stillFilled == 0, "Fills at zero really means no fills");
     }
 
+    // 15f-2. A fill glues the arrangement together, so it is played to the
+    // grid: with Humanize off every hit of it lands on a sixteenth or a
+    // triplet eighth, in 4/4 and in a stretched metre alike.
+    {
+        const auto offGrid = [&] (const hhx::PerformanceSettings& set)
+        {
+            int bad = 0;
+            for (const auto& h : engine.renderBars (set, 0, 16))
+            {
+                const float r   = h.beat - std::floor (h.beat);
+                const float d32 = std::abs (r * 8.0f - std::round (r * 8.0f)) / 8.0f;
+                const float d12 = std::abs (r * 3.0f - std::round (r * 3.0f)) / 3.0f;
+                if (std::min (d32, d12) > 0.01f)
+                    ++bad;
+            }
+            return bad;
+        };
+
+        auto t = s;
+        t.humanize      = 0.0f;
+        t.swing         = 0.0f;
+        t.feel          = 0.5f;
+        t.fillAmount    = 1.0f;
+        t.phraseBars    = 2;
+        check (offGrid (t) == 0, "fills and groove sit on the grid with Humanize off");
+
+
+        auto waltz = t;
+        waltz.timeSigNum = 3;
+        waltz.beatsPerBar = 3.0f;
+        check (offGrid (waltz) == 0, "a fill stretched into 3/4 still lands on the grid");
+    }
+
     // 16. Landing zone: the XY position resolves to real neighbouring takes.
     {
         const auto zone = engine.landingZone (s, 8);

@@ -403,10 +403,23 @@ namespace hhx
 
         for (const auto& h : f.hits)
         {
-            const float src = h.gridBeat() + h.devBeats();
+            const float src = h.gridBeat();
             if (src < srcSkip)
                 continue;
-            const float beat = fillStartBeat + (src - srcSkip) * scale;
+
+            // A fill has to turn the corner with the bar, so it is played to
+            // the grid: stretching a source phrase into another bar length
+            // lands its hits between subdivisions, and those are pulled back
+            // onto the nearest sixteenth or triplet eighth. The take's own
+            // micro-timing then rides on top, but only as far as Humanize asks.
+            const float rel  = (src - srcSkip) * scale;
+            const float q16  = std::round (rel * 4.0f) / 4.0f;
+            const float q12  = std::round (rel * 3.0f) / 3.0f;
+            const float snap = std::abs (rel - q16) <= std::abs (rel - q12) ? q16 : q12;
+
+            const float beat = fillStartBeat + snap
+                             + h.devBeats() * scale * 0.5f
+                               * std::clamp (s.humanize, 0.0f, 1.0f);
             if (beat < fillStartBeat - 0.02f || beat >= phraseBeats - 0.005f)
                 continue;
 
@@ -828,6 +841,14 @@ namespace hhx
 
             vel *= velGain;
             vel *= 1.0f - 0.05f * s.humanize * rand01 (seed, i, 5);
+
+            // No drummer repeats a stroke exactly, and no drummer holds one
+            // level across a song: a couple of percent of movement per hit, and
+            // a slow lift and fall across sixteen bars, so the arrangement
+            // breathes rather than being stamped out.
+            vel *= 1.0f + 0.03f * (rand01 (seed, i, 0x3Bu) - 0.5f) * 2.0f;
+            vel *= 1.0f + 0.035f * cycleSin ((float) (phraseIndex * bars) / 16.0f
+                                             + beat / (16.0f * dstBar));
 
             // --- round robin: never the same sample twice in a row on a lane.
             const int slots = kRoundRobins;

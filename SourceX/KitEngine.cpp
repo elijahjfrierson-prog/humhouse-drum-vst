@@ -686,21 +686,33 @@ namespace hhx
         if (chosen.mics[MicClose] == nullptr)
             return;
 
+        // A hat or a ride is struck dozens of times a bar, so it is the lane
+        // where an unvarying sample reads as plastic first: it gets a wider
+        // spread of tuning and level per stroke than a shell does.
+        const bool ting = isHatLane (lane) || isRideLane (lane);
+
         // Micro-variation: a few cents and a fraction of a dB per hit keeps
         // repeated notes from phase-cancelling into an obvious loop.
-        const float cents = (dither (2) - 0.5f) * 22.0f + slot.tune.load() * 100.0f;
-        const float trim  = juce::Decibels::decibelsToGain ((dither (3) - 0.5f) * 1.3f);
+        const float cents = (dither (2) - 0.5f) * (ting ? 34.0f : 22.0f)
+                          + slot.tune.load() * 100.0f;
+        const float trim  = juce::Decibels::decibelsToGain (
+                                (dither (3) - 0.5f) * (ting ? 2.2f : 1.3f));
 
         // How much of the dynamic range the recordings already carry. On a deep
         // kit the layers do the work and the fader only tops it up; on a
         // one-layer kit the fader is all there is.
         const float depth   = juce::jmin (1.0f, (float) numLayers / 5.0f);
-        const float curve   = std::pow (vel, 0.75f);
+        // Cymbals carry more of their dynamics in level than the shells do, so
+        // a light stroke really is a light stroke instead of the same ting at a
+        // slightly lower fader - and they sit a little behind the kit, where a
+        // room mic would put them.
+        const float curve   = std::pow (vel, ting ? 1.15f : 0.75f);
         const float velGain = juce::jmap (depth, curve, 0.45f + 0.55f * curve);
 
         const float gain = velGain * trim
                          * juce::Decibels::decibelsToGain (slot.gainDb.load()
-                                                           + kitTrimDb.load());
+                                                           + kitTrimDb.load()
+                                                           + (ting ? -2.5f : 0.0f));
         const float pan  = juce::jlimit (-1.0f, 1.0f,
                                          slot.pan.load() + (dither (4) - 0.5f) * 0.05f);
         const float gl   = gain * std::sqrt (0.5f * (1.0f - pan));
@@ -716,7 +728,8 @@ namespace hhx
         // lightly struck cymbal never excites its top octave. Without this a
         // ladder of level-matched multisamples reads as one flat, boxy hit.
         const float reach = juce::jmap (depth, 0.85f, 0.4f);
-        const float dark  = (1.0f - std::pow (vel, 0.8f)) * reach;
+        const float dark  = (1.0f - std::pow (vel, 0.8f)) * reach
+                          + (ting ? 0.16f : 0.0f);   // takes the wire off the top
         const float cutoff = 20000.0f * std::exp (-3.1f * dark);
         const float tone = dark < 0.02f
                          ? 1.0f
