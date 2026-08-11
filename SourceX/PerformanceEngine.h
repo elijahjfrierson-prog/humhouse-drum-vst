@@ -29,6 +29,12 @@ namespace hhx
 
         float complexity = 0.45f;
         float intensity  = 0.55f;
+
+        /** The block's own Intensity knob: how hard this section is played.
+            It scales dynamics only and is deliberately not part of the XY
+            pad, which chooses which take is played rather than how loud. */
+        float velocity   = 0.55f;
+
         float fillAmount = 0.35f;
         float swing      = 0.0f;
         bool  halfTime   = false;
@@ -46,8 +52,9 @@ namespace hhx
     struct PerformanceSettings
     {
         // --- performance ------------------------------------------------
-        float complexity   = 0.45f;
-        float intensity    = 0.55f;
+        float complexity   = 0.45f;   // pad X: which take is picked
+        float intensity    = 0.55f;   // pad Y: which take is picked
+        float sectionVelocity = 0.55f; // Intensity knob: how hard it is played
         int   character    = 1;        // index into the corpus character table
 
         // --- fills ------------------------------------------------------
@@ -113,6 +120,17 @@ namespace hhx
         std::vector<Hit> renderPhrasePreview (const PerformanceSettings& s,
                                               int phraseIndex) const;
 
+        /** Where the pad's (complexity, loudness) position lands in the
+            corpus. The pad is curved onto the part of the library that plays
+            like a song rather than like a practice session, so the top corner
+            is still a real take and not the busiest bar in the dataset. */
+        static void corpusTarget (const PerformanceSettings& s,
+                                  float& complexity,
+                                  float& intensity);
+
+        /** The most hits per bar the pad position is allowed to produce. */
+        static float densityCap (const PerformanceSettings& s);
+
         bool phraseEndsWithFill (const PerformanceSettings& s, int phraseIndex) const;
 
         /** Where the current XY position lands: the nearest real takes, for the
@@ -147,6 +165,24 @@ namespace hhx
             const Phrase* skeleton = nullptr;   // kick / snare / toms
             const Phrase* colour   = nullptr;   // hats / ride / cymbals
         };
+
+        /** Drops the weakest ornamentation until the bar is no busier than the
+            pad asked for, so a high pad position stays a groove. */
+        void thinOrnaments (const PerformanceSettings& s,
+                            float dstBar,
+                            int   bars,
+                            std::vector<Raw>& raw) const;
+
+        /** Crashes on the landmarks a drummer would hit: the top of a section,
+            the downbeat after a fill, and - the harder the section is played -
+            the halfway point of the phrase. */
+        void addCrashes (const PerformanceSettings& base,
+                         const PerformanceSettings& sec,
+                         int   phraseIndex,
+                         int   bars,
+                         float dstBar,
+                         std::uint64_t seed,
+                         std::vector<Hit>& out) const;
 
         Sources pickSources (const PerformanceSettings& s,
                              int phraseIndex,

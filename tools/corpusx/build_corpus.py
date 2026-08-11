@@ -71,6 +71,9 @@ CHARACTERS = [
     ("Roots Rock",   ("country", "rock/rockabilly", "rock/folk",
                       "neworleans/funk", "soul"),              0.42, 0.50, 0.34),
     ("Prog",         ("rock/prog", "jazz/fusion", "funk"),     0.78, 0.62, 0.34),
+    # Radius 0: no source take joins this character, it is built by
+    # double_kick() from the hardest-hitting takes (see that function).
+    ("Metal 2x Kick", ("punk", "rock", "rock/prog"),           0.92, 0.94, 0.0),
 ]
 
 # Source styles we accept at all. Everything else is a different product.
@@ -215,6 +218,95 @@ def score_complexity(notes: list[Note], bars: float) -> float:
                         + 0.25 * limb_score))
 
 
+def score_musicality(notes: list[Note], bars: int, beats_per_bar: float) -> float:
+    """0..1 - how much the take sounds like a song rather than a warm-up.
+
+    The library is a practice room: alongside the songs it holds fills played
+    over no groove, hand-drills, bars where the drummer lost the click and
+    bars stuffed past thirty hits. Those are the takes that read as "spray",
+    and no amount of downstream thinning rescues them, so they are scored
+    here and the poor ones never reach the corpus at all.
+    """
+    if not notes:
+        return 0.0
+
+    span = bars * beats_per_bar
+    kicks = [n for n in notes if n.lane == L.KICK]
+    snares = [n for n in notes if n.lane in L.SNARE_FAMILY
+              and n.lane != L.SNARE_GHOST]
+    pulse = [n for n in notes if n.lane in L.HAT_FAMILY or n.lane in L.RIDE_FAMILY]
+
+    # A backbeat: something cracks in the second half of every bar, and the
+    # kick states the downbeat. Without both, the bar has no floor.
+    backbeat = 0
+    downbeat = 0
+    for bar in range(bars):
+        base = bar * beats_per_bar
+        if any(base + beats_per_bar * 0.4 <= n.beat < base + beats_per_bar * 0.95
+               for n in snares):
+            backbeat += 1
+        if any(abs(n.beat - base) < 0.35 for n in kicks):
+            downbeat += 1
+    foundation = 0.65 * (backbeat / bars) + 0.35 * (downbeat / bars)
+
+    # On the grid: a drummer pushes and pulls by a few milliseconds, they do
+    # not land between the 16ths. Triplets count as on the grid too.
+    on_grid = 0
+    for n in notes:
+        s16 = n.beat * 4.0
+        s12 = n.beat * 3.0
+        if min(abs(s16 - round(s16)) / 4.0, abs(s12 - round(s12)) / 3.0) < 0.055:
+            on_grid += 1
+    grid = on_grid / len(notes)
+
+    # A steady subdivision under the groove. Hats or ride that wander in and
+    # out at random intervals are a drill, not a part.
+    steady = 0.5
+    if len(pulse) >= 4:
+        gaps = [b.beat - a.beat for a, b in zip(pulse, pulse[1:])
+                if b.beat - a.beat < beats_per_bar]
+        if gaps:
+            common = max(set(round(g, 2) for g in gaps),
+                         key=lambda g: sum(1 for x in gaps if abs(x - g) < 0.06))
+            steady = sum(1 for g in gaps if abs(g - common) < 0.06) / len(gaps)
+
+    # Density sanity: rock lives near 8-16 hits a bar; past the mid twenties
+    # every stroke masks the last one.
+    per_bar = len(notes) / bars
+    if per_bar <= 18.0:
+        room = 1.0
+    else:
+        room = max(0.0, 1.0 - (per_bar - 18.0) / 12.0)
+
+    # Clutter: more than three drums struck together is a crash landing, not
+    # a voicing.
+    clutter = 0
+    i = 0
+    while i < len(notes):
+        j = i
+        while j < len(notes) and notes[j].beat - notes[i].beat < 0.04:
+            j += 1
+        if j - i > 3:
+            clutter += j - i
+        i = max(j, i + 1)
+    tidy = max(0.0, 1.0 - clutter / len(notes) * 3.0)
+
+    # Silence in the middle of a groove means the take stopped, or the slice
+    # caught the end of one.
+    edges = [0.0] + [n.beat for n in notes] + [span]
+    hole = max(b - a for a, b in zip(edges, edges[1:]))
+    flowing = 1.0 if hole <= beats_per_bar else max(0.0, 1.0 - (hole - beats_per_bar))
+
+    return (0.34 * foundation + 0.20 * grid + 0.16 * steady
+            + 0.14 * room + 0.08 * tidy + 0.08 * flowing)
+
+
+# A groove has to hold up on its own, so it is judged hard. A fill is a
+# departure by definition - it only has to be played in time and stay tidy.
+MIN_MUSICALITY_BEAT = 0.74
+MIN_MUSICALITY_FILL = 0.34
+
+
 def score_intensity(notes: list[Note]) -> float:
     """0..1 - how hard the phrase is hit, weighted toward backbeat lanes."""
     if not notes:
@@ -305,7 +397,9 @@ def assign_characters(p: Phrase) -> int:
         # Never orphan a real take: give it to the nearest character that
         # accepts its style, else to the nearest character outright.
         best, best_d = 0, 9.9
-        for bit, (_, styles, cx, inten, _r) in enumerate(CHARACTERS):
+        for bit, (_, styles, cx, inten, radius) in enumerate(CHARACTERS):
+            if radius <= 0.0:
+                continue
             style_ok = any(p.style == s or p.style.startswith(s + "/")
                            for s in styles)
             d = ((p.complexity - cx) ** 2 + (p.intensity - inten) ** 2) ** 0.5
@@ -339,6 +433,9 @@ def slice_phrases(notes: list[Note], bars: int, bpm: int, style: str,
             continue          # a tail, not a phrase
         rel = [Note(n.lane, n.beat - idx * span, n.velocity) for n in window]
         rel = [n for n in rel if -0.05 <= n.beat < span]
+        floor = MIN_MUSICALITY_FILL if kind == KIND_FILL else MIN_MUSICALITY_BEAT
+        if score_musicality(rel, bars, beats_per_bar) < floor:
+            continue
         p = Phrase(kind=kind, bars=bars, bpm=bpm, style=style, drummer=drummer,
                    sig_num=sig[0], sig_den=sig[1], notes=rel)
         p.complexity = score_complexity(rel, span / BEATS_PER_BAR)
@@ -518,6 +615,80 @@ def derive(base: Phrase, notes: list[Note], want_i: float) -> Phrase:
     return p
 
 
+DOUBLE_KICK_BIT = next(bit for bit, (name, *_r) in enumerate(CHARACTERS)
+                       if name == "Metal 2x Kick")
+
+
+def kick_runs(bpm: int) -> list[list[float]]:
+    """Two-footed kick figures, as offsets within one beat."""
+    if bpm >= 168:                       # already fast: 8ths are two feet
+        return [[0.0],                   # feet drop out, groove still metal
+                [0.0, 0.5],
+                [0.0, 0.5, 0.75],        # gallop
+                [0.0, 0.25, 0.5, 0.75]]
+    return [[0.0, 0.5],                  # sparse: one foot keeps 8ths
+            [0.0, 0.25, 0.5, 0.75],      # sustained 16ths
+            [0.0, 0.5, 0.75],            # gallop
+            [0.0, 0.25, 0.5]]            # broken run
+
+
+def double_kick(phrases: list[Phrase]) -> list[Phrase]:
+    """Builds the Metal 2x Kick character: real takes, two-footed kick lane.
+
+    The GMD was recorded on a single pedal - across its 1150 files the longest
+    run of 16th-note kicks is 13 strokes and only five files sustain more than
+    five - so a double-kick groove cannot be sampled out of it. This is the one
+    place where kick onsets are placed rather than performed. Everything above
+    the feet is left exactly as the drummer played it, and the feet borrow that
+    drummer's own kick velocities and their deviation from the grid, alternating
+    lead and follow foot, so the run breathes instead of machine-gunning.
+    """
+    added: list[Phrase] = []
+    sources = [p for p in phrases
+               if p.kind == KIND_BEAT and not p.derived
+               and p.intensity >= 0.55 and p.sig_den == 4
+               and 88 <= p.bpm <= 200
+               and any(p.style.startswith(s) for s in ("rock", "punk"))]
+    sources.sort(key=lambda p: (-p.intensity, -p.complexity))
+    sources = sources[:220]
+
+    for base in sources:
+        kicks = [n for n in base.notes if n.lane == L.KICK]
+        if len(kicks) < 3:
+            continue
+
+        # The drummer's own foot: how hard, and how far off the grid.
+        vels = [n.velocity for n in kicks]
+        devs = [n.beat - round(n.beat * 4.0) / 4.0 for n in kicks]
+        upper = [n for n in base.notes if n.lane != L.KICK]
+        span = base.bars * base.beats_per_bar
+
+        for run in kick_runs(base.bpm):
+            feet: list[Note] = []
+            i = 0
+            beat = 0.0
+            while beat < span:
+                for off in run:
+                    at = beat + off
+                    if at >= span:
+                        break
+                    lead = (i % 2) == 0
+                    v = vels[i % len(vels)]
+                    if not lead:
+                        v = int(round(v * 0.93))      # follow foot sits back
+                    dev = devs[i % len(devs)] * (1.0 if lead else 1.35)
+                    feet.append(Note(L.KICK, max(0.0, at + dev),
+                                     max(1, min(127, v))))
+                    i += 1
+                beat += 1.0
+
+            notes = sorted(upper + feet, key=lambda n: n.beat)
+            for row in (0.40, 0.58, 0.72, 0.86, 0.97):
+                added.append(derive(base, notes, row))
+                added[-1].char_mask = 1 << DOUBLE_KICK_BIT
+    return phrases + added
+
+
 def densify(phrases: list[Phrase]) -> list[Phrase]:
     """Fills every empty complexity x loudness cell, per character.
 
@@ -535,21 +706,34 @@ def densify(phrases: list[Phrase]) -> list[Phrase]:
         empty = {(cx, cy) for cx in range(10) for cy in range(10)}
         empty -= {cell_of(p) for p in mine}
 
-        ranked = sorted(mine, key=lambda p: p.complexity)
+        # Re-voice the character's best-playing takes, not merely its nearest
+        # ones, so a corner of the pad is a good bar played harder rather than
+        # whatever happened to sit closest to it.
+        best = sorted(mine, key=lambda p: -score_musicality(
+            p.notes, p.bars, p.beats_per_bar))[:max(24, len(mine) * 3 // 4)]
+        ranked = sorted(best, key=lambda p: p.complexity)
         donors = ranked[-6:]
         step = max(1, len(ranked) // 48)
         bases = ranked[::step]
 
-        for base in bases:
-            if not empty:
-                break
-            for notes in voicings(base, donors):
-                cx = axis_cell(norm(score_complexity(
-                    notes, base.bars * base.beats_per_bar / BEATS_PER_BAR), "c"))
-                rows = sorted(cy for (bx, cy) in empty if bx == cx)
-                for cy in rows:
-                    p = derive(base, notes, (cy + 0.5) / 10.0)
-                    if cell_of(p) in empty:
+        # Two passes: hold derived bars to the same standard as recorded ones,
+        # then let anything fill whatever cells are still empty, since an empty
+        # cell means the pad has nothing to play there at all.
+        for floor in (MIN_MUSICALITY_BEAT - 0.06, 0.0):
+            for base in bases:
+                if not empty:
+                    break
+                for notes in voicings(base, donors):
+                    cx = axis_cell(norm(score_complexity(
+                        notes, base.bars * base.beats_per_bar / BEATS_PER_BAR), "c"))
+                    rows = sorted(cy for (bx, cy) in empty if bx == cx)
+                    for cy in rows:
+                        p = derive(base, notes, (cy + 0.5) / 10.0)
+                        if cell_of(p) not in empty:
+                            continue
+                        if score_musicality(p.notes, p.bars,
+                                            p.beats_per_bar) < floor:
+                            continue
                         empty.discard(cell_of(p))
                         added.append(p)
     return phrases + added
@@ -693,6 +877,7 @@ def main() -> None:
 
     phrases = build(args.gmd)
     calibrate(phrases)
+    phrases = double_kick(phrases)
     phrases = densify(phrases)
     write_corpus(phrases, args.out)
     if args.manifest:

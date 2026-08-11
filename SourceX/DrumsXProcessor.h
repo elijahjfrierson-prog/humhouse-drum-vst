@@ -16,6 +16,7 @@ namespace hhx
     {
         inline constexpr const char* complexity     = "complexity";
         inline constexpr const char* intensity      = "intensity";
+        inline constexpr const char* sectionLevel   = "sectionLevel";
         inline constexpr const char* fillAmount     = "fillAmount";
         inline constexpr const char* fillComplexity = "fillComplexity";
         inline constexpr const char* fillBars       = "fillBars";
@@ -44,6 +45,9 @@ namespace hhx
         inline constexpr const char* micBlend       = "micBlend";
         inline constexpr const char* bleed          = "bleed";
         inline constexpr const char* crush          = "crush";
+        inline constexpr const char* roomSize       = "roomSize";
+        inline constexpr const char* roomDamping    = "roomDamping";
+        inline constexpr const char* roomMix        = "roomMix";
 
         juce::String laneEnable (int lane);
         juce::String laneGhost (int lane);
@@ -52,6 +56,8 @@ namespace hhx
         juce::String lanePan (int lane);
         juce::String laneTune (int lane);
         juce::String laneDamp (int lane);
+        juce::String laneComp (int lane);
+        juce::String laneSend (int lane);
     }
 
     /** The rock characters the plugin ships. Each is a starting point on the
@@ -194,16 +200,32 @@ namespace hhx
             e.g. "installed content 3" or "bundled content". */
         juce::String getContentDescription() const { return contentDescription; }
 
+        // --- kit browser ------------------------------------------------------
+        /** The kits the installed content offers, in manifest order. */
+        juce::StringArray getAvailableKits() const { return kitNames; }
+        int  getSelectedKit() const { return selectedKit.load(); }
+
+        /** Loads another of those kits. Message thread only: strokes are dropped
+            while the swap runs, ringing voices keep their own samples, and the
+            choice is saved with the project. */
+        void selectKit (int index);
+
         // --- UI state ---------------------------------------------------------
         float getUiScale() const { return uiScale.load(); }
         void  setUiScale (float s) { uiScale.store (juce::jlimit (0.7f, 1.6f, s)); }
 
     private:
+        /** MidiFile timestamps are ticks, so exported sequences are built in
+            ticks and every note gets a 32nd of sounding length. */
+        static constexpr double kTicksPerQuarter = 960.0;
+        static constexpr double kNoteTicks       = 120.0;
+
         static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
         void parameterChanged (const juce::String& id, float value) override;
         void handleAsyncUpdate() override;
         void rebuildTimeline();
         void loadContent();
+        void pushRoomParameters();
         std::uint64_t settingsHash() const;
 
         juce::MidiMessageSequence buildSequence (int numBars, int laneFilter) const;
@@ -214,6 +236,10 @@ namespace hhx
         KitEngine          kit;
 
         juce::String contentDescription { "bundled content" };
+
+        juce::StringArray kitNames;
+        std::vector<juce::File> kitFolders;
+        std::atomic<int>   selectedKit { 0 };
 
         std::atomic<std::uint64_t> seed { 20260809 };
         std::atomic<float>         uiScale { 1.0f };

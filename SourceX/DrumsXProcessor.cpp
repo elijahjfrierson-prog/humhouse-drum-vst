@@ -19,6 +19,8 @@ namespace hhx
     juce::String pid::lanePan (int lane)    { return "lane" + juce::String (lane) + "Pan"; }
     juce::String pid::laneTune (int lane)   { return "lane" + juce::String (lane) + "Tune"; }
     juce::String pid::laneDamp (int lane)   { return "lane" + juce::String (lane) + "Damp"; }
+    juce::String pid::laneComp (int lane)   { return "lane" + juce::String (lane) + "Comp"; }
+    juce::String pid::laneSend (int lane)   { return "lane" + juce::String (lane) + "Send"; }
 
     const std::vector<Character>& characters()
     {
@@ -49,6 +51,7 @@ namespace hhx
         bool isSectionParameter (const juce::String& id)
         {
             return id == pid::complexity || id == pid::intensity
+                || id == pid::sectionLevel
                 || id == pid::fillAmount || id == pid::swing
                 || id == pid::halfTime
                 || id == pid::variationRhythm || id == pid::variationCymbal;
@@ -84,7 +87,10 @@ namespace hhx
                                                            "Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.45f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::intensity, 1 },
-                                                           "Intensity", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
+                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::sectionLevel, 1 },
+                                                           "Section Intensity", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::fillAmount, 1 },
                                                            "Fills", NormalisableRange<float> (0.0f, 1.0f), 0.35f,
@@ -158,6 +164,15 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::crush, 1 }, "Mono Crush",
                                                            NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::roomSize, 1 }, "Room Size",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.45f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::roomDamping, 1 }, "Room Damping",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::roomMix, 1 }, "Room Return",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
 
         for (int lane = 0; lane < NumLanes; ++lane)
         {
@@ -181,6 +196,14 @@ namespace hhx
                 AudioParameterFloatAttributes().withStringFromValueFunction (semiStr)));
             layout.add (std::make_unique<AudioParameterFloat> (
                 ParameterID { pid::laneDamp (lane), 1 }, n + " Damp",
+                NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneComp (lane), 1 }, n + " Comp",
+                NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneSend (lane), 1 }, n + " Room Send",
                 NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
                 AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         }
@@ -237,11 +260,15 @@ namespace hhx
             else if (id == pid::lanePan (lane))  kit.setLanePan (lane, value);
             else if (id == pid::laneTune (lane)) kit.setLaneTune (lane, value);
             else if (id == pid::laneDamp (lane)) kit.setLaneDamp (lane, value);
+            else if (id == pid::laneComp (lane)) kit.setLaneCompression (lane, value);
+            else if (id == pid::laneSend (lane)) kit.setLaneReverbSend (lane, value);
         }
 
         if (id == pid::micBlend)   kit.setMicBlend (value);
         else if (id == pid::bleed) kit.setBleed (value);
         else if (id == pid::crush) kit.setCrush (value);
+        else if (id == pid::roomSize || id == pid::roomDamping || id == pid::roomMix)
+            pushRoomParameters();
 
         // A performance knob edits the block that is selected, and only that
         // block; the rest of the arrangement re-renders to exactly what it was.
@@ -281,6 +308,7 @@ namespace hhx
                 feed ((double) sec.section);
                 feed ((double) sec.complexity);
                 feed ((double) sec.intensity);
+                feed ((double) sec.velocity);
                 feed ((double) sec.fillAmount);
                 feed ((double) sec.swing);
                 feed (sec.halfTime ? 1.0 : 0.0);
@@ -362,9 +390,20 @@ namespace hhx
                     // A manifest only names kits inside its own content tree, so
                     // a "../.." entry is rejected rather than followed.
                     const auto folder = shared.getChildFile (entry["folder"].toString());
-                    if (! folder.isAChildOf (shared)
-                        || ! folder.isDirectory() || kit.loadKitFolder (folder) <= 0)
+                    if (! folder.isAChildOf (shared) || ! folder.isDirectory()
+                        || ! folder.getChildFile ("kit.json").existsAsFile())
                         continue;
+
+                    auto name = entry["name"].toString();
+                    kitNames.add (name.isNotEmpty() ? name : folder.getFileName());
+                    kitFolders.push_back (folder);
+                }
+
+                for (int i = 0; i < (int) kitFolders.size(); ++i)
+                {
+                    if (kit.loadKitFolder (kitFolders[(std::size_t) i]) <= 0)
+                        continue;
+                    selectedKit.store (i);
                     contentDescription += " + kit " + kit.getKitName();
                     break;
                 }
@@ -389,6 +428,47 @@ namespace hhx
         kit.setMicBlend (apvts.getRawParameterValue (pid::micBlend)->load());
         kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
         kit.setCrush (apvts.getRawParameterValue (pid::crush)->load());
+        pushRoomParameters();
+    }
+
+    void DrumsXProcessor::selectKit (int index)
+    {
+        if (index < 0 || index >= (int) kitFolders.size() || index == selectedKit.load())
+            return;
+
+        if (kit.loadKitFolder (kitFolders[(std::size_t) index]) <= 0)
+            return;
+
+        selectedKit.store (index);
+
+        // The strip is per lane, not per kit, so the new kit opens with the
+        // gains, tuning and sends the session was already using.
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            const auto load = [this] (const juce::String& id)
+            {
+                const auto* p = apvts.getRawParameterValue (id);
+                return p != nullptr ? p->load() : 0.0f;
+            };
+            kit.setLaneSampleSwitch (lane, (int) load (pid::laneSwitch (lane)));
+            kit.setLaneGainDb (lane, load (pid::laneGain (lane)));
+            kit.setLanePan (lane, load (pid::lanePan (lane)));
+            kit.setLaneTune (lane, load (pid::laneTune (lane)));
+            kit.setLaneDamp (lane, load (pid::laneDamp (lane)));
+            kit.setLaneCompression (lane, load (pid::laneComp (lane)));
+            kit.setLaneReverbSend (lane, load (pid::laneSend (lane)));
+        }
+    }
+
+    void DrumsXProcessor::pushRoomParameters()
+    {
+        const auto load = [this] (const juce::String& id)
+        {
+            const auto* p = apvts.getRawParameterValue (id);
+            return p != nullptr ? p->load() : 0.0f;
+        };
+
+        kit.setRoom (load (pid::roomSize), load (pid::roomDamping), load (pid::roomMix));
     }
 
     void DrumsXProcessor::rebuildTimeline()
@@ -450,8 +530,9 @@ namespace hhx
         };
 
         PerformanceSettings s;
-        s.complexity     = get (pid::complexity);
-        s.intensity      = get (pid::intensity);
+        s.complexity      = get (pid::complexity);
+        s.intensity       = get (pid::intensity);
+        s.sectionVelocity = get (pid::sectionLevel);
         s.fillAmount     = get (pid::fillAmount);
         s.fillComplexity = get (pid::fillComplexity);
         const int fillLenIdx = (int) get (pid::fillBars);
@@ -528,6 +609,7 @@ namespace hhx
         auto& sec = arrangement[(std::size_t) index];
         sec.complexity      = get (pid::complexity);
         sec.intensity       = get (pid::intensity);
+        sec.velocity        = get (pid::sectionLevel);
         sec.fillAmount      = get (pid::fillAmount);
         sec.swing           = get (pid::swing);
         sec.halfTime        = get (pid::halfTime) > 0.5f;
@@ -552,9 +634,10 @@ namespace hhx
                 p->setValueNotifyingHost (p->convertTo0to1 (v));
         };
 
-        set (pid::complexity, sec.complexity);
-        set (pid::intensity,  sec.intensity);
-        set (pid::fillAmount, sec.fillAmount);
+        set (pid::complexity,   sec.complexity);
+        set (pid::intensity,    sec.intensity);
+        set (pid::sectionLevel, sec.velocity);
+        set (pid::fillAmount,   sec.fillAmount);
         set (pid::swing,      sec.swing);
         set (pid::halfTime,   sec.halfTime ? 1.0f : 0.0f);
         set (pid::variationRhythm, (float) sec.variationRhythm);
@@ -897,6 +980,8 @@ namespace hhx
     //==============================================================================
     juce::MidiMessageSequence DrumsXProcessor::buildSequence (int numBars, int laneFilter) const
     {
+        // MidiFile::writeTo emits sequence timestamps as raw ticks, so the
+        // whole sequence lives in ticks rather than beats.
         juce::MidiMessageSequence seq;
         const auto s = buildSettings();
         const auto hits = renderBars (0, numBars);
@@ -906,8 +991,9 @@ namespace hhx
             if (laneFilter >= 0 && h.lane != laneFilter)
                 continue;
             const int note = laneToMidiNote (h.lane);
-            seq.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), (double) h.beat);
-            seq.addEvent (juce::MidiMessage::noteOff (10, note), (double) h.beat + 0.05);
+            const double tick = (double) h.beat * kTicksPerQuarter;
+            seq.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), tick);
+            seq.addEvent (juce::MidiMessage::noteOff (10, note), tick + kNoteTicks);
         }
         seq.updateMatchedPairs();
         juce::ignoreUnused (s);
@@ -919,7 +1005,7 @@ namespace hhx
         const auto s = buildSettings();
 
         juce::MidiFile file;
-        file.setTicksPerQuarterNote (960);
+        file.setTicksPerQuarterNote (kTicksPerQuarter);
 
         juce::MidiMessageSequence meta;
         meta.addEvent (juce::MidiMessage::timeSignatureMetaEvent (s.timeSigNum, s.timeSigDen), 0.0);
@@ -957,7 +1043,7 @@ namespace hhx
                 continue;
 
             juce::MidiFile file;
-            file.setTicksPerQuarterNote (960);
+            file.setTicksPerQuarterNote (kTicksPerQuarter);
 
             juce::MidiMessageSequence meta;
             meta.addEvent (juce::MidiMessage::timeSignatureMetaEvent (s.timeSigNum, s.timeSigDen), 0.0);
@@ -986,6 +1072,7 @@ namespace hhx
         auto state = apvts.copyState();
         state.setProperty ("seed", (juce::int64) seed.load(), nullptr);
         state.setProperty ("uiScale", uiScale.load(), nullptr);
+        state.setProperty ("kit", kitNames[selectedKit.load()], nullptr);
 
         juce::MemoryOutputStream grid;
         {
@@ -1007,6 +1094,7 @@ namespace hhx
             block.setProperty ("type", sec.section, nullptr);
             block.setProperty ("complexity", sec.complexity, nullptr);
             block.setProperty ("intensity", sec.intensity, nullptr);
+            block.setProperty ("level", sec.velocity, nullptr);
             block.setProperty ("fills", sec.fillAmount, nullptr);
             block.setProperty ("swing", sec.swing, nullptr);
             block.setProperty ("halfTime", sec.halfTime, nullptr);
@@ -1035,6 +1123,11 @@ namespace hhx
         if (state.hasProperty ("uiScale"))
             setUiScale ((float) state.getProperty ("uiScale"));
 
+        // By name, not index: a session opened against a different content
+        // version keeps the kit it was written with when that kit is installed.
+        if (state.hasProperty ("kit"))
+            selectKit (kitNames.indexOf (state.getProperty ("kit").toString()));
+
         if (state.hasProperty ("manualGrid"))
         {
             juce::MemoryBlock block;
@@ -1059,6 +1152,9 @@ namespace hhx
                 sec.section         = (int)   block.getProperty ("type", (int) SectionVerse);
                 sec.complexity      = (float) block.getProperty ("complexity", 0.45);
                 sec.intensity       = (float) block.getProperty ("intensity", 0.55);
+                // Sessions saved before the block had its own Intensity knob
+                // keep sounding the same: the pad's loudness becomes its level.
+                sec.velocity        = (float) block.getProperty ("level", sec.intensity);
                 sec.fillAmount      = (float) block.getProperty ("fills", 0.35);
                 sec.swing           = (float) block.getProperty ("swing", 0.0);
                 sec.halfTime        = (bool)  block.getProperty ("halfTime", false);
@@ -1094,7 +1190,11 @@ namespace hhx
             kit.setLanePan (lane, load (pid::lanePan (lane)));
             kit.setLaneTune (lane, load (pid::laneTune (lane)));
             kit.setLaneDamp (lane, load (pid::laneDamp (lane)));
+            kit.setLaneCompression (lane, load (pid::laneComp (lane)));
+            kit.setLaneReverbSend (lane, load (pid::laneSend (lane)));
         }
+
+        pushRoomParameters();
     }
 
     juce::AudioProcessorEditor* DrumsXProcessor::createEditor()

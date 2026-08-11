@@ -48,6 +48,41 @@ namespace hhx
 
         constexpr int kRoundRobins = 4;
 
+        /** How strong a beat position is: a quarter note is a landmark, a
+            sixteenth off-beat is decoration. Used to decide what to drop when
+            a take is busier than the pad asked for, and to accent. */
+        float metricWeight (float beatInBar)
+        {
+            const float sixteenths = beatInBar * 4.0f;
+            const float nearest    = std::round (sixteenths);
+            if (std::abs (sixteenths - nearest) > 0.35f)
+                return 0.25f;                       // between the sixteenths
+            const int step = ((int) nearest) & 3;
+            if (step == 0) return 1.0f;             // quarter
+            if (step == 2) return 0.6f;             // eighth off-beat
+            return 0.3f;                            // sixteenth
+        }
+
+        /** Lanes a drummer decorates with. Everything else - kick, snare,
+            toms, crashes - is structure and is never thinned out. */
+        bool isOrnamentLane (int lane)
+        {
+            return (isHatLane (lane) && lane != LaneHatPedal)
+                || (isRideLane (lane) && lane != LaneRideCrash);
+        }
+
+        /** Where each limb sits against the click. Real players are not
+            uniformly early or late: the kick leans back under the backbeat and
+            the hat leads it slightly. Correlated, not noise. */
+        float laneTimingBias (int lane)
+        {
+            if (lane == LaneKick)               return  0.006f;
+            if (isSnareLane (lane))             return  0.004f;
+            if (isHatLane (lane))               return -0.005f;
+            if (isRideLane (lane))              return -0.003f;
+            return 0.0f;
+        }
+
         int wrap (int value, int size)
         {
             return size <= 0 ? 0 : ((value % size) + size) % size;
@@ -94,6 +129,7 @@ namespace hhx
         PerformanceSettings out = base;
         out.complexity      = found->complexity;
         out.intensity       = found->intensity;
+        out.sectionVelocity = found->velocity;
         out.fillAmount      = found->fillAmount;
         out.swing           = found->swing;
         out.halfTime        = found->halfTime;
@@ -102,6 +138,27 @@ namespace hhx
         out.sectionHint     = found->section;
         out.sectionSalt     = (std::uint64_t) found->id;
         return out;
+    }
+
+    void PerformanceEngine::corpusTarget (const PerformanceSettings& s,
+                                          float& complexity,
+                                          float& intensity)
+    {
+        // The library is a practice-room recording session: its busiest bars
+        // run past thirty hits, which is nobody's idea of a rock groove. The
+        // pad is curved so its whole travel stays inside the range a song is
+        // actually played in, and the top of the travel is a hard, busy take
+        // rather than a drum solo.
+        const float x = std::clamp (s.complexity, 0.0f, 1.0f);
+        const float y = std::clamp (s.intensity,  0.0f, 1.0f);
+        complexity = std::clamp (0.05f + 0.80f * x * x, 0.0f, 0.92f);
+        intensity  = std::clamp (0.06f + 0.78f * y, 0.0f, 1.0f);
+    }
+
+    float PerformanceEngine::densityCap (const PerformanceSettings& s)
+    {
+        const float x = std::clamp (s.complexity, 0.0f, 1.0f);
+        return (8.0f + 10.0f * x) * (s.halfTime ? 0.7f : 1.0f);
     }
 
     std::uint16_t PerformanceEngine::characterMask (const PerformanceSettings& s) const
@@ -151,7 +208,10 @@ namespace hhx
     {
         if (corpus == nullptr || ! corpus->isLoaded())
             return {};
-        return corpus->neighbours (s.complexity, s.intensity, characterMask (s),
+
+        float cx = 0.0f, in = 0.0f;
+        corpusTarget (s, cx, in);
+        return corpus->neighbours (cx, in, characterMask (s),
                                    std::max (1, s.phraseBars), maxResults,
                                    s.timeSigNum, s.timeSigDen);
     }
@@ -163,8 +223,10 @@ namespace hhx
         Sources out;
 
         const int section = sectionAtBar (s, phraseIndex * std::max (1, s.phraseBars));
-        const auto ranked = corpus->neighbours (s.complexity, s.intensity,
-                                                characterMask (s),
+
+        float cx = 0.0f, in = 0.0f;
+        corpusTarget (s, cx, in);
+        const auto ranked = corpus->neighbours (cx, in, characterMask (s),
                                                 std::max (1, s.phraseBars), 12,
                                                 s.timeSigNum, s.timeSigDen);
         if (ranked.empty())
@@ -199,12 +261,39 @@ namespace hhx
         };
 
         const int primary = wrap (draw (0x5Bu) + s.variationRhythm, n);
-        int colour  = wrap (draw (0xC010u) + s.variationCymbal + 1, n);
-        if (n > 1 && colour == primary)
-            colour = wrap (colour + 1, n);
+        const auto& take = corpus->beat (ranked[(std::size_t) primary]);
 
-        out.skeleton = &corpus->beat (ranked[(std::size_t) primary]);
-        out.colour   = &corpus->beat (ranked[(std::size_t) colour]);
+        // One human take plays the whole bar. Cymbals only come from a
+        // different take when the user asks for a cymbal variation, and even
+        // then only from a take close enough that the two were playing the
+        // same kind of music - otherwise the bar stops sounding like one
+        // person and starts sounding like two records at once.
+        out.skeleton = &take;
+        out.colour   = &take;
+
+        if (s.variationCymbal != 0 && n > 1)
+        {
+            const int start = wrap (draw (0xC010u) + s.variationCymbal, n);
+            for (int step = 0; step < n; ++step)
+            {
+                const int i = wrap (start + step, n);
+                if (i == primary)
+                    continue;
+
+                const auto& other = corpus->beat (ranked[(std::size_t) i]);
+                if (other.bars != take.bars || other.sigNum != take.sigNum
+                    || other.sigDen != take.sigDen)
+                    continue;
+                if (std::abs (other.complexity - take.complexity) > 0.15f
+                    || std::abs (other.intensity - take.intensity) > 0.20f
+                    || std::abs (other.swing - take.swing) > 0.15f)
+                    continue;
+
+                out.colour = &other;
+                break;
+            }
+        }
+
         return out;
     }
 
@@ -274,6 +363,119 @@ namespace hhx
         }
     }
 
+    void PerformanceEngine::thinOrnaments (const PerformanceSettings& s,
+                                           float dstBar,
+                                           int   bars,
+                                           std::vector<Raw>& raw) const
+    {
+        const int limit = (int) std::lround (densityCap (s) * (float) bars);
+        if ((int) raw.size() <= limit)
+            return;
+
+        // Order the decoration from most to least expendable and take the top
+        // off. The kick, the backbeat and the toms are the take; only the
+        // hat and ride chatter that pushed it past the pad's density goes.
+        std::vector<std::size_t> candidates;
+        candidates.reserve (raw.size());
+        for (std::size_t i = 0; i < raw.size(); ++i)
+            if (isOrnamentLane (raw[i].lane))
+                candidates.push_back (i);
+
+        const auto rankOf = [&] (std::size_t i)
+        {
+            const auto& h = raw[i];
+            const float inBar = h.beat - std::floor (h.beat / dstBar) * dstBar;
+            return metricWeight (inBar) * 1000.0f + (float) h.velocity;
+        };
+
+        std::sort (candidates.begin(), candidates.end(),
+                   [&] (std::size_t a, std::size_t b)
+                   {
+                       const float ra = rankOf (a), rb = rankOf (b);
+                       return ra != rb ? ra < rb : a < b;
+                   });
+
+        const std::size_t drop = std::min (candidates.size(),
+                                           (std::size_t) ((int) raw.size() - limit));
+        std::vector<bool> remove (raw.size(), false);
+        for (std::size_t i = 0; i < drop; ++i)
+            remove[candidates[i]] = true;
+
+        std::size_t write = 0;
+        for (std::size_t i = 0; i < raw.size(); ++i)
+            if (! remove[i])
+                raw[write++] = raw[i];
+        raw.resize (write);
+    }
+
+    void PerformanceEngine::addCrashes (const PerformanceSettings& base,
+                                        const PerformanceSettings& sec,
+                                        int   phraseIndex,
+                                        int   bars,
+                                        float dstBar,
+                                        std::uint64_t seed,
+                                        std::vector<Hit>& out) const
+    {
+        const bool haveRight = (sec.laneMask & (1u << LaneCrashR)) != 0;
+        const bool haveLeft  = (sec.laneMask & (1u << LaneCrashL)) != 0;
+        if (! haveRight && ! haveLeft)
+            return;
+
+        const float energy  = std::clamp (sec.sectionVelocity, 0.0f, 1.0f);
+        const int   section = sectionAtBar (base, phraseIndex * bars);
+        const bool  blockTop = phraseIndex == 0
+                             || blockIndexForBar (base, phraseIndex * bars)
+                                    != blockIndexForBar (base, (phraseIndex - 1) * bars);
+        const bool  afterFill = phraseIndex > 0 && phraseEndsWithFill (base, phraseIndex - 1);
+
+        std::vector<float> beats;
+
+        // The top of the phrase: always after a fill, always at the top of a
+        // section, and once the section is being hit hard, every phrase.
+        if (afterFill || blockTop || energy > 0.6f || section == SectionChorus)
+            beats.push_back (0.0f);
+
+        // Hard sections mark the half-way bar as well, which is what makes a
+        // loud chorus sound like a chorus instead of a louder verse.
+        if (energy > 0.72f && bars >= 2)
+            beats.push_back ((float) (bars / 2) * dstBar);
+
+        // Flat out, every bar gets marked.
+        if (energy > 0.88f)
+            for (int bar = 1; bar < bars; ++bar)
+                beats.push_back ((float) bar * dstBar);
+
+        std::sort (beats.begin(), beats.end());
+        beats.erase (std::unique (beats.begin(), beats.end()), beats.end());
+
+        int index = 0;
+        for (const float beat : beats)
+        {
+            const bool taken = std::any_of (out.begin(), out.end(),
+                                            [beat] (const Hit& h)
+                                            {
+                                                return isCymbalLane (h.lane)
+                                                    && ! isHatLane (h.lane)
+                                                    && std::abs (h.beat - beat) < 0.12f;
+                                            });
+            if (taken)
+            {
+                ++index;
+                continue;
+            }
+
+            const bool useRight = haveRight && (! haveLeft || (index % 2) == 0);
+            const int  lane     = useRight ? LaneCrashR : LaneCrashL;
+            const float level   = 0.62f + 0.30f * energy
+                                + 0.05f * (rand01 (seed, (std::uint64_t) index, 0xC7u) - 0.5f);
+
+            out.push_back ({ std::max (0.0f, beat), (std::uint8_t) lane,
+                             (std::uint8_t) std::clamp ((int) std::lround (level * 127.0f), 1, 127),
+                             (std::uint8_t) (index % kRoundRobins) });
+            ++index;
+        }
+    }
+
     std::vector<Hit> PerformanceEngine::renderPhrase (const PerformanceSettings& base,
                                                       int  phraseIndex,
                                                       bool includeFill) const
@@ -294,18 +496,19 @@ namespace hhx
         switch (sectionAtBar (s, phraseIndex * bars))
         {
             case SectionIntro:
-                sec.complexity *= 0.75f; sec.intensity *= 0.82f;
+                sec.complexity *= 0.75f;
+                sec.sectionVelocity *= 0.82f;
                 sec.rideInsteadOfHat = true;
                 break;
             case SectionChorus:
-                sec.intensity = std::min (1.0f, sec.intensity + 0.12f);
+                sec.sectionVelocity = std::min (1.0f, sec.sectionVelocity + 0.10f);
                 sec.hatOpenness = std::min (1.0f, sec.hatOpenness + 0.3f);
                 break;
             case SectionBridge:
-                sec.intensity *= 0.85f; sec.halfTime = true;
+                sec.sectionVelocity *= 0.85f; sec.halfTime = true;
                 break;
             case SectionOutro:
-                sec.intensity *= 0.9f;
+                sec.sectionVelocity *= 0.9f;
                 break;
             default:
                 break;
@@ -362,6 +565,8 @@ namespace hhx
         gather (*src.skeleton, true);
         gather (*src.colour,   false);
 
+        thinOrnaments (sec, dstBar, bars, raw);
+
         // --- fill ---------------------------------------------------------
         if (includeFill)
         {
@@ -415,7 +620,12 @@ namespace hhx
         const float gridUnit   = s.swingSixteenth ? 0.25f : 0.5f;
         const float swingShift = s.swing * gridUnit * 0.34f;
         const float feelShift  = (s.feel - 0.5f) * 0.05f;      // +/-25 ms at 120 bpm
-        const float velGain    = 0.55f + 0.95f * sec.intensity;
+
+        // Dynamics come from the block's own Intensity knob. The pad decides
+        // which take is played; this decides how hard it is played, and the
+        // two are deliberately independent.
+        const float energy  = std::clamp (sec.sectionVelocity, 0.0f, 1.0f);
+        const float velGain = 0.62f + 0.78f * energy;
 
         // Slow phrase breathing over eight bars, so bar 3 does not sit exactly
         // where bar 1 sat.
@@ -435,8 +645,11 @@ namespace hhx
             const int  lane = r.lane;
 
             // Keep the drummer's own deviation and scale it, rather than adding
-            // uncorrelated noise on top of a quantised grid.
-            float beat = r.beat + r.dev * (0.25f + 1.5f * s.humanize) + feelShift;
+            // uncorrelated noise on top of a quantised grid. Humanize is the
+            // only thing that moves a stroke off the grid, so at 0 the bar is
+            // machine-tight and at 0.5 it is the take exactly as recorded.
+            float beat = r.beat + r.dev * 2.0f * s.humanize + feelShift
+                       + laneTimingBias (lane) * s.humanize;
 
             const int gridIndex = (int) std::llround (beat / gridUnit);
             if ((gridIndex & 1) != 0)
@@ -448,35 +661,49 @@ namespace hhx
             if (beat < -0.02f || beat >= phraseBeats)
                 continue;
 
-            // --- velocity: correlated with the previous stroke on this lane
-            // via the transition matrix learned from the corpus.
+            // --- velocity. The drummer's own dynamics carry the bar; the
+            // corpus transition model only pulls a stroke gently towards what
+            // usually follows the last one on this lane. Drawing a bucket at
+            // random instead - which is what this used to do - throws the
+            // performance away and replaces it with noise.
             float vel = (float) r.velocity;
-            if (const auto* row = corpus->velocityRow (lane, std::max (0, lastBucket[lane])))
+            if (lastBucket[lane] >= 0)
             {
-                if (lastBucket[lane] >= 0)
+                if (const auto* row = corpus->velocityRow (lane, lastBucket[lane]))
                 {
-                    int total = 0;
+                    int   total    = 0;
+                    float weighted = 0.0f;
                     for (int b = 0; b < GrooveCorpus::kVelocityBuckets; ++b)
-                        total += row[b];
+                    {
+                        total    += row[b];
+                        weighted += (float) row[b] * ((float) b + 0.5f);
+                    }
                     if (total > 0)
                     {
-                        int r = (int) (rand01 (seed, i, 0x5Eu) * (float) total);
-                        int bucket = GrooveCorpus::kVelocityBuckets - 1;
-                        for (int b = 0; b < GrooveCorpus::kVelocityBuckets; ++b)
-                            if ((r -= row[b]) < 0) { bucket = b; break; }
-                        const float target = ((float) bucket + 0.5f) * 128.0f
-                                             / (float) GrooveCorpus::kVelocityBuckets;
-                        vel = 0.72f * vel + 0.28f * target;
+                        const float expected = weighted / (float) total * 128.0f
+                                               / (float) GrooveCorpus::kVelocityBuckets;
+                        vel = 0.88f * vel + 0.12f * expected;
                     }
                 }
             }
             lastBucket[lane] = velocityBucket ((int) vel);
 
+            // Metric accenting: the notes a player leans on stay up, the ones
+            // between them sit back. This is the difference between a groove
+            // and a row of identical hits.
+            const float inBar = beat - std::floor (beat / dstBar) * dstBar;
+            if (isOrnamentLane (lane))
+                vel *= 0.80f + 0.26f * metricWeight (inBar);
+
+            // Phrase breathing: the take lifts slightly into its own cadence
+            // rather than sitting at one level for eight bars.
+            vel *= 0.965f + 0.07f * (beat / std::max (1.0f, phraseBeats));
+
             if (lane == LaneSnareGhost || (s.ghostMask & (1u << lane)) != 0)
                 vel *= 0.35f + 1.0f * s.ghostAmount;
 
             vel *= velGain;
-            vel *= 0.96f + 0.08f * rand01 (seed, i, 5);
+            vel *= 1.0f - 0.05f * s.humanize * rand01 (seed, i, 5);
 
             // --- round robin: never the same sample twice in a row on a lane.
             const int slots = kRoundRobins;
@@ -492,18 +719,7 @@ namespace hhx
                              (std::uint8_t) variant });
         }
 
-        // Crash the downbeat that lands after a fill.
-        if (phraseIndex > 0 && phraseEndsWithFill (s, phraseIndex - 1))
-        {
-            const int crash = (s.laneMask & (1u << LaneCrashR)) != 0 ? LaneCrashR
-                            : (s.laneMask & (1u << LaneCrashL)) != 0 ? LaneCrashL : -1;
-            if (crash >= 0)
-            {
-                const std::uint8_t vel = (std::uint8_t) std::clamp (
-                    (int) std::lround ((0.75f + 0.25f * sec.intensity) * 127.0f), 1, 127);
-                out.insert (out.begin(), { 0.0f, (std::uint8_t) crash, vel, 0 });
-            }
-        }
+        addCrashes (s, sec, phraseIndex, bars, dstBar, seed, out);
 
         std::stable_sort (out.begin(), out.end(),
                           [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
@@ -513,18 +729,27 @@ namespace hhx
     bool PerformanceEngine::phraseEndsWithFill (const PerformanceSettings& base,
                                                 int phraseIndex) const
     {
-        const auto s = settingsForBar (base, phraseIndex * std::max (1, base.phraseBars));
+        const int  bars = std::max (1, base.phraseBars);
+        const auto s    = settingsForBar (base, phraseIndex * bars);
         if (s.fillAmount <= 0.001f)
             return false;
 
-        // Every 4th phrase (an 8-bar section at the default 2-bar phrase) is a
-        // natural cadence, so it fills first; the knob then fills in the
-        // in-between phrases as it is turned up.
+        // The last phrase of a block always turns the corner with a fill, so
+        // no section of the song ever runs into the next one flat. Every 4th
+        // phrase is the other natural cadence; the knob then fills in the
+        // phrases between them as it is turned up.
+        const bool blockEnd = blockIndexForBar (base, phraseIndex * bars)
+                              != blockIndexForBar (base, (phraseIndex + 1) * bars);
+        if (blockEnd)
+            return true;
+
         const bool  cadence   = ((phraseIndex + 1) % 4) == 0;
-        const float threshold = cadence ? 0.05f : 0.55f;
-        return s.fillAmount > threshold
+        if (cadence)
+            return true;
+
+        return s.fillAmount > 0.55f
             || rand01 (mix (blockSeed (s) ^ 0xB00Bull), (std::uint64_t) phraseIndex)
-                   < s.fillAmount * (cadence ? 1.6f : 0.6f);
+                   < s.fillAmount * 0.6f;
     }
 
     std::vector<Hit> PerformanceEngine::renderPhrasePreview (const PerformanceSettings& s,
