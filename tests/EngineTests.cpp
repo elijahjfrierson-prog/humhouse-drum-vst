@@ -671,8 +671,8 @@ int main (int argc, char** argv)
     }
 
     // 15f-2. A fill glues the arrangement together, so it is played to the
-    // grid: with Humanize off every hit of it lands on a sixteenth or a
-    // triplet eighth, in 4/4 and in a stretched metre alike.
+    // grid: with Humanize off every hit of it lands on a thirty second or a
+    // triplet sixteenth, in 4/4 and in a stretched metre alike.
     {
         const auto offGrid = [&] (const hhx::PerformanceSettings& set)
         {
@@ -681,8 +681,8 @@ int main (int argc, char** argv)
             {
                 const float r   = h.beat - std::floor (h.beat);
                 const float d32 = std::abs (r * 8.0f - std::round (r * 8.0f)) / 8.0f;
-                const float d12 = std::abs (r * 3.0f - std::round (r * 3.0f)) / 3.0f;
-                if (std::min (d32, d12) > 0.01f)
+                const float d24 = std::abs (r * 6.0f - std::round (r * 6.0f)) / 6.0f;
+                if (std::min (d32, d24) > 0.01f)
                     ++bad;
             }
             return bad;

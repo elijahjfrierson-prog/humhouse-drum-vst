@@ -859,13 +859,21 @@ def write_corpus(phrases: list[Phrase], out: Path) -> None:
 
 
 def write_manifest(phrases: list[Phrase], out: Path, corpus: Path) -> None:
+    # The corpus is often built to a scratch path before being copied in, and
+    # the kits and their credits live alongside it: the plug-in looks the
+    # library up by the name written here, and the licences require the kit
+    # credits to ship, so neither may be lost to a rebuild.
+    previous = {}
+    if out.exists():
+        previous = json.loads(out.read_text())
+
     per_char = defaultdict(int)
     for p in phrases:
         for bit, (name, *_rest) in enumerate(CHARACTERS):
             if p.char_mask & (1 << bit):
                 per_char[name] += 1
     manifest = {
-        "corpus": corpus.name,
+        "corpus": previous.get("corpus") or corpus.name,
         "format_version": FORMAT_VERSION,
         "phrases": len(phrases),
         "beats": sum(1 for p in phrases if p.kind == KIND_BEAT),
@@ -882,8 +890,11 @@ def write_manifest(phrases: list[Phrase], out: Path, corpus: Path) -> None:
                           "Learning to Groove with Inverse Sequence "
                           "Transformations (2019)",
             }
-        ],
+        ] + [a for a in previous.get("attribution", [])
+             if a.get("name") != "Groove MIDI Dataset"],
     }
+    if "kits" in previous:
+        manifest["kits"] = previous["kits"]
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(manifest, indent=2) + "\n")
 

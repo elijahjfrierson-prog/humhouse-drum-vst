@@ -1,5 +1,5 @@
 {
-  "corpus": "c80f42.hhc",
+  "corpus": "rock_corpus.hhc",
   "format_version": 3,
   "phrases": 9666,
   "beats": 8923,
@@ -24,6 +24,47 @@
       "source": "https://magenta.tensorflow.org/datasets/groove",
       "license": "CC-BY 4.0",
       "credit": "Gillick, Roberts, Engel, Eck, Bamman - Learning to Groove with Inverse Sequence Transformations (2019)"
+    },
+    {
+      "name": "Naked Drums",
+      "source": "https://github.com/sfzinstruments/WilkinsonAudio.NakedDrums",
+      "license": "CC-BY 4.0",
+      "credit": "Naked Drums by Wilkinson Audio"
+    },
+    {
+      "name": "MuldjordKit",
+      "source": "https://www.drumgizmo.org/wiki/doku.php?id=kits:muldjordkit",
+      "license": "CC-BY 4.0",
+      "credit": "MuldjordKit by Lars Muldjord, recorded for DrumGizmo"
+    },
+    {
+      "name": "DRSKit",
+      "source": "https://www.drumgizmo.org/wiki/doku.php?id=kits:drskit",
+      "license": "CC-BY 4.0",
+      "credit": "DRSKit by the DrumGizmo team and Jes Eiler of DRSDrums"
+    }
+  ],
+  "kits": [
+    {
+      "name": "Naked Rock",
+      "folder": "Kits/NakedRock",
+      "default": true
+    },
+    {
+      "name": "Muldjord Metal",
+      "folder": "Kits/MuldjordMetal",
+      "default": false
+    },
+    {
+      "name": "DRS Rock",
+      "folder": "Kits/DRSRock",
+      "default": false
+    },
+    {
+      "name": "SoCal Rock",
+      "folder": "",
+      "default": false,
+      "note": "compiled into the plug-in as a fallback"
     }
   ]
 }

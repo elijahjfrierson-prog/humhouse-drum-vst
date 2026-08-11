@@ -410,12 +410,14 @@ namespace hhx
             // A fill has to turn the corner with the bar, so it is played to
             // the grid: stretching a source phrase into another bar length
             // lands its hits between subdivisions, and those are pulled back
-            // onto the nearest sixteenth or triplet eighth. The take's own
-            // micro-timing then rides on top, but only as far as Humanize asks.
+            // onto the nearest subdivision the take was played at, a thirty
+            // second or a triplet sixteenth, so a roll keeps all its strokes.
+            // The take's own micro-timing then rides on top, but only as far
+            // as Humanize asks.
             const float rel  = (src - srcSkip) * scale;
-            const float q16  = std::round (rel * 4.0f) / 4.0f;
-            const float q12  = std::round (rel * 3.0f) / 3.0f;
-            const float snap = std::abs (rel - q16) <= std::abs (rel - q12) ? q16 : q12;
+            const float q32  = std::round (rel * 8.0f) / 8.0f;
+            const float q24  = std::round (rel * 6.0f) / 6.0f;
+            const float snap = std::abs (rel - q32) <= std::abs (rel - q24) ? q32 : q24;
 
             const float beat = fillStartBeat + snap
                              + h.devBeats() * scale * 0.5f
@@ -426,8 +428,22 @@ namespace hhx
             float vel = (float) h.velocity;
             vel *= 1.0f + (rand01 (seed, (std::uint64_t) (src * 64.0f), 0x1Eu) - 0.5f)
                           * 2.0f * s.fillVelVar * 0.4f;
-            raw.push_back ({ beat, 0.0f, h.lane,
-                             (std::uint8_t) std::clamp ((int) std::lround (vel), 1, 127) });
+            const Raw hit { beat, 0.0f, h.lane,
+                            (std::uint8_t) std::clamp ((int) std::lround (vel), 1, 127) };
+
+            // A stretched fill can land two strokes of the same drum on one
+            // subdivision, which reads as one hit struck twice as hard rather
+            // than as two strokes, so the louder of the pair is kept.
+            const auto same = std::find_if (raw.begin(), raw.end(), [&] (const Raw& r)
+            {
+                return r.lane == hit.lane && std::abs (r.beat - hit.beat) < 0.004f;
+            });
+            if (same != raw.end())
+            {
+                same->velocity = std::max (same->velocity, hit.velocity);
+                continue;
+            }
+            raw.push_back (hit);
         }
     }
 
