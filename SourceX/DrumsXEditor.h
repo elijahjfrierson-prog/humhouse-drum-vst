@@ -53,14 +53,27 @@ namespace hhx
         float lastX = 0.0f, lastY = 0.0f;
     };
 
+    /** Writes the arrangement out as a Type-1 MIDI file and starts an external
+        file drag from `source`, so a block or the phrase strip drags into the
+        host the way a Logic drummer region does. Returns false when the file
+        could not be written or a drag is already running. */
+    bool startMidiDrag (juce::Component& source, DrumsXProcessor&, int numBars);
+
+    /** True while an external MIDI drag is in flight, so the component that
+        started it can swallow the click that would otherwise follow. */
+    bool midiDragInProgress();
+
     /** Two bars of the current performance, drawn as a piano-roll-ish strip
-        with the playhead — the "what am I about to hear" view. */
+        with the playhead — the "what am I about to hear" view. Drag it out to
+        drop the whole arrangement into the host as MIDI. */
     class PhraseView : public juce::Component,
                        private juce::Timer
     {
     public:
         explicit PhraseView (DrumsXProcessor&);
         void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
 
     private:
         void timerCallback() override;
@@ -79,12 +92,14 @@ namespace hhx
 
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
 
         /** How wide the strip needs to be inside its viewport. */
         int preferredWidth() const;
 
     private:
         void timerCallback() override;
+        int  blockAt (juce::Point<int>) const;
         juce::Rectangle<int> blockBounds (int index) const;
         juce::Rectangle<int> plusBounds() const;
         void showBlockMenu (int index);
@@ -129,11 +144,11 @@ namespace hhx
         MidiDragButton (DrumsXProcessor&, const juce::String& text);
 
         void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
 
     private:
         DrumsXProcessor& proc;
-        juce::File dragFile;              // outlives the drag for the host
-        bool       dragging = false;
+        bool dragged = false;             // this gesture became a drag
     };
 
     //==============================================================================
@@ -148,12 +163,13 @@ namespace hhx
         void resized() override;
 
     private:
-        enum class Page { main, details, kit };
+        enum class Page { main, details, kit, mix };
 
         void setPage (Page);
         void layoutMain (juce::Rectangle<int>);
         void layoutDetails (juce::Rectangle<int>);
         void layoutKit (juce::Rectangle<int>);
+        void layoutMix (juce::Rectangle<int>);
         void timerCallback() override;
         void exportMenu();
         void applyScale();
@@ -168,6 +184,14 @@ namespace hhx
             std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enableAttach;
         };
 
+        /** One instrument's channel strip on the MIX page: the tune and damp
+            from the kit page plus its own compressor and room send. */
+        struct MixRow
+        {
+            std::unique_ptr<juce::Label>  name;
+            std::unique_ptr<juce::Slider> comp, send, tune, damp;
+        };
+
         /** One kit-piece group on the performance page: in/out of the take plus
             a ghost-note state, mirroring Logic's kit-piece selector. */
         struct LaneGroup
@@ -179,7 +203,8 @@ namespace hhx
         DrumsXProcessor&  proc;
         DrumsXLookAndFeel lnf;
 
-        juce::TextButton  mainTab { "MAIN" }, detailsTab { "DETAILS" }, kitTab { "KIT" };
+        juce::TextButton  mainTab { "MAIN" }, detailsTab { "DETAILS" }, kitTab { "KIT" },
+                          mixTab { "MIX" };
         juce::TextButton  playButton { "PLAY" }, regenButton { "REGENERATE" };
         MidiDragButton    exportButton;
         juce::ComboBox    scaleBox;
@@ -213,11 +238,18 @@ namespace hhx
         juce::Viewport    kitViewport;
         juce::Component   kitRowsHolder;
         juce::TextButton  loadKitButton { "LOAD KIT FOLDER..." };
+        juce::ComboBox    kitBox;
         juce::Label       kitNameLabel;
         std::unique_ptr<LabelledKnob> outputKnob;
         std::unique_ptr<LabelledKnob> micBlendKnob;
         std::unique_ptr<LabelledKnob> bleedKnob;
         std::unique_ptr<LabelledKnob> crushKnob;
+        // MIX
+        std::array<MixRow, NumLanes> mixRows;
+        juce::Viewport    mixViewport;
+        juce::Component   mixRowsHolder;
+        std::unique_ptr<LabelledKnob> roomSizeKnob, roomDampKnob, roomMixKnob;
+
         std::unique_ptr<juce::FileChooser> chooser;
         int startupChecks = 16;
 

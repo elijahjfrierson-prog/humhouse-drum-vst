@@ -498,6 +498,57 @@ int main (int argc, char** argv)
         check (mid <= 17.0, "the middle of the pad stays sparse-to-moderate");
         check (low <= 12.0 && low >= 3.0, "the bottom of the pad plays a simple beat");
         check (top > mid && mid > low, "the pad gets busier from left to right");
+
+        // Density is not the same thing as clutter: even wide open, a bar must
+        // not stack a handful of pieces onto one instant.
+        auto busy = s;
+        busy.complexity = 1.0f;
+        busy.intensity  = 1.0f;
+        const auto hits = engine.renderBars (busy, 0, 16);
+        std::size_t widest = 0;
+        int stacked = 0;
+        for (std::size_t i = 0; i < hits.size(); ++i)
+        {
+            std::size_t j = i;
+            while (j < hits.size() && hits[j].beat - hits[i].beat < 0.03f)
+                ++j;
+            widest = std::max (widest, j - i);
+            if (j - i > 3)
+                ++stacked;
+        }
+        // Four limbs at once is a crash accent resolving a fill; anything
+        // beyond that, or more than a couple per 16 bars, is a pile-up.
+        check (widest <= 4 && stacked <= 2, "no instant piles up strikes");
+    }
+
+    // 15d-ii. Humanize at zero means dead tight: every strike lands on the
+    //         grid the corpus was quantised to, with no drift or lane bias.
+    {
+        auto tight = s;
+        tight.humanize   = 0.0f;
+        tight.swing      = 0.0f;
+        tight.feel       = 0.5f;
+        tight.fillAmount = 0.0f;   // stretched fills have a grid of their own
+
+        // 1/96 of a beat covers everything a drummer plays on purpose: 8ths,
+        // 16ths, triplets, 32nds and sextuplets all land on it exactly.
+        double worst = 0.0;
+        for (const auto& h : engine.renderBars (tight, 0, 16))
+        {
+            const double tick = h.beat * 96.0;
+            worst = std::max (worst, std::abs (tick - std::round (tick)) / 96.0);
+        }
+        check (worst < 0.001, "Humanize at zero puts every hit on the grid");
+
+        auto loose = tight;
+        loose.humanize = 1.0f;
+        double moved = 0.0;
+        for (const auto& h : engine.renderBars (loose, 0, 16))
+        {
+            const double tick = h.beat * 96.0;
+            moved = std::max (moved, std::abs (tick - std::round (tick)) / 96.0);
+        }
+        check (moved > 0.004, "Humanize at full still pushes and pulls");
     }
 
     // 15e. Crashes arrive with the energy, on landmarks rather than everywhere.

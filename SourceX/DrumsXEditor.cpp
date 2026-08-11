@@ -203,6 +203,60 @@ namespace hhx
             repaint();
     }
 
+    //==============================================================================
+    namespace
+    {
+        /** The file the host reads after the drag call returns, so it has to
+            outlive the gesture: one stable path, rewritten per drag. */
+        juce::File& dragFile()
+        {
+            static juce::File file;
+            return file;
+        }
+
+        bool dragRunning = false;
+    }
+
+    bool midiDragInProgress()
+    {
+        return dragRunning;
+    }
+
+    bool startMidiDrag (juce::Component& source, DrumsXProcessor& proc, int numBars)
+    {
+        if (dragRunning)
+            return false;
+
+        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("HumHouse Drums X");
+        folder.createDirectory();
+
+        auto& file = dragFile();
+        file = folder.getChildFile ("HumHouse Drums X " + juce::String (numBars) + " bars.mid");
+        if (! proc.exportArrangementMidi (file, numBars))
+            return false;
+
+        dragRunning = true;
+        const bool started = juce::DragAndDropContainer::performExternalDragDropOfFiles (
+            juce::StringArray (file.getFullPathName()), false, &source,
+            [] { dragRunning = false; });
+
+        if (! started)
+            dragRunning = false;
+
+        return started;
+    }
+
+    void PhraseView::mouseDown (const juce::MouseEvent&)
+    {
+    }
+
+    void PhraseView::mouseDrag (const juce::MouseEvent& e)
+    {
+        if (e.getDistanceFromDragStart() >= 10)
+            startMidiDrag (*this, proc, proc.totalArrangementBars());
+    }
+
     void PhraseView::paint (juce::Graphics& g)
     {
         const auto r = getLocalBounds();
@@ -252,6 +306,10 @@ namespace hhx
             g.setColour (juce::Colours::white.withAlpha (0.7f));
             g.drawVerticalLine ((int) playX, (float) area.getY(), (float) area.getBottom());
         }
+
+        g.setColour (DrumsXLookAndFeel::textDim());
+        g.setFont (uiFont (10.0f, true));
+        g.drawText ("DRAG TO DAW", r.reduced (12, 6), juce::Justification::topRight, false);
     }
 
     //==============================================================================
@@ -424,6 +482,21 @@ namespace hhx
                          });
     }
 
+    int ArrangementStrip::blockAt (juce::Point<int> p) const
+    {
+        for (int i = 0; i < proc.numSections(); ++i)
+            if (blockBounds (i).contains (p))
+                return i;
+        return -1;
+    }
+
+    void ArrangementStrip::mouseDrag (const juce::MouseEvent& e)
+    {
+        // A block drags the song out as MIDI, like dragging a Logic region.
+        if (e.getDistanceFromDragStart() >= 10 && blockAt (e.getMouseDownPosition()) >= 0)
+            startMidiDrag (*this, proc, proc.totalArrangementBars());
+    }
+
     void ArrangementStrip::mouseDown (const juce::MouseEvent& e)
     {
         if (plusBounds().contains (e.getPosition()))
@@ -531,28 +604,24 @@ namespace hhx
 
     void MidiDragButton::mouseDrag (const juce::MouseEvent& e)
     {
-        if (dragging || e.getDistanceFromDragStart() < 12)
+        if (dragged || midiDragInProgress() || e.getDistanceFromDragStart() < 8)
             return juce::TextButton::mouseDrag (e);
 
-        // Written somewhere stable rather than to a TemporaryFile: the host
-        // reads the path after the drag returns, so the file has to outlive
-        // this call.
-        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                .getChildFile ("HumHouse Drums X");
-        folder.createDirectory();
+        dragged = startMidiDrag (*this, proc, proc.totalArrangementBars());
+    }
 
-        dragFile = folder.getChildFile ("HumHouse Drums X.mid");
-        if (! proc.exportArrangementMidi (dragFile, proc.totalArrangementBars()))
+    void MidiDragButton::mouseUp (const juce::MouseEvent& e)
+    {
+        // Swallow the click that ends a drag, so the export menu does not open
+        // on top of the host once the file has been dropped.
+        if (dragged)
+        {
+            dragged = false;
+            setState (buttonNormal);
             return;
+        }
 
-        dragging = true;
-        juce::DragAndDropContainer::performExternalDragDropOfFiles (
-            juce::StringArray (dragFile.getFullPathName()), false, this,
-            [safe = juce::Component::SafePointer<MidiDragButton> (this)]
-            {
-                if (safe != nullptr)
-                    safe->dragging = false;
-            });
+        juce::TextButton::mouseUp (e);
     }
 
     void ManualPatternGrid::paint (juce::Graphics& g)
@@ -648,7 +717,7 @@ namespace hhx
         setLookAndFeel (&lnf);
         auto& state = proc.getAPVTS();
 
-        for (auto* tab : { &mainTab, &detailsTab, &kitTab })
+        for (auto* tab : { &mainTab, &detailsTab, &kitTab, &mixTab })
         {
             tab->setClickingTogglesState (false);
             addAndMakeVisible (*tab);
@@ -656,6 +725,7 @@ namespace hhx
         mainTab.onClick    = [this] { setPage (Page::main); };
         detailsTab.onClick = [this] { setPage (Page::details); };
         kitTab.onClick     = [this] { setPage (Page::kit); };
+        mixTab.onClick     = [this] { setPage (Page::mix); };
 
         addAndMakeVisible (playButton);
         playButton.onClick = [this]
@@ -926,6 +996,16 @@ namespace hhx
             mixerSlider (row.damp, pid::laneDamp (lane), juce::Slider::RotaryHorizontalVerticalDrag);
         }
 
+        {
+            const auto kits = proc.getAvailableKits();
+            for (int i = 0; i < kits.size(); ++i)
+                kitBox.addItem (kits[i], i + 1);
+            kitBox.setSelectedId (proc.getSelectedKit() + 1, juce::dontSendNotification);
+            kitBox.setTextWhenNoChoicesAvailable ("No installed kits");
+            kitBox.onChange = [this] { proc.selectKit (kitBox.getSelectedId() - 1); };
+            addAndMakeVisible (kitBox);
+        }
+
         addAndMakeVisible (loadKitButton);
         loadKitButton.onClick = [this]
         {
@@ -952,6 +1032,44 @@ namespace hhx
         bleedKnob    = std::make_unique<LabelledKnob> (state, pid::bleed,    "Bleed");
         crushKnob    = std::make_unique<LabelledKnob> (state, pid::crush,    "Mono Crush");
         for (auto* k : { micBlendKnob.get(), bleedKnob.get(), crushKnob.get() })
+            addAndMakeVisible (*k);
+
+        // ---- MIX ----------------------------------------------------------
+        mixViewport.setViewedComponent (&mixRowsHolder, false);
+        mixViewport.setScrollBarsShown (true, false);
+        addAndMakeVisible (mixViewport);
+
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            auto& row = mixRows[(std::size_t) lane];
+
+            row.name = std::make_unique<juce::Label>();
+            row.name->setText (drumsXLaneName (lane), juce::dontSendNotification);
+            row.name->setFont (uiFont (12.5f));
+            mixRowsHolder.addAndMakeVisible (*row.name);
+
+            const auto knob = [this, &state] (std::unique_ptr<juce::Slider>& slider,
+                                             const juce::String& paramID)
+            {
+                slider = std::make_unique<juce::Slider> (juce::Slider::RotaryHorizontalVerticalDrag,
+                                                         juce::Slider::NoTextBox);
+                slider->setScrollWheelEnabled (false);
+                mixRowsHolder.addAndMakeVisible (*slider);
+                sliderAttachments.push_back (
+                    std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+                        state, paramID, *slider));
+            };
+
+            knob (row.comp, pid::laneComp (lane));
+            knob (row.send, pid::laneSend (lane));
+            knob (row.tune, pid::laneTune (lane));
+            knob (row.damp, pid::laneDamp (lane));
+        }
+
+        roomSizeKnob = std::make_unique<LabelledKnob> (state, pid::roomSize,    "Room Size");
+        roomDampKnob = std::make_unique<LabelledKnob> (state, pid::roomDamping, "Room Damp");
+        roomMixKnob  = std::make_unique<LabelledKnob> (state, pid::roomMix,     "Room Return");
+        for (auto* k : { roomSizeKnob.get(), roomDampKnob.get(), roomMixKnob.get() })
             addAndMakeVisible (*k);
 
         setResizable (false, false);
@@ -1003,10 +1121,12 @@ namespace hhx
         mainTab.setToggleState    (p == Page::main,    juce::dontSendNotification);
         detailsTab.setToggleState (p == Page::details, juce::dontSendNotification);
         kitTab.setToggleState     (p == Page::kit,     juce::dontSendNotification);
+        mixTab.setToggleState     (p == Page::mix,     juce::dontSendNotification);
 
         const bool main = p == Page::main;
         const bool det  = p == Page::details;
         const bool kitp = p == Page::kit;
+        const bool mixp = p == Page::mix;
 
         characterList.setVisible (main);
         pad.setVisible (main);
@@ -1048,10 +1168,23 @@ namespace hhx
             row.damp->setVisible (kitp);
         }
         loadKitButton.setVisible (kitp);
+        kitBox.setVisible (kitp);
         kitNameLabel.setVisible (kitp);
         outputKnob->setVisible (kitp);
         for (auto* k : { micBlendKnob.get(), bleedKnob.get(), crushKnob.get() })
             k->setVisible (kitp);
+
+        mixViewport.setVisible (mixp);
+        for (auto& row : mixRows)
+        {
+            row.name->setVisible (mixp);
+            row.comp->setVisible (mixp);
+            row.send->setVisible (mixp);
+            row.tune->setVisible (mixp);
+            row.damp->setVisible (mixp);
+        }
+        for (auto* k : { roomSizeKnob.get(), roomDampKnob.get(), roomMixKnob.get() })
+            k->setVisible (mixp);
 
         resized();
         repaint();
@@ -1192,6 +1325,18 @@ namespace hhx
             g.drawText ("BPM",        juce::Rectangle<int> (478, 240, 120, 13), juce::Justification::centredLeft);
             g.drawText ("SWING GRID", juce::Rectangle<int> (736, 240, 120, 13), juce::Justification::centredLeft);
         }
+        else if (page == Page::mix)
+        {
+            drawPanel (g, juce::Rectangle<int> (16, 70, getWidth() - 32, getHeight() - 150),
+                       "Instrument Processing");
+            g.setColour (DrumsXLookAndFeel::textDim());
+            g.setFont (uiFont (10.5f, true));
+            g.drawText ("PIECE", juce::Rectangle<int> (48,  96, 90, 14), juce::Justification::centredLeft);
+            g.drawText ("COMP",  juce::Rectangle<int> (170, 96, 60, 14), juce::Justification::centredLeft);
+            g.drawText ("ROOM",  juce::Rectangle<int> (240, 96, 60, 14), juce::Justification::centredLeft);
+            g.drawText ("TUNE",  juce::Rectangle<int> (310, 96, 60, 14), juce::Justification::centredLeft);
+            g.drawText ("DAMP",  juce::Rectangle<int> (380, 96, 60, 14), juce::Justification::centredLeft);
+        }
         else
         {
             drawPanel (g, juce::Rectangle<int> (16, 70, getWidth() - 32, getHeight() - 150), "Kit & Mix");
@@ -1213,9 +1358,9 @@ namespace hhx
         auto header = r.removeFromTop (54).reduced (20, 12);
         header.removeFromLeft (240);
 
-        for (auto* tab : { &mainTab, &detailsTab, &kitTab })
+        for (auto* tab : { &mainTab, &detailsTab, &kitTab, &mixTab })
         {
-            tab->setBounds (header.removeFromLeft (92).reduced (3, 0));
+            tab->setBounds (header.removeFromLeft (80).reduced (3, 0));
             header.removeFromLeft (2);
         }
 
@@ -1232,6 +1377,7 @@ namespace hhx
             case Page::main:    layoutMain (r);    break;
             case Page::details: layoutDetails (r); break;
             case Page::kit:     layoutKit (r);     break;
+            case Page::mix:     layoutMix (r);     break;
         }
     }
 
@@ -1353,10 +1499,37 @@ namespace hhx
         }
 
         kitNameLabel.setBounds (740, 110, 260, 24);
-        loadKitButton.setBounds (740, 142, 200, 28);
-        outputKnob->setBounds (740, 190, 110, 110);
-        micBlendKnob->setBounds (860, 190, 110, 110);
-        bleedKnob->setBounds (740, 306, 110, 110);
-        crushKnob->setBounds (860, 306, 110, 110);
+        kitBox.setBounds (740, 138, 240, 28);
+        loadKitButton.setBounds (740, 172, 200, 28);
+        outputKnob->setBounds (740, 214, 110, 110);
+        micBlendKnob->setBounds (860, 214, 110, 110);
+        bleedKnob->setBounds (740, 330, 110, 110);
+        crushKnob->setBounds (860, 330, 110, 110);
+    }
+
+    void DrumsXEditor::layoutMix (juce::Rectangle<int> r)
+    {
+        juce::ignoreUnused (r);
+
+        const int rowH = 30;
+        const int viewTop = 112;
+        mixViewport.setBounds (24, viewTop, 460, 580 - viewTop - 4);
+        mixRowsHolder.setSize (mixViewport.getMaximumVisibleWidth(), rowH * NumLanes + 6);
+
+        int y = 4;
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            auto& row = mixRows[(std::size_t) lane];
+            row.name->setBounds (24, y, 120, rowH);
+            row.comp->setBounds (150, y + 2, 26, 26);
+            row.send->setBounds (220, y + 2, 26, 26);
+            row.tune->setBounds (290, y + 2, 26, 26);
+            row.damp->setBounds (360, y + 2, 26, 26);
+            y += rowH;
+        }
+
+        roomSizeKnob->setBounds (520, 130, 120, 120);
+        roomDampKnob->setBounds (650, 130, 120, 120);
+        roomMixKnob->setBounds  (780, 130, 120, 120);
     }
 }

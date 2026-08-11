@@ -158,7 +158,7 @@ namespace hhx
     float PerformanceEngine::densityCap (const PerformanceSettings& s)
     {
         const float x = std::clamp (s.complexity, 0.0f, 1.0f);
-        return (9.0f + 13.0f * x) * (s.halfTime ? 0.7f : 1.0f);
+        return (8.0f + 10.0f * x) * (s.halfTime ? 0.7f : 1.0f);
     }
 
     std::uint16_t PerformanceEngine::characterMask (const PerformanceSettings& s) const
@@ -645,8 +645,10 @@ namespace hhx
             const int  lane = r.lane;
 
             // Keep the drummer's own deviation and scale it, rather than adding
-            // uncorrelated noise on top of a quantised grid.
-            float beat = r.beat + r.dev * (0.25f + 1.5f * s.humanize) + feelShift
+            // uncorrelated noise on top of a quantised grid. Humanize is the
+            // only thing that moves a stroke off the grid, so at 0 the bar is
+            // machine-tight and at 0.5 it is the take exactly as recorded.
+            float beat = r.beat + r.dev * 2.0f * s.humanize + feelShift
                        + laneTimingBias (lane) * s.humanize;
 
             const int gridIndex = (int) std::llround (beat / gridUnit);
@@ -701,7 +703,7 @@ namespace hhx
                 vel *= 0.35f + 1.0f * s.ghostAmount;
 
             vel *= velGain;
-            vel *= 0.975f + 0.05f * rand01 (seed, i, 5);
+            vel *= 1.0f - 0.05f * s.humanize * rand01 (seed, i, 5);
 
             // --- round robin: never the same sample twice in a row on a lane.
             const int slots = kRoundRobins;

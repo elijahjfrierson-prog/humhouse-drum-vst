@@ -45,7 +45,11 @@ namespace hhx
 
         /** Loads a kit folder. A `kit.json` describing pieces, velocity layers,
             round robins and mics is used when present; otherwise the WAV names
-            (`<piece>_<n>.wav`) are parsed. */
+            (`<piece>_<n>.wav`) are parsed.
+
+            Safe to call while audio is running: strokes are skipped rather
+            than played from a half-loaded kit, and the voices still ringing
+            hold their own samples until they finish. */
         int loadKitFolder (const juce::File& folder);
 
         juce::String getKitName() const;
@@ -71,6 +75,24 @@ namespace hhx
         float getLaneTune (int lane) const;
         void setLaneDamp (int lane, float amount01);
         float getLaneDamp (int lane) const;
+
+        // --- per-instrument channel strip --------------------------------
+        /** Compression on the lane's own bus: 0 = off, 1 = squashed. One
+            feed-forward peak compressor per lane, so a snare can be levelled
+            without touching the cymbals. */
+        void  setLaneCompression (int lane, float amount01);
+        float getLaneCompression (int lane) const;
+
+        /** How much of the lane goes to the shared room reverb. */
+        void  setLaneReverbSend (int lane, float amount01);
+        float getLaneReverbSend (int lane) const;
+
+        /** The shared plate/room the sends feed. `mix` is how much of it comes
+            back into the output. */
+        void  setRoom (float size01, float damping01, float mix01);
+        float getRoomSize() const;
+        float getRoomDamping() const;
+        float getRoomMix() const;
 
         // --- kit mix -----------------------------------------------------
         /** Mic blend: 0 = close only, 1 = all the way back in the room. */
@@ -133,8 +155,11 @@ namespace hhx
             std::atomic<float> pan    { 0.0f };
             std::atomic<float> tune   { 0.0f };   // semitones
             std::atomic<float> damp   { 0.0f };   // 0 = open, 1 = heavily muted
+            std::atomic<float> compression { 0.0f };
+            std::atomic<float> reverbSend  { 0.0f };
             std::atomic<float> activity { 0.0f };
             std::atomic<int>   roundRobin { 0 };
+            float              compEnv { 0.0f };   // audio thread only
         };
 
         struct Voice
@@ -146,6 +171,7 @@ namespace hhx
             float  gainR = 0.0f;
             float  env   = 1.0f;
             float  envDecay = 1.0f;
+            float  release  = 1.0f;   // < 1 once the voice is being let go
             float  toneCoeff = 1.0f;   // one-pole low-pass, 1 = wide open
             float  toneL = 0.0f;
             float  toneR = 0.0f;
@@ -165,7 +191,10 @@ namespace hhx
         };
 
         void clearKit();
+        /** Lets ringing voices go over a few milliseconds instead of cutting them
+            dead, which is what made chokes and stolen voices sound gated. */
         void chokeArticulations (int articulation);
+        float releaseCoefficient (float seconds) const;
         void place (const Placement& p, std::shared_ptr<Sample> s);
 
         /** Drops empty layers and variants. Kits that declare their velocity
@@ -182,18 +211,32 @@ namespace hhx
         static int micNameToIndex (const juce::String& mic);
         static Placement placementFromFilename (const juce::String& name);
 
-        static constexpr int kMaxVoices  = 96;
+        /** Three mics per stroke and cymbals that ring for seconds mean a busy
+            bar needs far more voices than it has notes; too few and the engine
+            steals tails mid-ring, which reads as a one-shot cutting off. */
+        static constexpr int kMaxVoices  = 384;
         static constexpr int kBleedDelay = 512;   // samples, ~11 ms at 48 kHz
 
         std::array<LaneSlot, NumLanes> lanes;
         std::array<Voice, kMaxVoices>  voices;
         juce::CriticalSection          voiceLock;
+        /** Held while a kit is being swapped in, so a stroke arriving mid-load
+            is dropped instead of reading a lane that is being rebuilt. */
+        mutable juce::CriticalSection  layerLock;
         juce::AudioFormatManager       formats;
         double                         currentRate = 48000.0;
 
         std::atomic<float> micBlend { 0.35f };
         std::atomic<float> bleed    { 0.15f };
         std::atomic<float> crush    { 0.0f };
+
+        std::atomic<float> roomSize    { 0.45f };
+        std::atomic<float> roomDamping { 0.5f };
+        std::atomic<float> roomMix     { 0.0f };
+
+        juce::Reverb              room;
+        juce::AudioBuffer<float>  laneBus;      // one lane at a time
+        juce::AudioBuffer<float>  reverbBus;
 
         std::array<float, kBleedDelay> bleedLine {};
         int                            bleedWrite = 0;

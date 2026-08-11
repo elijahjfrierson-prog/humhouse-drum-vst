@@ -19,6 +19,8 @@ namespace hhx
     juce::String pid::lanePan (int lane)    { return "lane" + juce::String (lane) + "Pan"; }
     juce::String pid::laneTune (int lane)   { return "lane" + juce::String (lane) + "Tune"; }
     juce::String pid::laneDamp (int lane)   { return "lane" + juce::String (lane) + "Damp"; }
+    juce::String pid::laneComp (int lane)   { return "lane" + juce::String (lane) + "Comp"; }
+    juce::String pid::laneSend (int lane)   { return "lane" + juce::String (lane) + "Send"; }
 
     const std::vector<Character>& characters()
     {
@@ -162,6 +164,15 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::crush, 1 }, "Mono Crush",
                                                            NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::roomSize, 1 }, "Room Size",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.45f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::roomDamping, 1 }, "Room Damping",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::roomMix, 1 }, "Room Return",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
 
         for (int lane = 0; lane < NumLanes; ++lane)
         {
@@ -185,6 +196,14 @@ namespace hhx
                 AudioParameterFloatAttributes().withStringFromValueFunction (semiStr)));
             layout.add (std::make_unique<AudioParameterFloat> (
                 ParameterID { pid::laneDamp (lane), 1 }, n + " Damp",
+                NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneComp (lane), 1 }, n + " Comp",
+                NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneSend (lane), 1 }, n + " Room Send",
                 NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
                 AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         }
@@ -241,11 +260,15 @@ namespace hhx
             else if (id == pid::lanePan (lane))  kit.setLanePan (lane, value);
             else if (id == pid::laneTune (lane)) kit.setLaneTune (lane, value);
             else if (id == pid::laneDamp (lane)) kit.setLaneDamp (lane, value);
+            else if (id == pid::laneComp (lane)) kit.setLaneCompression (lane, value);
+            else if (id == pid::laneSend (lane)) kit.setLaneReverbSend (lane, value);
         }
 
         if (id == pid::micBlend)   kit.setMicBlend (value);
         else if (id == pid::bleed) kit.setBleed (value);
         else if (id == pid::crush) kit.setCrush (value);
+        else if (id == pid::roomSize || id == pid::roomDamping || id == pid::roomMix)
+            pushRoomParameters();
 
         // A performance knob edits the block that is selected, and only that
         // block; the rest of the arrangement re-renders to exactly what it was.
@@ -367,9 +390,20 @@ namespace hhx
                     // A manifest only names kits inside its own content tree, so
                     // a "../.." entry is rejected rather than followed.
                     const auto folder = shared.getChildFile (entry["folder"].toString());
-                    if (! folder.isAChildOf (shared)
-                        || ! folder.isDirectory() || kit.loadKitFolder (folder) <= 0)
+                    if (! folder.isAChildOf (shared) || ! folder.isDirectory()
+                        || ! folder.getChildFile ("kit.json").existsAsFile())
                         continue;
+
+                    auto name = entry["name"].toString();
+                    kitNames.add (name.isNotEmpty() ? name : folder.getFileName());
+                    kitFolders.push_back (folder);
+                }
+
+                for (int i = 0; i < (int) kitFolders.size(); ++i)
+                {
+                    if (kit.loadKitFolder (kitFolders[(std::size_t) i]) <= 0)
+                        continue;
+                    selectedKit.store (i);
                     contentDescription += " + kit " + kit.getKitName();
                     break;
                 }
@@ -394,6 +428,47 @@ namespace hhx
         kit.setMicBlend (apvts.getRawParameterValue (pid::micBlend)->load());
         kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
         kit.setCrush (apvts.getRawParameterValue (pid::crush)->load());
+        pushRoomParameters();
+    }
+
+    void DrumsXProcessor::selectKit (int index)
+    {
+        if (index < 0 || index >= (int) kitFolders.size() || index == selectedKit.load())
+            return;
+
+        if (kit.loadKitFolder (kitFolders[(std::size_t) index]) <= 0)
+            return;
+
+        selectedKit.store (index);
+
+        // The strip is per lane, not per kit, so the new kit opens with the
+        // gains, tuning and sends the session was already using.
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            const auto load = [this] (const juce::String& id)
+            {
+                const auto* p = apvts.getRawParameterValue (id);
+                return p != nullptr ? p->load() : 0.0f;
+            };
+            kit.setLaneSampleSwitch (lane, (int) load (pid::laneSwitch (lane)));
+            kit.setLaneGainDb (lane, load (pid::laneGain (lane)));
+            kit.setLanePan (lane, load (pid::lanePan (lane)));
+            kit.setLaneTune (lane, load (pid::laneTune (lane)));
+            kit.setLaneDamp (lane, load (pid::laneDamp (lane)));
+            kit.setLaneCompression (lane, load (pid::laneComp (lane)));
+            kit.setLaneReverbSend (lane, load (pid::laneSend (lane)));
+        }
+    }
+
+    void DrumsXProcessor::pushRoomParameters()
+    {
+        const auto load = [this] (const juce::String& id)
+        {
+            const auto* p = apvts.getRawParameterValue (id);
+            return p != nullptr ? p->load() : 0.0f;
+        };
+
+        kit.setRoom (load (pid::roomSize), load (pid::roomDamping), load (pid::roomMix));
     }
 
     void DrumsXProcessor::rebuildTimeline()
@@ -994,6 +1069,7 @@ namespace hhx
         auto state = apvts.copyState();
         state.setProperty ("seed", (juce::int64) seed.load(), nullptr);
         state.setProperty ("uiScale", uiScale.load(), nullptr);
+        state.setProperty ("kit", kitNames[selectedKit.load()], nullptr);
 
         juce::MemoryOutputStream grid;
         {
@@ -1043,6 +1119,11 @@ namespace hhx
             seed.store ((std::uint64_t) (juce::int64) state.getProperty ("seed"));
         if (state.hasProperty ("uiScale"))
             setUiScale ((float) state.getProperty ("uiScale"));
+
+        // By name, not index: a session opened against a different content
+        // version keeps the kit it was written with when that kit is installed.
+        if (state.hasProperty ("kit"))
+            selectKit (kitNames.indexOf (state.getProperty ("kit").toString()));
 
         if (state.hasProperty ("manualGrid"))
         {
@@ -1106,7 +1187,11 @@ namespace hhx
             kit.setLanePan (lane, load (pid::lanePan (lane)));
             kit.setLaneTune (lane, load (pid::laneTune (lane)));
             kit.setLaneDamp (lane, load (pid::laneDamp (lane)));
+            kit.setLaneCompression (lane, load (pid::laneComp (lane)));
+            kit.setLaneReverbSend (lane, load (pid::laneSend (lane)));
         }
+
+        pushRoomParameters();
     }
 
     juce::AudioProcessorEditor* DrumsXProcessor::createEditor()

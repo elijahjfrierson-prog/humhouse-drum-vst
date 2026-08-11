@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 
 namespace hhx
@@ -18,12 +19,26 @@ namespace hhx
         formats.registerBasicFormats();
     }
 
-    void KitEngine::prepare (double sampleRate, int)
+    void KitEngine::prepare (double sampleRate, int maxBlockSize)
     {
         currentRate = sampleRate;
         bleedLine.fill (0.0f);
         bleedWrite = 0;
+
+        const int size = juce::jmax (64, maxBlockSize);
+        laneBus.setSize (2, size, false, true, true);
+        reverbBus.setSize (2, size, false, true, true);
+        room.setSampleRate (sampleRate);
+        room.reset();
+        for (auto& l : lanes)
+            l.compEnv = 0.0f;
+
         allNotesOff();
+    }
+
+    float KitEngine::releaseCoefficient (float seconds) const
+    {
+        return (float) std::pow (0.001, 1.0 / juce::jmax (1.0, (double) seconds * currentRate));
     }
 
     int KitEngine::pieceNameToLane (const juce::String& piece)
@@ -166,7 +181,16 @@ namespace hhx
 
     void KitEngine::clearKit()
     {
-        allNotesOff();
+        {
+            // Voices own their samples, so a kit swap lets the ringing ones fade
+            // out over ~40 ms instead of being cut, which would click.
+            const juce::ScopedLock sl (voiceLock);
+            const float fade = releaseCoefficient (0.040f);
+            for (auto& v : voices)
+                if (v.active)
+                    v.release = juce::jmin (v.release, fade);
+        }
+
         for (auto& l : lanes)
             l.layers.clear();
     }
@@ -193,6 +217,7 @@ namespace hhx
 
     int KitEngine::numLoadedSamples() const
     {
+        const juce::ScopedLock layers (layerLock);
         int total = 0;
         for (const auto& slot : lanes)
             for (const auto& layer : slot.layers)
@@ -273,6 +298,7 @@ namespace hhx
     int KitEngine::loadBundledKit (const juce::String& kitPrefix)
     {
        #if HHX_HAS_BUNDLED_KIT
+        const juce::ScopedLock layers (layerLock);
         clearKit();
 
         int loaded = 0;
@@ -370,6 +396,7 @@ namespace hhx
         if (! folder.isDirectory())
             return 0;
 
+        const juce::ScopedLock layers (layerLock);
         clearKit();
 
         int loaded = 0;
@@ -424,6 +451,7 @@ namespace hhx
     {
         if (lane < 0 || lane >= NumLanes)
             return 0;
+        const juce::ScopedLock layers (layerLock);
         return (int) lanes[(std::size_t) lane].layers.size();
     }
 
@@ -431,6 +459,7 @@ namespace hhx
     {
         if (lane < 0 || lane >= NumLanes)
             return 0;
+        const juce::ScopedLock layers (layerLock);
         const auto& slot = lanes[(std::size_t) lane];
         if (layer < 0 || layer >= (int) slot.layers.size())
             return 0;
@@ -441,6 +470,7 @@ namespace hhx
     {
         if (lane < 0 || lane >= NumLanes || mic < 0 || mic >= NumMics)
             return false;
+        const juce::ScopedLock layers (layerLock);
         for (const auto& layer : lanes[(std::size_t) lane].layers)
             for (const auto& v : layer.variants)
                 if (v.mics[(std::size_t) mic] != nullptr)
@@ -492,6 +522,39 @@ namespace hhx
         return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].damp.load() : 0.0f;
     }
 
+    void KitEngine::setLaneCompression (int lane, float amount01)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].compression.store (juce::jlimit (0.0f, 1.0f, amount01));
+    }
+
+    float KitEngine::getLaneCompression (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].compression.load() : 0.0f;
+    }
+
+    void KitEngine::setLaneReverbSend (int lane, float amount01)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].reverbSend.store (juce::jlimit (0.0f, 1.0f, amount01));
+    }
+
+    float KitEngine::getLaneReverbSend (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].reverbSend.load() : 0.0f;
+    }
+
+    void KitEngine::setRoom (float size01, float damping01, float mix01)
+    {
+        roomSize.store (juce::jlimit (0.0f, 1.0f, size01));
+        roomDamping.store (juce::jlimit (0.0f, 1.0f, damping01));
+        roomMix.store (juce::jlimit (0.0f, 1.0f, mix01));
+    }
+
+    float KitEngine::getRoomSize()    const { return roomSize.load(); }
+    float KitEngine::getRoomDamping() const { return roomDamping.load(); }
+    float KitEngine::getRoomMix()     const { return roomMix.load(); }
+
     void KitEngine::setLanePan (int lane, float pan)
     {
         if (lane >= 0 && lane < NumLanes)
@@ -525,13 +588,13 @@ namespace hhx
 
         if (target == nullptr)
         {
-            // Steal the voice that is furthest through its sample.
-            double best = -1.0;
+            // Steal the least audible voice, so a ring that is still loud keeps
+            // its tail and a stroke that has almost died out goes instead.
+            float quietest = std::numeric_limits<float>::max();
             for (auto& v : voices)
             {
-                const double progress = v.sample != nullptr && v.sample->numFrames > 0
-                                      ? v.position / (double) v.sample->numFrames : 1.0;
-                if (progress > best) { best = progress; target = &v; }
+                const float audible = v.env * juce::jmax (v.gainL, v.gainR);
+                if (audible < quietest) { quietest = audible; target = &v; }
             }
         }
 
@@ -545,6 +608,7 @@ namespace hhx
         target->gainR        = gainR;
         target->env          = 1.0f;
         target->envDecay     = envDecay;
+        target->release      = 1.0f;
         target->toneCoeff    = toneCoeff;
         target->toneL        = 0.0f;
         target->toneR        = 0.0f;
@@ -556,6 +620,12 @@ namespace hhx
 
     void KitEngine::noteOn (int lane, float velocity01, int variant)
     {
+        // A kit swap rebuilds the lanes, so a stroke that lands mid-swap is
+        // dropped: the audio thread never waits for a disk load.
+        const juce::ScopedTryLock layers (layerLock);
+        if (! layers.isLocked())
+            return;
+
         const int articulation = lane;
         lane = resolveLane (lane);
         if (lane < 0)
@@ -664,11 +734,14 @@ namespace hhx
     {
         // Hat pedal state machine: closing the hats kills anything ringing on
         // the openness ladder. Cymbal chokes stop their own cymbal.
-        const auto killIf = [this] (auto&& predicate)
+        // A real hat closing damps the cymbal over a few milliseconds; killing
+        // the voice outright is what made this sound like a noise gate.
+        const float choke = releaseCoefficient (0.035f);
+        const auto killIf = [this, choke] (auto&& predicate)
         {
             for (auto& v : voices)
                 if (v.active && predicate (v.articulation))
-                    v.active = false;
+                    v.release = juce::jmin (v.release, choke);
         };
 
         if (articulation == LaneHatClosed || articulation == LaneHatTight
@@ -716,50 +789,168 @@ namespace hhx
                                              blend * (0.4f + 0.6f * bleedAmt),
                                              blend * blend * (0.3f + 0.7f * bleedAmt) };
 
-        for (auto& v : voices)
+        // Each lane is summed on its own bus so its compressor and reverb send
+        // only ever see that instrument, then folded into the output.
+        const float mix = roomMix.load();
+        const bool  useRoom = mix > 0.001f && reverbBus.getNumSamples() >= numSamples;
+        const bool  perLane = laneBus.getNumSamples() >= numSamples;
+
+        if (useRoom)
+            reverbBus.clear (0, numSamples);
+
+        for (int lane = 0; lane < NumLanes; ++lane)
         {
-            if (! v.active || v.sample == nullptr)
+            auto& slot = lanes[(std::size_t) lane];
+
+            bool anyVoice = false;
+            for (const auto& v : voices)
+                if (v.active && v.lane == lane) { anyVoice = true; break; }
+
+            if (! anyVoice)
+            {
+                slot.compEnv *= 0.5f;
+                continue;
+            }
+
+            float* busL = outL;
+            float* busR = outR;
+            if (perLane)
+            {
+                laneBus.clear (0, numSamples);
+                busL = laneBus.getWritePointer (0);
+                busR = laneBus.getWritePointer (1);
+            }
+
+            for (auto& v : voices)
+            {
+                if (! v.active || v.sample == nullptr || v.lane != lane)
+                    continue;
+
+                const auto* src  = v.sample->data.data();
+                const int   len  = v.sample->numFrames;
+                const int   ch   = v.sample->numChannels;
+                const float mg   = micGain[(std::size_t) v.mic];
+                constexpr float toFloat = 1.0f / 32768.0f;
+
+                // A recording that still has level at its last frame would
+                // stop dead there, which is exactly the one-shot/noise-gate
+                // sound: the last few milliseconds are ramped out instead.
+                const int fadeFrom = len - (int) (0.012 * v.sample->sourceRate);
+
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const int pos = (int) v.position;
+                    if (pos + 1 >= len)
+                    {
+                        v.active = false;
+                        v.sample.reset();
+                        break;
+                    }
+
+                    if (pos > fadeFrom)
+                        v.env *= 1.0f - 1.0f / (float) juce::jmax (1, len - pos);
+
+                    const auto* a = src + (std::size_t) pos * (std::size_t) ch;
+                    const auto* b = a + ch;
+                    const float frac = (float) (v.position - (double) pos);
+                    float l = (a[0] + frac * (b[0] - a[0])) * toFloat;
+                    float r = ch > 1 ? (a[1] + frac * (b[1] - a[1])) * toFloat : l;
+
+                    v.toneL += v.toneCoeff * (l - v.toneL);
+                    v.toneR += v.toneCoeff * (r - v.toneR);
+                    l = v.toneL;
+                    r = v.toneR;
+
+                    busL[i] += l * v.gainL * v.env * mg;
+                    if (busR != nullptr)
+                        busR[i] += r * v.gainR * v.env * mg;
+
+                    v.position += v.increment;
+                    v.env *= v.envDecay * v.release;
+                    if (v.env < 1.0e-4f)
+                    {
+                        v.active = false;
+                        v.sample.reset();
+                        break;
+                    }
+                }
+            }
+
+            if (! perLane)
                 continue;
 
-            const auto* src  = v.sample->data.data();
-            const int   len  = v.sample->numFrames;
-            const int   ch   = v.sample->numChannels;
-            const float mg   = micGain[(std::size_t) v.mic];
-            constexpr float toFloat = 1.0f / 32768.0f;
+            const float comp = slot.compression.load();
+            if (comp > 0.001f)
+            {
+                // One peak compressor per lane: fast attack, programme-dependent
+                // release, with make-up so turning it up sounds like control
+                // rather than a volume drop.
+                const float threshold = juce::Decibels::decibelsToGain (-6.0f - 18.0f * comp);
+                const float ratio     = 1.5f + 6.0f * comp;
+                const float attack    = 1.0f - std::exp (-1.0f / (float) (0.002 * currentRate));
+                const float release   = 1.0f - std::exp (-1.0f / (float) (0.120 * currentRate));
+                const float makeUp    = juce::Decibels::decibelsToGain (5.0f * comp);
+
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float peak = juce::jmax (std::abs (busL[i]),
+                                                   busR != nullptr ? std::abs (busR[i]) : 0.0f);
+                    const float coeff = peak > slot.compEnv ? attack : release;
+                    slot.compEnv += coeff * (peak - slot.compEnv);
+
+                    float gain = makeUp;
+                    if (slot.compEnv > threshold)
+                    {
+                        const float over = slot.compEnv / threshold;
+                        gain *= std::pow (over, 1.0f / ratio - 1.0f);
+                    }
+
+                    busL[i] *= gain;
+                    if (busR != nullptr)
+                        busR[i] *= gain;
+                }
+            }
+
+            const float send = useRoom ? slot.reverbSend.load() : 0.0f;
+            auto* verbL = useRoom ? reverbBus.getWritePointer (0) : nullptr;
+            auto* verbR = useRoom ? reverbBus.getWritePointer (1) : nullptr;
 
             for (int i = 0; i < numSamples; ++i)
             {
-                const int pos = (int) v.position;
-                if (pos + 1 >= len)
-                {
-                    v.active = false;
-                    v.sample.reset();
-                    break;
-                }
-
-                const auto* a = src + (std::size_t) pos * (std::size_t) ch;
-                const auto* b = a + ch;
-                const float frac = (float) (v.position - (double) pos);
-                float l = (a[0] + frac * (b[0] - a[0])) * toFloat;
-                float r = ch > 1 ? (a[1] + frac * (b[1] - a[1])) * toFloat : l;
-
-                v.toneL += v.toneCoeff * (l - v.toneL);
-                v.toneR += v.toneCoeff * (r - v.toneR);
-                l = v.toneL;
-                r = v.toneR;
-
-                outL[i] += l * v.gainL * v.env * mg;
+                const float l = busL[i];
+                const float r = busR != nullptr ? busR[i] : l;
+                outL[i] += l;
                 if (outR != nullptr)
-                    outR[i] += r * v.gainR * v.env * mg;
+                    outR[i] += r;
 
-                v.position += v.increment;
-                v.env *= v.envDecay;
-                if (v.env < 1.0e-4f)
+                if (send > 0.001f)
                 {
-                    v.active = false;
-                    v.sample.reset();
-                    break;
+                    verbL[i] += l * send;
+                    verbR[i] += r * send;
                 }
+            }
+        }
+
+        if (useRoom)
+        {
+            juce::Reverb::Parameters params;
+            params.roomSize  = 0.25f + 0.7f * roomSize.load();
+            params.damping   = roomDamping.load();
+            params.width     = 1.0f;
+            params.wetLevel  = 1.0f;
+            params.dryLevel  = 0.0f;
+            params.freezeMode = 0.0f;
+            room.setParameters (params);
+            room.processStereo (reverbBus.getWritePointer (0), reverbBus.getWritePointer (1),
+                                numSamples);
+
+            const auto* wetL = reverbBus.getReadPointer (0);
+            const auto* wetR = reverbBus.getReadPointer (1);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                outL[i] += wetL[i] * mix;
+                if (outR != nullptr)
+                    outR[i] += wetR[i] * mix;
             }
         }
 

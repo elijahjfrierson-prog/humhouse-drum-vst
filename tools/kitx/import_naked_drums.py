@@ -61,28 +61,33 @@ PIECE_MAP = [
 ]
 
 
-# Longest tail we keep per family, in seconds. The library records cymbals out
-# to six seconds of inaudible ring; that ring is most of the download.
-TAIL_SECONDS = {"hat": 2.0, "ride": 4.5, "crash": 4.5, "china": 4.5,
-                "splash": 3.0, "perc": 3.0}
-SHELL_TAIL = 3.0
-SILENCE = 10 ** (-72 / 20)
-FADE_SECONDS = 0.06
+# Longest tail we keep per family, in seconds. Generous on purpose: a strike
+# that stops before the drum has finished ringing is what makes a sampled kit
+# sound gated, so we only cut what is genuinely inaudible.
+TAIL_SECONDS = {"hat": 3.0, "ride": 8.0, "crash": 8.0, "china": 8.0,
+                "splash": 5.0, "perc": 5.0}
+SHELL_TAIL = 5.0
+SILENCE = 10 ** (-84 / 20)
+
+# Only used when the limit above actually cuts into a ringing tail, and long
+# enough that the cut reads as the room dying away rather than a gate closing.
+FADE_SECONDS = 0.35
 
 
 def convert(src, dest, piece):
-    """24-bit source -> dithered 16-bit FLAC with the dead tail cut off."""
+    """24-bit source -> dithered 16-bit FLAC, keeping the natural tail."""
     audio, rate = sf.read(src, dtype="float64", always_2d=True)
     limit = next((s for k, s in TAIL_SECONDS.items() if piece.startswith(k)),
                  SHELL_TAIL)
 
     loud = np.where(np.max(np.abs(audio), axis=1) > SILENCE)[0]
-    end = int(loud[-1]) + 1 if len(loud) else len(audio)
-    end = min(end, int(limit * rate), len(audio))
+    natural = int(loud[-1]) + 1 if len(loud) else len(audio)
+    end = min(natural, int(limit * rate), len(audio))
 
-    fade = min(int(FADE_SECONDS * rate), end)
     audio = audio[:end].copy()
-    audio[end - fade:] *= np.linspace(1.0, 0.0, fade)[:, None]
+    if end < natural:
+        fade = min(int(FADE_SECONDS * rate), end)
+        audio[end - fade:] *= np.linspace(1.0, 0.0, fade)[:, None]
 
     # TPDF dither at one LSB, so ghost notes do not quantise into crackle.
     lsb = 1.0 / 32768.0
