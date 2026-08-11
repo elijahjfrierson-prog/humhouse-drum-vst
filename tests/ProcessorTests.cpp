@@ -120,6 +120,21 @@ int main()
                      load, peak);
         check (peak > 0.001, "a busy groove actually makes sound");
         check (load < 4.0, "CPU stays inside the 4 % budget at 48 kHz / 128 samples");
+        check (peak <= 1.0, "a busy groove stays inside full scale");
+
+        // Driven hard, the soft ceiling still has to hold: the instrument must
+        // never hand the host a clipped buffer.
+        proc.getAPVTS().getParameter (hhx::pid::outputLevel)->setValueNotifyingHost (1.0f);
+        double hotPeak = 0.0;
+        for (int i = 0; i < 48000 * 4 / 128; ++i)
+        {
+            buffer.clear();
+            midi.clear();
+            proc.processBlock (buffer, midi);
+            hotPeak = std::max (hotPeak, (double) buffer.getMagnitude (0, buffer.getNumSamples()));
+        }
+        check (hotPeak > 0.5 && hotPeak <= 1.0, "the output ceiling holds at full output level");
+        proc.getAPVTS().getParameter (hhx::pid::outputLevel)->setValueNotifyingHost (0.5f);
         proc.stop();
     }
 

@@ -915,6 +915,7 @@ namespace hhx
         if (! transportRunning)
         {
             kit.renderNextBlock (buffer, 0, numSamples);
+            applyOutputStage (buffer);
             return;
         }
 
@@ -933,6 +934,7 @@ namespace hhx
         if (tl == nullptr || tl->hits.empty())
         {
             kit.renderNextBlock (buffer, 0, numSamples);
+            applyOutputStage (buffer);
             playheadBeats.store (blockEndBeat);
             return;
         }
@@ -941,6 +943,11 @@ namespace hhx
         const double loopStart = std::fmod (blockStartBeat, loopBeats);
         const double loopEnd   = loopStart + (blockEndBeat - blockStartBeat);
 
+        // Strokes are collected first and struck at their own sample offset
+        // below. Firing them all at the top of the block would quantise the
+        // whole performance to the buffer size, which is the one thing that
+        // makes real micro-timing inaudible.
+        int numPending = 0;
         const auto emit = [&] (double from, double to, double timeOrigin)
         {
             for (const auto& h : tl->hits)
@@ -955,7 +962,11 @@ namespace hhx
                 const int note = laneToMidiNote (h.lane);
                 midi.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), offset);
                 midi.addEvent (juce::MidiMessage::noteOff (10, note), juce::jmin (numSamples - 1, offset + 8));
-                kit.noteOn (h.lane, (float) h.velocity / 127.0f, h.variant);
+
+                if (numPending < (int) pending.size())
+                    pending[(std::size_t) numPending++] = { offset, h.lane, h.velocity, h.variant };
+                else
+                    kit.noteOn (h.lane, (float) h.velocity / 127.0f, h.variant);
             }
         };
 
@@ -969,12 +980,46 @@ namespace hhx
             emit (0.0, loopEnd - loopBeats, loopStart - loopBeats);
         }
 
-        kit.renderNextBlock (buffer, 0, numSamples);
+        int cursor = 0;
+        for (int i = 0; i < numPending; ++i)
+        {
+            const auto& p = pending[(std::size_t) i];
+            if (p.offset > cursor)
+            {
+                kit.renderNextBlock (buffer, cursor, p.offset - cursor);
+                cursor = p.offset;
+            }
+            kit.noteOn (p.lane, (float) p.velocity / 127.0f, p.variant);
+        }
+        if (cursor < numSamples)
+            kit.renderNextBlock (buffer, cursor, numSamples - cursor);
 
+        applyOutputStage (buffer);
+
+        playheadBeats.store (playing.load() ? std::fmod (blockEndBeat, loopBeats) : blockEndBeat);
+    }
+
+    void DrumsXProcessor::applyOutputStage (juce::AudioBuffer<float>& buffer)
+    {
         const float gain = juce::Decibels::decibelsToGain (apvts.getRawParameterValue (pid::outputLevel)->load());
         buffer.applyGain (gain);
 
-        playheadBeats.store (playing.load() ? std::fmod (blockEndBeat, loopBeats) : blockEndBeat);
+        // A whole kit landing together can pass full scale even at a sane
+        // output level, so the last dB is a soft knee instead of the host's
+        // hard clip: the drums stay usable in any mix without a limiter.
+        constexpr float knee = 0.89f;
+        constexpr float room = 1.0f - knee;
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        {
+            auto* data = buffer.getWritePointer (ch);
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+            {
+                const float x = data[i];
+                const float mag = std::abs (x);
+                if (mag > knee)
+                    data[i] = std::copysign (knee + room * std::tanh ((mag - knee) / room), x);
+            }
+        }
     }
 
     //==============================================================================

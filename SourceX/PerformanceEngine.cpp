@@ -95,6 +95,16 @@ namespace hhx
         {
             return s.seed ^ (s.sectionSalt * 0x9E3779B97F4A7C15ull);
         }
+
+        /** The seed the groove itself is chosen from. It deliberately does not
+            depend on the bar: a drummer holds one groove for a whole section
+            and lets the fills carry the song, instead of trying a different
+            take every couple of bars. Only the XY position, the variation
+            knobs, the seed or the block change what is played. */
+        std::uint64_t grooveSeed (const PerformanceSettings& s)
+        {
+            return mix (blockSeed (s) ^ 0x6E9C4F1Dull);
+        }
     }
 
     int arrangementBars (const std::vector<ArrangementSection>& sections)
@@ -514,7 +524,7 @@ namespace hhx
                 break;
         }
 
-        const auto src = pickSources (sec, phraseIndex, seed);
+        const auto src = pickSources (sec, phraseIndex, grooveSeed (sec));
         if (src.skeleton == nullptr || src.colour == nullptr)
             return out;
 
