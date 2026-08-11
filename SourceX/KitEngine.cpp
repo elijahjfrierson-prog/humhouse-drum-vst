@@ -328,6 +328,7 @@ namespace hhx
         }
 
         finaliseKit (true);
+        kitTrimDb.store (0.0f);
         {
             const juce::ScopedLock sl (kitNameLock);
             kitName = kitPrefix;
@@ -352,6 +353,12 @@ namespace hhx
             if (kitVersion.isEmpty())
                 kitVersion = "1";
         }
+
+        // Kits are recorded and normalised by whoever made them, so each one
+        // carries the trim that brings it to the same working level.
+        kitTrimDb.store (manifest.hasProperty ("trim")
+                             ? juce::jlimit (-12.0f, 12.0f, (float) (double) manifest["trim"])
+                             : 0.0f);
 
         const auto* pieces = manifest["pieces"].getArray();
         if (pieces == nullptr)
@@ -426,6 +433,7 @@ namespace hhx
                 }
             }
 
+            kitTrimDb.store (0.0f);
             const juce::ScopedLock sl (kitNameLock);
             kitName    = folder.getFileName();
             kitVersion = "1";
@@ -690,7 +698,9 @@ namespace hhx
         const float curve   = std::pow (vel, 0.75f);
         const float velGain = juce::jmap (depth, curve, 0.45f + 0.55f * curve);
 
-        const float gain = velGain * juce::Decibels::decibelsToGain (slot.gainDb.load()) * trim;
+        const float gain = velGain * trim
+                         * juce::Decibels::decibelsToGain (slot.gainDb.load()
+                                                           + kitTrimDb.load());
         const float pan  = juce::jlimit (-1.0f, 1.0f,
                                          slot.pan.load() + (dither (4) - 0.5f) * 0.05f);
         const float gl   = gain * std::sqrt (0.5f * (1.0f - pan));

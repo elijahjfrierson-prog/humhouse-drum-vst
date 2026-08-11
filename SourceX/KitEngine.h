@@ -226,6 +226,10 @@ namespace hhx
         juce::AudioFormatManager       formats;
         double                         currentRate = 48000.0;
 
+        /** Per-kit level match from the kit's own manifest, so swapping kits
+            does not change how loud the instrument sits in a mix. */
+        std::atomic<float> kitTrimDb { 0.0f };
+
         std::atomic<float> micBlend { 0.35f };
         std::atomic<float> bleed    { 0.15f };
         std::atomic<float> crush    { 0.0f };

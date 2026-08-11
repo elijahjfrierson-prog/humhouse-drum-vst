@@ -95,6 +95,16 @@ namespace hhx
         {
             return s.seed ^ (s.sectionSalt * 0x9E3779B97F4A7C15ull);
         }
+
+        /** The seed the groove itself is chosen from. It deliberately does not
+            depend on the bar: a drummer holds one groove for a whole section
+            and lets the fills carry the song, instead of trying a different
+            take every couple of bars. Only the XY position, the variation
+            knobs, the seed or the block change what is played. */
+        std::uint64_t grooveSeed (const PerformanceSettings& s)
+        {
+            return mix (blockSeed (s) ^ 0x6E9C4F1Dull);
+        }
     }
 
     int arrangementBars (const std::vector<ArrangementSection>& sections)
@@ -136,7 +146,12 @@ namespace hhx
         out.variationRhythm = found->variationRhythm;
         out.variationCymbal = found->variationCymbal;
         out.sectionHint     = found->section;
-        out.sectionSalt     = (std::uint64_t) found->id;
+
+        // Blocks of the same kind share a groove, so the second chorus is the
+        // same chorus played again rather than a different song: what makes the
+        // repeat live is the fills, the round robins and the humanisation,
+        // which all move with the bar.
+        out.sectionSalt     = 0x9E3779B1ull * (std::uint64_t) (found->section + 1);
         return out;
     }
 
@@ -149,16 +164,21 @@ namespace hhx
         // pad is curved so its whole travel stays inside the range a song is
         // actually played in, and the top of the travel is a hard, busy take
         // rather than a drum solo.
+        // Loudness is played, not just turned up: a section hit hard is busier
+        // than the same section played quietly, so the height of the pad lifts
+        // the complexity it asks the library for as well.
         const float x = std::clamp (s.complexity, 0.0f, 1.0f);
         const float y = std::clamp (s.intensity,  0.0f, 1.0f);
-        complexity = std::clamp (0.05f + 0.80f * x * x, 0.0f, 0.92f);
+        complexity = std::clamp (0.05f + 0.62f * x * x + 0.15f * x + 0.16f * y * y,
+                                 0.0f, 0.84f);
         intensity  = std::clamp (0.06f + 0.78f * y, 0.0f, 1.0f);
     }
 
     float PerformanceEngine::densityCap (const PerformanceSettings& s)
     {
         const float x = std::clamp (s.complexity, 0.0f, 1.0f);
-        return (8.0f + 10.0f * x) * (s.halfTime ? 0.7f : 1.0f);
+        const float y = std::clamp (s.intensity,  0.0f, 1.0f);
+        return (8.0f + 10.0f * x + 3.0f * y) * (s.halfTime ? 0.7f : 1.0f);
     }
 
     std::uint16_t PerformanceEngine::characterMask (const PerformanceSettings& s) const
@@ -226,22 +246,57 @@ namespace hhx
 
         float cx = 0.0f, in = 0.0f;
         corpusTarget (s, cx, in);
+        // A wide shortlist so the heavy corner of the pad has real dense takes
+        // to draw from, not only whatever happens to sit nearest to it.
         const auto ranked = corpus->neighbours (cx, in, characterMask (s),
-                                                std::max (1, s.phraseBars), 12,
+                                                std::max (1, s.phraseBars), 24,
                                                 s.timeSigNum, s.timeSigDen);
         if (ranked.empty())
             return out;
 
+        // Sparse takes are not what the pad was asked for once it is up in the
+        // heavy corner, so they are passed over while enough real candidates
+        // remain to still have a choice.
+        const auto perBar = [this] (int i)
+        {
+            const auto& p = corpus->beat (i);
+            return (float) p.hits.size() / (float) std::max<int> (1, p.bars);
+        };
+
+        std::vector<int> dense;
+        {
+            const float floorPerBar = 0.55f * densityCap (s);
+            for (const int i : ranked)
+                if (perBar (i) >= floorPerBar)
+                    dense.push_back (i);
+
+            // Nothing nearby is busy enough for where the pad is: rather than
+            // fall back on a thin take, take the busiest real performances the
+            // shortlist has.
+            if (dense.size() < 4)
+            {
+                dense = ranked;
+                std::stable_sort (dense.begin(), dense.end(),
+                                  [&] (int a, int b)
+                                  {
+                                      const float pa = perBar (a), pb = perBar (b);
+                                      return pa > pb || (! (pb > pa) && a < b);
+                                  });
+                dense.resize (std::min<std::size_t> (6, dense.size()));
+            }
+        }
+        const auto& pool = dense.empty() ? ranked : dense;
+
         // Seeded weighted choice over the k nearest takes: the closest are the
         // most likely, but a held XY position still breathes between real
         // performances instead of repeating one.
-        const int n = (int) ranked.size();
+        const int n = std::min (12, (int) pool.size());
         float weights[12] {};
         float total = 0.0f;
         for (int i = 0; i < n; ++i)
         {
             float w = 1.0f / (1.0f + (float) i * 0.55f);
-            if (section >= 0 && corpus->beat (ranked[(std::size_t) i]).section
+            if (section >= 0 && corpus->beat (pool[(std::size_t) i]).section
                                     == (std::uint8_t) section)
                 w *= 2.0f;
             weights[i] = w;
@@ -261,7 +316,7 @@ namespace hhx
         };
 
         const int primary = wrap (draw (0x5Bu) + s.variationRhythm, n);
-        const auto& take = corpus->beat (ranked[(std::size_t) primary]);
+        const auto& take = corpus->beat (pool[(std::size_t) primary]);
 
         // One human take plays the whole bar. Cymbals only come from a
         // different take when the user asks for a cymbal variation, and even
@@ -280,7 +335,7 @@ namespace hhx
                 if (i == primary)
                     continue;
 
-                const auto& other = corpus->beat (ranked[(std::size_t) i]);
+                const auto& other = corpus->beat (pool[(std::size_t) i]);
                 if (other.bars != take.bars || other.sigNum != take.sigNum
                     || other.sigDen != take.sigDen)
                     continue;
@@ -408,6 +463,48 @@ namespace hhx
         raw.resize (write);
     }
 
+    void PerformanceEngine::supplyLanes (const PerformanceSettings& s,
+                                         float dstBar,
+                                         int   bars,
+                                         std::uint64_t seed,
+                                         std::vector<Raw>& raw) const
+    {
+        const auto enabled = [&s] (int lane) { return (s.laneMask & (1u << lane)) != 0; };
+        const auto playing = [&raw] (auto&& predicate)
+        {
+            return std::any_of (raw.begin(), raw.end(),
+                                [&] (const Raw& h) { return predicate ((int) h.lane); });
+        };
+
+        // A time keeper the whole phrase can lean on: eighths, quarters when
+        // the section is half-time, accented on the beat the way a drummer
+        // plays them rather than flat.
+        const auto layTimeKeeper = [&] (int lane, float step, float level)
+        {
+            const float total = dstBar * (float) bars;
+            for (float beat = 0.0f; beat < total - 0.001f; beat += step)
+            {
+                const float inBar = beat - std::floor (beat / dstBar) * dstBar;
+                const bool  onBeat = std::abs (inBar - std::round (inBar)) < 0.01f;
+                const float vel = level * (onBeat ? 1.0f : 0.72f)
+                                * (1.0f + 0.05f * (rand01 (seed, (std::uint64_t) (beat * 16.0f), 0x5Du) - 0.5f));
+                raw.push_back ({ beat, 0.0f, (std::uint8_t) lane,
+                                 (std::uint8_t) std::clamp ((int) std::lround (vel * 127.0f), 1, 127) });
+            }
+        };
+
+        const float step  = (s.halfTime ? 1.0f : 0.5f);
+        const float level = 0.45f + 0.28f * std::clamp (s.sectionVelocity, 0.0f, 1.0f);
+
+        const bool hatsOn = enabled (LaneHatClosed);
+        const bool rideOn = enabled (LaneRideBow);
+
+        if (hatsOn && ! playing (isHatLane) && ! playing (isRideLane))
+            layTimeKeeper (LaneHatClosed, step, level);
+        else if (rideOn && ! hatsOn && ! playing (isRideLane))
+            layTimeKeeper (LaneRideBow, step, level);
+    }
+
     void PerformanceEngine::addCrashes (const PerformanceSettings& base,
                                         const PerformanceSettings& sec,
                                         int   phraseIndex,
@@ -440,10 +537,17 @@ namespace hhx
         if (energy > 0.72f && bars >= 2)
             beats.push_back ((float) (bars / 2) * dstBar);
 
-        // Flat out, every bar gets marked.
-        if (energy > 0.88f)
-            for (int bar = 1; bar < bars; ++bar)
+        // A big chorus: every bar gets marked.
+        if (energy > 0.84f)
+            for (int bar = 0; bar < bars; ++bar)
                 beats.push_back ((float) bar * dstBar);
+
+        // Flat out, the halves of every bar are marked too - the wall of
+        // crashes a heavy chorus is actually played with, alternating left and
+        // right so it stays playable.
+        if (energy > 0.9f)
+            for (int bar = 0; bar < bars; ++bar)
+                beats.push_back (((float) bar + 0.5f) * dstBar);
 
         std::sort (beats.begin(), beats.end());
         beats.erase (std::unique (beats.begin(), beats.end()), beats.end());
@@ -514,7 +618,7 @@ namespace hhx
                 break;
         }
 
-        const auto src = pickSources (sec, phraseIndex, seed);
+        const auto src = pickSources (sec, phraseIndex, grooveSeed (sec));
         if (src.skeleton == nullptr || src.colour == nullptr)
             return out;
 
@@ -565,7 +669,27 @@ namespace hhx
         gather (*src.skeleton, true);
         gather (*src.colour,   false);
 
+        // The louder a section is played, the less loose cymbal chatter belongs
+        // in it: a heavy chorus keeps its time on the grid and lets the crashes
+        // carry the size, instead of sprinkling stray hat and ride hits.
+        {
+            const float loud = std::clamp (s.intensity, 0.0f, 1.0f);
+            if (loud > 0.7f)
+            {
+                const float unit = 0.25f;
+                raw.erase (std::remove_if (raw.begin(), raw.end(), [&] (const Raw& h)
+                           {
+                               if (! isOrnamentLane (h.lane))
+                                   return false;
+                               const float inBar = h.beat - std::floor (h.beat / dstBar) * dstBar;
+                               const float off = std::abs (inBar / unit - std::round (inBar / unit));
+                               return off > 0.08f;
+                           }), raw.end());
+            }
+        }
+
         thinOrnaments (sec, dstBar, bars, raw);
+        supplyLanes (sec, dstBar, bars, seed, raw);
 
         // --- fill ---------------------------------------------------------
         if (includeFill)

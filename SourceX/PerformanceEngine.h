@@ -184,6 +184,15 @@ namespace hhx
                          std::uint64_t seed,
                          std::vector<Hit>& out) const;
 
+        /** Gives a switched-on kit piece a part of its own when the take does
+            not play it, so the lane buttons add and subtract whole patterns
+            the way Logic's kit-piece selector does. */
+        void supplyLanes (const PerformanceSettings& s,
+                          float dstBar,
+                          int   bars,
+                          std::uint64_t seed,
+                          std::vector<Raw>& raw) const;
+
         Sources pickSources (const PerformanceSettings& s,
                              int phraseIndex,
                              std::uint64_t seed) const;

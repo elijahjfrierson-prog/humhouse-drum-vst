@@ -309,22 +309,42 @@ int main (int argc, char** argv)
         check (pairs > 0 && repeats == 0, "consecutive same-lane hits pick different variants");
     }
 
-    // 14. No audible loop over 32 bars at a fixed XY position.
+    // 14. The groove holds. A section keeps the take it was given for as long
+    //     as nothing is turned, so a song does not restart itself every few
+    //     bars; the fills are what keep it moving.
     {
-        std::vector<std::string> bars;
-        const auto hits = engine.renderBars (s, 0, 32);
-        bars.resize (32);
-        for (const auto& h : hits)
+        const auto barPrints = [&] (const hhx::PerformanceSettings& p, int numBars)
         {
-            const int bar = (int) (h.beat / s.beatsPerBar);
-            if (bar >= 0 && bar < 32)
-                bars[(std::size_t) bar] += std::to_string (h.lane) + ":"
-                                         + std::to_string ((int) (h.beat * 24.0f)) + ",";
-        }
-        std::map<std::string, int> unique;
-        for (const auto& b : bars)
-            ++unique[b];
-        check ((int) unique.size() >= 24, "32 bars at one XY position give at least 24 distinct bars");
+            std::vector<std::string> bars ((std::size_t) numBars);
+            for (const auto& h : engine.renderBars (p, 0, numBars))
+            {
+                const int bar = (int) (h.beat / p.beatsPerBar);
+                if (bar >= 0 && bar < numBars)
+                    bars[(std::size_t) bar] += std::to_string (h.lane) + ":"
+                        + std::to_string ((int) ((h.beat - (float) bar * p.beatsPerBar) * 24.0f)) + ",";
+            }
+            std::map<std::string, int> unique;
+            for (const auto& b : bars)
+                ++unique[b];
+            return unique.size();
+        };
+
+        auto hold = s;
+        hold.phraseBars = 2;
+        hold.humanize   = 0.0f;
+        hold.fillAmount = 0.0f;
+        check (barPrints (hold, 48) <= 4,
+               "48 bars at one XY position keep playing the same groove");
+
+        auto moving = hold;
+        moving.fillAmount = 1.0f;
+        check (barPrints (moving, 48) >= 4, "fills still move the song along");
+
+        auto turned = hold;
+        turned.complexity = std::min (1.0f, hold.complexity + 0.4f);
+        check (! sameHits (engine.renderBars (hold, 0, 8),
+                           engine.renderBars (turned, 0, 8)),
+               "turning complexity does change the groove");
     }
 
     // 15. Section awareness: following an arrangement changes the performance.
@@ -567,6 +587,62 @@ int main (int argc, char** argv)
         const int hard = crashes (1.0f);
         check (hard > soft, "higher intensity brings more crashes");
         check (hard <= 16 * 4, "crashes still land on landmarks, not on every beat");
+    }
+
+    // 15e-2. A chorus played flat out is a wall of crashes on the bar and the
+    // half bar, and its cymbal time keeping stays on the grid rather than
+    // scattering stray hat and ride hits.
+    {
+        auto t = s;
+        t.sectionVelocity = 0.95f;
+        t.intensity       = 0.95f;
+        t.complexity      = 0.7f;
+        const auto hits = engine.renderBars (t, 0, 8);
+
+        int crashes = 0, offGrid = 0, ornaments = 0;
+        for (const auto& h : hits)
+        {
+            if (isCrash (h.lane))
+                ++crashes;
+            if (hhx::isHatLane (h.lane) || hhx::isRideLane (h.lane))
+            {
+                ++ornaments;
+                const float inBar = h.beat - std::floor (h.beat / 4.0f) * 4.0f;
+                if (std::abs (inBar / 0.5f - std::round (inBar / 0.5f)) > 0.2f)
+                    ++offGrid;
+            }
+        }
+        check (crashes >= 12, "a chorus at full loudness crashes on bars and half bars");
+        check (offGrid * 4 <= ornaments,
+               "loud cymbal time keeping stays on the grid");
+    }
+
+    // 15e-3. Kit-piece buttons add and subtract whole patterns: switching the
+    // hats out silences them, and switching the ride in with the hats out gives
+    // the section a ride part of its own.
+    {
+        auto t = s;
+        t.complexity = 0.5f;
+        const auto count = [&] (const hhx::PerformanceSettings& set, bool ride)
+        {
+            int n = 0;
+            for (const auto& h : engine.renderBars (set, 0, 8))
+                if (ride ? hhx::isRideLane (h.lane) : hhx::isHatLane (h.lane))
+                    ++n;
+            return n;
+        };
+
+        auto noHats = t;
+        for (int lane = hhx::LaneHatClosed; lane <= hhx::LaneHatBell; ++lane)
+            noHats.laneMask &= ~(1u << lane);
+        check (count (noHats, false) == 0, "switching the hats out drops the hat pattern");
+        check (count (noHats, true) >= 8, "the ride takes over the time keeping");
+
+        auto noCymbals = noHats;
+        for (int lane = hhx::LaneRideBow; lane <= hhx::LaneRideCrash; ++lane)
+            noCymbals.laneMask &= ~(1u << lane);
+        check (count (noCymbals, true) == 0 && count (noCymbals, false) == 0,
+               "with both switched out the groove plays without cymbal time");
     }
 
     // 15f. Fills: every block ends with one, and cadences carry them too.

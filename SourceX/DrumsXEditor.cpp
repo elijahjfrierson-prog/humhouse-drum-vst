@@ -1390,21 +1390,33 @@ namespace hhx
         r.removeFromLeft (16);
 
         auto strip2 = r.removeFromBottom (66);
-        arrangementView.setBounds (strip2.withTrimmedTop (16));
+
+        // The kit-piece buttons live beside the arrangement, where they read as
+        // what they are: the parts of the song, switched in and out live.
+        auto pieces = strip2.removeFromRight (260).withTrimmedTop (16);
+        arrangementView.setBounds (strip2.withTrimmedTop (16).withTrimmedRight (8));
         arrangement.setSize (arrangement.preferredWidth(),
                              juce::jmax (24, arrangementView.getMaximumVisibleHeight()));
 
+        {
+            const int groups  = juce::jmax (1, (int) laneGroups.size());
+            const int perRow  = (groups + 1) / 2;
+            const int rowH    = juce::jmax (14, pieces.getHeight() / 2);
+            for (int i = 0; i < groups; ++i)
+            {
+                const int row = i / perRow;
+                const int col = i % perRow;
+                auto cell = juce::Rectangle<int> (pieces.getX() + col * pieces.getWidth() / perRow,
+                                                  pieces.getY() + row * rowH,
+                                                  pieces.getWidth() / perRow,
+                                                  rowH).reduced (2, 1);
+                laneGroups[(std::size_t) i].ghost->setBounds (cell.removeFromRight (18));
+                laneGroups[(std::size_t) i].in->setBounds (cell.withTrimmedRight (2));
+            }
+        }
+
         auto bottom = r.removeFromBottom (132);
         phraseView.setBounds (bottom.withTrimmedTop (18));
-
-        auto strip = r.removeFromBottom (34).reduced (0, 4);
-        const int cells = juce::jmax (1, (int) laneGroups.size());
-        for (int i = 0; i < (int) laneGroups.size(); ++i)
-        {
-            auto cell = strip.removeFromLeft (strip.getWidth() / (cells - i)).reduced (3, 0);
-            laneGroups[(std::size_t) i].ghost->setBounds (cell.removeFromRight (26));
-            laneGroups[(std::size_t) i].in->setBounds (cell.withTrimmedRight (2));
-        }
 
         auto right = r.removeFromRight (240);
 

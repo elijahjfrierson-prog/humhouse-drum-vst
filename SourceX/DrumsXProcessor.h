@@ -230,6 +230,22 @@ namespace hhx
 
         juce::MidiMessageSequence buildSequence (int numBars, int laneFilter) const;
 
+        /** Output level plus a soft ceiling, applied however the block was
+            rendered. */
+        void applyOutputStage (juce::AudioBuffer<float>& buffer);
+
+        /** A stroke waiting for its own sample offset inside the block. Owned
+            by the audio thread, sized so a dense bar never needs to allocate. */
+        struct PendingHit
+        {
+            int          offset   = 0;
+            std::uint8_t lane     = 0;
+            std::uint8_t velocity = 0;
+            std::uint8_t variant  = 0;
+        };
+
+        std::array<PendingHit, 256> pending {};
+
         juce::AudioProcessorValueTreeState apvts;
         GrooveCorpus       corpus;
         PerformanceEngine  engine;
