@@ -589,6 +589,62 @@ int main (int argc, char** argv)
         check (hard <= 16 * 4, "crashes still land on landmarks, not on every beat");
     }
 
+    // 15e-2. A chorus played flat out is a wall of crashes on the bar and the
+    // half bar, and its cymbal time keeping stays on the grid rather than
+    // scattering stray hat and ride hits.
+    {
+        auto t = s;
+        t.sectionVelocity = 0.95f;
+        t.intensity       = 0.95f;
+        t.complexity      = 0.7f;
+        const auto hits = engine.renderBars (t, 0, 8);
+
+        int crashes = 0, offGrid = 0, ornaments = 0;
+        for (const auto& h : hits)
+        {
+            if (isCrash (h.lane))
+                ++crashes;
+            if (hhx::isHatLane (h.lane) || hhx::isRideLane (h.lane))
+            {
+                ++ornaments;
+                const float inBar = h.beat - std::floor (h.beat / 4.0f) * 4.0f;
+                if (std::abs (inBar / 0.5f - std::round (inBar / 0.5f)) > 0.2f)
+                    ++offGrid;
+            }
+        }
+        check (crashes >= 12, "a chorus at full loudness crashes on bars and half bars");
+        check (offGrid * 4 <= ornaments,
+               "loud cymbal time keeping stays on the grid");
+    }
+
+    // 15e-3. Kit-piece buttons add and subtract whole patterns: switching the
+    // hats out silences them, and switching the ride in with the hats out gives
+    // the section a ride part of its own.
+    {
+        auto t = s;
+        t.complexity = 0.5f;
+        const auto count = [&] (const hhx::PerformanceSettings& set, bool ride)
+        {
+            int n = 0;
+            for (const auto& h : engine.renderBars (set, 0, 8))
+                if (ride ? hhx::isRideLane (h.lane) : hhx::isHatLane (h.lane))
+                    ++n;
+            return n;
+        };
+
+        auto noHats = t;
+        for (int lane = hhx::LaneHatClosed; lane <= hhx::LaneHatBell; ++lane)
+            noHats.laneMask &= ~(1u << lane);
+        check (count (noHats, false) == 0, "switching the hats out drops the hat pattern");
+        check (count (noHats, true) >= 8, "the ride takes over the time keeping");
+
+        auto noCymbals = noHats;
+        for (int lane = hhx::LaneRideBow; lane <= hhx::LaneRideCrash; ++lane)
+            noCymbals.laneMask &= ~(1u << lane);
+        check (count (noCymbals, true) == 0 && count (noCymbals, false) == 0,
+               "with both switched out the groove plays without cymbal time");
+    }
+
     // 15f. Fills: every block ends with one, and cadences carry them too.
     {
         auto t = s;
