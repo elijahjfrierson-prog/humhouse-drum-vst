@@ -193,6 +193,14 @@ namespace hhx
                          std::uint64_t seed,
                          std::vector<Hit>& out) const;
 
+        /** Collapses two cymbal strokes that land within a few milliseconds of
+            each other - a closed and an open hat on the same eighth, or a
+            phrase boundary landing on top of the phrase before it - into the
+            louder of the two. One hand cannot play both, and hearing them
+            together is what reads as a doubled, flammed sample. Hits must be
+            sorted by beat. */
+        static void collapseDoubledCymbals (std::vector<Hit>& out);
+
         /** Gives a switched-on kit piece a part of its own when the take does
             not play it, so the lane buttons add and subtract whole patterns
             the way Logic's kit-piece selector does. */

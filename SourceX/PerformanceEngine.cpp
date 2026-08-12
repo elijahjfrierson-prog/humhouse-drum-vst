@@ -1094,6 +1094,43 @@ namespace hhx
                 h.velocity = (std::uint8_t) std::max (1, (int) h.velocity / 3);
     }
 
+    void PerformanceEngine::collapseDoubledCymbals (std::vector<Hit>& out)
+    {
+        // A hand plays one cymbal at a time. Two time-keeping strokes a few
+        // milliseconds apart are not a groove, they are the same stroke twice,
+        // and the louder one is the one that was played.
+        constexpr float window = 0.06f;
+
+        std::vector<bool> drop (out.size(), false);
+        for (std::size_t i = 0; i < out.size(); ++i)
+        {
+            if (drop[i] || ! isOrnamentLane ((int) out[i].lane))
+                continue;
+
+            for (std::size_t j = i + 1;
+                 j < out.size() && out[j].beat - out[i].beat < window;
+                 ++j)
+            {
+                if (drop[j] || ! isOrnamentLane ((int) out[j].lane))
+                    continue;
+
+                const bool keepFirst = out[i].velocity != out[j].velocity
+                                     ? out[i].velocity > out[j].velocity
+                                     : out[i].lane <= out[j].lane;
+                drop[keepFirst ? j : i] = true;
+
+                if (! keepFirst)
+                    break;
+            }
+        }
+
+        std::size_t write = 0;
+        for (std::size_t i = 0; i < out.size(); ++i)
+            if (! drop[i])
+                out[write++] = out[i];
+        out.resize (write);
+    }
+
     std::vector<Hit> PerformanceEngine::renderPhrase (const PerformanceSettings& base,
                                                       int  phraseIndex,
                                                       bool includeFill) const
@@ -1272,13 +1309,16 @@ namespace hhx
                     const float inBar   = h.beat - std::floor (h.beat / dstBar) * dstBar;
                     const float toEnd   = dstBar - inBar;
                     const bool  offBeat = subdivisionClass (inBar) == 2;
-                    const float amount  = sec.hatOpenness * (float) (kNumHatSteps - 1);
 
-                    int extra = 0;
-                    if (toEnd <= 0.51f)                       // the "and" of four
-                        extra = (int) std::lround (amount);
-                    else if (offBeat)
-                        extra = (int) std::lround (amount * 0.5f);
+                    // Turned up, the hats sit open the way a punk drummer
+                    // rides them: widest coming out of the bar, wide on the
+                    // off-beats, and only just cracked on the down beats, so
+                    // the knob is a real contrast rather than a stroke or two.
+                    const float weight = (toEnd <= 0.51f) ? 1.00f
+                                       : offBeat          ? 0.85f
+                                                          : 0.35f;
+                    const int extra = (int) std::lround (sec.hatOpenness * weight
+                                                         * (float) (kNumHatSteps - 1));
 
                     if (extra > 0)
                         h.lane = (std::uint8_t) kHatLadder[std::min (kNumHatSteps - 1, step + extra)];
@@ -1402,6 +1442,12 @@ namespace hhx
                 // the hardest recorded layer, which is where the hat starts to
                 // click and string across the groove instead of sitting in it.
                 vel *= 0.88f;
+
+                // A shut hat is the quietest thing on the kit: it keeps time
+                // without being heard as a part of its own. Open strokes are
+                // where the hat is allowed to speak.
+                if (lane == LaneHatClosed || lane == LaneHatTight)
+                    vel *= 0.92f;
             }
 
             // Phrase breathing: the take lifts slightly into its own cadence
@@ -1482,6 +1528,8 @@ namespace hhx
 
         std::stable_sort (out.begin(), out.end(),
                           [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
+
+        collapseDoubledCymbals (out);
         return out;
     }
 
@@ -1546,6 +1594,10 @@ namespace hhx
 
         std::stable_sort (out.begin(), out.end(),
                           [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
+
+        // A phrase boundary must not land a stroke on top of the last stroke
+        // of the phrase before it either.
+        collapseDoubledCymbals (out);
 
         // Round robin is guaranteed across the whole rendered range, not just
         // inside a phrase, so a phrase boundary cannot fire the same sample

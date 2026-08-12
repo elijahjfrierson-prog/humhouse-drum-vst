@@ -745,7 +745,12 @@ namespace hhx
         // A ride is played through a whole section rather than struck for
         // effect, so it sits further back still than the hats: at the level a
         // close mic gives it, it reads as the loudest thing in the kit.
-        const float tingTrimDb = isRideLane (lane) ? -5.5f : (ting ? -3.5f : 0.0f);
+        // A shut hat is the quietest thing a drummer plays: it keeps time under
+        // the kit and leaves the open hat to be the contrast you hear.
+        const bool  shutHat = lane == LaneHatClosed || lane == LaneHatTight;
+        const float tingTrimDb = isRideLane (lane) ? -5.5f
+                               : shutHat           ? -6.0f
+                               : (ting ? -3.5f : 0.0f);
         const float gain = velGain * trim
                          * juce::Decibels::decibelsToGain (slot.gainDb.load()
                                                            + kitTrimDb.load()
@@ -773,7 +778,8 @@ namespace hhx
         // ladder of level-matched multisamples reads as one flat, boxy hit.
         const float reach = juce::jmap (depth, 0.85f, 0.4f);
         const float dark  = (1.0f - std::pow (vel, 0.8f)) * reach
-                          + (ting ? 0.16f : 0.0f);   // takes the wire off the top
+                          + (ting ? 0.16f : 0.0f)    // takes the wire off the top
+                          + (shutHat ? 0.10f : 0.0f); // and the click off a shut hat
         const float cutoff = 20000.0f * std::exp (-3.1f * dark);
         const float tone = dark < 0.02f
                          ? 1.0f
@@ -803,7 +809,7 @@ namespace hhx
         // the openness ladder. Cymbal chokes stop their own cymbal.
         // A real hat closing damps the cymbal over a few milliseconds; killing
         // the voice outright is what made this sound like a noise gate.
-        const float choke = releaseCoefficient (0.035f);
+        const float choke = releaseCoefficient (0.055f);
         const auto killIf = [this, choke] (auto&& predicate)
         {
             for (auto& v : voices)

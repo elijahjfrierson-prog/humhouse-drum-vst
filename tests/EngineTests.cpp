@@ -960,6 +960,58 @@ int main (int argc, char** argv)
         check (! perc, "percussion stays out until the Ghost knob asks for it");
     }
 
+    // 17d. Hat Openness is a real control: closed at zero, an audible open-hat
+    //      contrast at the top, and it reaches the fills too.
+    {
+        const auto openHats = [&] (float openness, bool fillsOnly)
+        {
+            auto t = s;
+            t.hatOpenness = openness;
+            t.fillAmount  = 1.0f;
+            t.phraseBars  = 4;
+            int n = 0;
+            for (const auto& h : engine.renderBars (t, 0, 16))
+            {
+                const bool inFillBar = std::fmod (std::floor (h.beat / t.beatsPerBar), 4.0f) == 3.0f;
+                if (fillsOnly && ! inFillBar)
+                    continue;
+                if (h.lane >= hhx::LaneHatOpen1 && h.lane <= hhx::LaneHatOpen4)
+                    ++n;
+            }
+            return n;
+        };
+
+        const int shut = openHats (0.0f, false);
+        const int wide = openHats (1.0f, false);
+        check (wide > shut * 2 + 4, "hat openness opens the hats when turned up");
+        check (openHats (1.0f, true) > 0, "fills get the open hats too");
+    }
+
+    // 17e. One hand, one cymbal: no two time-keeping strokes within a few
+    //      milliseconds of each other.
+    {
+        const auto isCymbalTime = [] (int lane)
+        {
+            return (lane >= hhx::LaneHatClosed && lane <= hhx::LaneHatBell
+                    && lane != hhx::LaneHatPedal)
+                || (lane >= hhx::LaneRideBow && lane <= hhx::LaneRideEdge);
+        };
+
+        for (const float openness : { 0.0f, 0.5f, 1.0f })
+        {
+            auto t = s;
+            t.hatOpenness = openness;
+            const auto hits = engine.renderBars (t, 0, 16);
+            int doubled = 0;
+            for (std::size_t i = 1; i < hits.size(); ++i)
+                for (std::size_t j = i; j-- > 0 && hits[i].beat - hits[j].beat < 0.06f;)
+                    if (isCymbalTime (hits[i].lane) && isCymbalTime (hits[j].lane))
+                        ++doubled;
+            check (doubled == 0, "no doubled cymbal strokes (open "
+                                 + std::to_string ((int) (openness * 100)) + ")");
+        }
+    }
+
     // 18. Load time: the corpus is parsed well inside the 150 ms budget.
     {
         const auto start = std::chrono::steady_clock::now();
