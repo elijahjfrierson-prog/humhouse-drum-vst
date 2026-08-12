@@ -6,7 +6,7 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\HumHouseDrums.iss
 
 #define MyAppName "HumHouse Drums X"
-#define MyAppVersion "1.9.4"
+#define MyAppVersion "1.9.5"
 #define MyAppPublisher "HumHouse"
 #define MyAppURL "https://github.com/elijahjfrierson-prog/humhouse-drum-vst"
 #define MyAppExeName "HumHouse Drums X.exe"

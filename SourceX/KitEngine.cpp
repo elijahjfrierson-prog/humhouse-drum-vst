@@ -646,6 +646,7 @@ namespace hhx
 
         const float vel = juce::jlimit (0.02f, 1.0f, velocity01);
         const int rr = slot.roundRobin.fetch_add (1) + variant;
+        const bool stickLane = isSnareLane (lane) || isTomLane (lane);
 
         // A hash of the round-robin counter, used to dither the choices below
         // so that they stay deterministic without ever needing rand().
@@ -671,7 +672,14 @@ namespace hhx
         // The round-robin slot rotates within the layer when the kit supplies
         // several takes of it; otherwise it nudges to a neighbouring layer so
         // repeated strokes still differ.
-        int variantIndex = ((rr % numVariants) + numVariants) % numVariants;
+        //
+        // On the drums played with sticks the slot is taken from the
+        // performance alone, not from the free-running counter, because the
+        // performance is alternating hands there: keeping its parity is what
+        // makes consecutive strokes land on two different takes of the drum
+        // instead of wherever the counter happens to be.
+        const int rrBase = stickLane ? variant : rr;
+        int variantIndex = ((rrBase % numVariants) + numVariants) % numVariants;
         variantIndex = (variantIndex + slot.sampleSwitch.load()) % numVariants;
         if (variantIndex < 0)
             variantIndex += numVariants;
@@ -713,8 +721,15 @@ namespace hhx
                          * juce::Decibels::decibelsToGain (slot.gainDb.load()
                                                            + kitTrimDb.load()
                                                            + (ting ? -2.5f : 0.0f));
+        // Sticking: the performance alternates hands on the drums it plays with
+        // sticks, odd round-robin slots being the off hand. The two hands do not
+        // strike from the same place, so they do not sit in quite the same spot
+        // in the image either - which is what makes a roll travel.
+        const float handPan = stickLane ? ((variant & 1) != 0 ? -0.05f : 0.05f)
+                                        : 0.0f;
         const float pan  = juce::jlimit (-1.0f, 1.0f,
-                                         slot.pan.load() + (dither (4) - 0.5f) * 0.05f);
+                                         slot.pan.load() + handPan
+                                         + (dither (4) - 0.5f) * 0.05f);
         const float gl   = gain * std::sqrt (0.5f * (1.0f - pan));
         const float gr   = gain * std::sqrt (0.5f * (1.0f + pan));
 
@@ -855,10 +870,12 @@ namespace hhx
                 const float mg   = micGain[(std::size_t) v.mic];
                 constexpr float toFloat = 1.0f / 32768.0f;
 
-                // A recording that still has level at its last frame would
-                // stop dead there, which is exactly the one-shot/noise-gate
-                // sound: the last few milliseconds are ramped out instead.
-                const int fadeFrom = len - (int) (0.012 * v.sample->sourceRate);
+                // A recording that still has level at its last frame would stop
+                // dead there and click, so the very end is ramped out - but only
+                // over the last few milliseconds, short enough that the drum is
+                // heard ringing to the end of its own recording rather than being
+                // faded off it.
+                const int fadeFrom = len - (int) (0.004 * v.sample->sourceRate);
 
                 for (int i = 0; i < numSamples; ++i)
                 {

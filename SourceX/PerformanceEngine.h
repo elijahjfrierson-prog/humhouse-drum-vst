@@ -158,6 +158,10 @@ namespace hhx
             float        dev      = 0.0f;
             std::uint8_t lane     = LaneKick;
             std::uint8_t velocity = 100;
+            /** A fill is played straight into the next section, so it takes no
+                swing, feel offset or drift: its timing is settled where it was
+                placed. */
+            bool         fill     = false;
         };
 
         struct Sources
@@ -192,6 +196,14 @@ namespace hhx
                           int   bars,
                           std::uint64_t seed,
                           std::vector<Raw>& raw) const;
+
+        /** Adds the ghost strokes a drummer leans on when the Ghost knob is
+            asking for more of them than the take itself plays. */
+        void addGhostNotes (const PerformanceSettings& s,
+                            float dstBar,
+                            int   bars,
+                            std::uint64_t seed,
+                            std::vector<Raw>& raw) const;
 
         Sources pickSources (const PerformanceSettings& s,
                              int phraseIndex,

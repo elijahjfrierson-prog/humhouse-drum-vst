@@ -13,6 +13,7 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -307,6 +308,59 @@ int main (int argc, char** argv)
             lastVariant[h.lane] = h.variant;
         }
         check (pairs > 0 && repeats == 0, "consecutive same-lane hits pick different variants");
+    }
+
+    // 13b. Sticking: the drums played with sticks are played with two hands, so
+    //      consecutive strokes anywhere on the snare and toms swap hand - the
+    //      even round-robin slots being one hand and the odd ones the other.
+    {
+        auto busy = s;
+        busy.complexity = 0.85f;
+        busy.fillAmount = 1.0f;
+
+        int swaps = 0, sames = 0, last = -1;
+        for (const auto& h : engine.renderBars (busy, 0, 16))
+        {
+            if (! (hhx::isSnareLane (h.lane) || hhx::isTomLane (h.lane)))
+                continue;
+            const int hand = h.variant & 1;
+            if (last >= 0)
+                (hand == last ? sames : swaps) += 1;
+            last = hand;
+        }
+        // Two strokes with the same hand happen where one phrase runs into the
+        // next, as they do when a player crosses the kit; through the body of a
+        // phrase the hands take turns.
+        check (swaps > 20 && sames * 4 < swaps,
+               "the hands alternate across the snare and toms");
+    }
+
+    // 13c. The Ghost knob is the whole range of the thing: off means the ghost
+    //      strokes and the percussion colour are not played at all, and full
+    //      means there are more of them and they are heard.
+    {
+        const auto ghostly = [&] (float amount)
+        {
+            auto t = s;
+            t.ghostAmount = amount;
+            int count = 0, sum = 0;
+            for (const auto& h : engine.renderBars (t, 0, 16))
+                if (h.lane == hhx::LaneSnareGhost || h.lane == hhx::LaneSideStick
+                    || h.lane == hhx::LaneSnareRim || h.lane == hhx::LanePerc)
+                {
+                    ++count;
+                    sum += h.velocity;
+                }
+            return std::pair<int, double> { count, count > 0 ? (double) sum / count : 0.0 };
+        };
+
+        const auto off  = ghostly (0.0f);
+        const auto half = ghostly (0.5f);
+        const auto full = ghostly (1.0f);
+
+        check (off.first == 0, "Ghost at zero plays no ghost strokes at all");
+        check (full.first >= half.first, "Ghost at full plays at least as many ghosts");
+        check (full.second > half.second + 4.0, "Ghost at full is heard, not just present");
     }
 
     // 14. The groove holds. A section keeps the take it was given for as long
