@@ -2588,27 +2588,6 @@
   },
   {
    "piece": "hat_open_1",
-   "layer": 3,
-   "variant": 3,
-   "mic": "close",
-   "file": "hat_open_1_v3_rr3_close.flac"
-  },
-  {
-   "piece": "hat_open_1",
-   "layer": 3,
-   "variant": 3,
-   "mic": "oh",
-   "file": "hat_open_1_v3_rr3_oh.flac"
-  },
-  {
-   "piece": "hat_open_1",
-   "layer": 3,
-   "variant": 3,
-   "mic": "room",
-   "file": "hat_open_1_v3_rr3_room.flac"
-  },
-  {
-   "piece": "hat_open_1",
    "layer": 4,
    "variant": 1,
    "mic": "close",
@@ -2963,27 +2942,6 @@
    "variant": 2,
    "mic": "room",
    "file": "hat_open_1_v3_rr2_room.flac"
-  },
-  {
-   "piece": "hat_open_2",
-   "layer": 3,
-   "variant": 3,
-   "mic": "close",
-   "file": "hat_open_1_v3_rr3_close.flac"
-  },
-  {
-   "piece": "hat_open_2",
-   "layer": 3,
-   "variant": 3,
-   "mic": "oh",
-   "file": "hat_open_1_v3_rr3_oh.flac"
-  },
-  {
-   "piece": "hat_open_2",
-   "layer": 3,
-   "variant": 3,
-   "mic": "room",
-   "file": "hat_open_1_v3_rr3_room.flac"
   },
   {
    "piece": "hat_open_2",
@@ -3344,27 +3302,6 @@
   },
   {
    "piece": "hat_open_3",
-   "layer": 3,
-   "variant": 3,
-   "mic": "close",
-   "file": "hat_open_1_v3_rr3_close.flac"
-  },
-  {
-   "piece": "hat_open_3",
-   "layer": 3,
-   "variant": 3,
-   "mic": "oh",
-   "file": "hat_open_1_v3_rr3_oh.flac"
-  },
-  {
-   "piece": "hat_open_3",
-   "layer": 3,
-   "variant": 3,
-   "mic": "room",
-   "file": "hat_open_1_v3_rr3_room.flac"
-  },
-  {
-   "piece": "hat_open_3",
    "layer": 4,
    "variant": 1,
    "mic": "close",
@@ -3719,27 +3656,6 @@
    "variant": 2,
    "mic": "room",
    "file": "hat_open_1_v3_rr2_room.flac"
-  },
-  {
-   "piece": "hat_open_4",
-   "layer": 3,
-   "variant": 3,
-   "mic": "close",
-   "file": "hat_open_1_v3_rr3_close.flac"
-  },
-  {
-   "piece": "hat_open_4",
-   "layer": 3,
-   "variant": 3,
-   "mic": "oh",
-   "file": "hat_open_1_v3_rr3_oh.flac"
-  },
-  {
-   "piece": "hat_open_4",
-   "layer": 3,
-   "variant": 3,
-   "mic": "room",
-   "file": "hat_open_1_v3_rr3_room.flac"
   },
   {
    "piece": "hat_open_4",
@@ -6107,6 +6023,5 @@
    "mic": "room",
    "file": "tom_4_v6_rr2_room.flac"
   }
- ],
- "trim": -2.47
+ ]
 }

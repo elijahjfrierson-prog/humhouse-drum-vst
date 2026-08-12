@@ -757,6 +757,77 @@ int main (int argc, char** argv)
         check (offGrid (waltz) == 0, "a fill stretched into 3/4 still lands on the grid");
     }
 
+    // 15f-3. A fill is vetted against the tempo it is actually played at. At 70
+    // in half time the groove is moving at half rate, so the figures that read
+    // as rolls at 150 are rejected instead of being smoothed over afterwards -
+    // and the fill still resolves into the downbeat it hands over to.
+    {
+        // The fill is the last bar of a phrase that hands over with one, so it
+        // can be read back out of the render without the engine marking it.
+        const auto fillHits = [&] (const hhx::PerformanceSettings& set, int bars)
+        {
+            std::vector<std::vector<hhx::Hit>> out;
+            const float phraseBeats = (float) std::max (1, set.phraseBars) * set.beatsPerBar;
+            const auto all = engine.renderBars (set, 0, bars);
+            for (int phrase = 0; phrase * std::max (1, set.phraseBars) < bars; ++phrase)
+            {
+                if (! engine.phraseEndsWithFill (set, phrase))
+                    continue;
+                const float end   = (float) (phrase + 1) * phraseBeats;
+                const float start = end - set.fillLengthBars * set.beatsPerBar;
+                std::vector<hhx::Hit> one;
+                for (const auto& h : all)
+                    if (h.beat >= start - 0.001f && h.beat < end)
+                        one.push_back (h);
+                if (! one.empty())
+                    out.push_back (one);
+            }
+            return out;
+        };
+
+        auto slow = s;
+        slow.humanize   = 0.0f;
+        slow.swing      = 0.0f;
+        slow.fillAmount = 1.0f;
+        slow.phraseBars = 2;
+        slow.halfTime   = true;
+        slow.tempoBpm   = 70.0f;
+
+        const auto fills = fillHits (slow, 32);
+        check (! fills.empty(), "a slow half-time song still gets fills");
+
+        // Strokes closer than a sixteenth of the half-time pulse: at 70 that is
+        // a thirty-second-note roll over a groove playing half notes.
+        int tooFast = 0, short_ = 0;
+        for (const auto& fill : fills)
+        {
+            for (std::size_t i = 1; i < fill.size(); ++i)
+                if (const float d = fill[i].beat - fill[i - 1].beat; d > 0.001f && d < 0.2f)
+                    ++tooFast;
+
+            float last = 0.0f;
+            for (const auto& h : fill)
+                last = std::max (last, h.beat);
+            const float end = std::ceil (last / slow.beatsPerBar) * slow.beatsPerBar;
+            if (end - last > 1.3f)
+                ++short_;
+        }
+
+        check (tooFast == 0, "half-time fills are not thirty-second rolls at 70 bpm");
+        check (short_ == 0, "every half-time fill runs up to the downbeat");
+
+        // The same settings at 150 may reach for busier figures - the rule is
+        // about the sounding tempo, not about the feel alone.
+        auto fast = slow;
+        fast.halfTime = false;
+        fast.tempoBpm = 150.0f;
+        check (! fillHits (fast, 32).empty(), "fast songs still get fills");
+
+        auto slowStraight = slow;
+        slowStraight.halfTime = false;
+        check (! fillHits (slowStraight, 32).empty(), "slow straight-time songs still get fills");
+    }
+
     // 16. Landing zone: the XY position resolves to real neighbouring takes.
     {
         const auto zone = engine.landingZone (s, 8);

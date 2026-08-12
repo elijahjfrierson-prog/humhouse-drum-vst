@@ -248,7 +248,9 @@ namespace hhx
         std::array<MixRow, NumLanes> mixRows;
         juce::Viewport    mixViewport;
         juce::Component   mixRowsHolder;
-        std::unique_ptr<LabelledKnob> roomSizeKnob, roomDampKnob, roomMixKnob;
+        std::unique_ptr<LabelledKnob> roomSizeKnob, roomDampKnob, roomMixKnob, roomDuckKnob;
+        juce::ComboBox roomSpaceBox;
+        juce::Label    roomSpaceLabel { {}, "SPACE" };
 
         std::unique_ptr<juce::FileChooser> chooser;
         int startupChecks = 16;

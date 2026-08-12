@@ -30,6 +30,11 @@ namespace hhx
         reverbBus.setSize (2, size, false, true, true);
         room.setSampleRate (sampleRate);
         room.reset();
+        roomDelayLine.fill (0.0f);
+        roomDelayWrite = 0;
+        roomToneL = 0.0f;
+        roomToneR = 0.0f;
+        roomDuckEnv = 0.0f;
         for (auto& l : lanes)
             l.compEnv = 0.0f;
 
@@ -559,6 +564,20 @@ namespace hhx
         roomMix.store (juce::jlimit (0.0f, 1.0f, mix01));
     }
 
+    void KitEngine::setRoomSpace (int space)
+    {
+        roomSpace.store (juce::jlimit (0, (int) NumRoomSpaces - 1, space));
+    }
+
+    int KitEngine::getRoomSpace() const { return roomSpace.load(); }
+
+    void KitEngine::setRoomDuck (float amount01)
+    {
+        roomDuck.store (juce::jlimit (0.0f, 1.0f, amount01));
+    }
+
+    float KitEngine::getRoomDuck() const { return roomDuck.load(); }
+
     float KitEngine::getRoomSize()    const { return roomSize.load(); }
     float KitEngine::getRoomDamping() const { return roomDamping.load(); }
     float KitEngine::getRoomMix()     const { return roomMix.load(); }
@@ -618,6 +637,12 @@ namespace hhx
         target->envDecay     = envDecay;
         target->release      = 1.0f;
         target->toneCoeff    = toneCoeff;
+        // The tail is darker than the strike: by the last frame of the recording
+        // the voice is hearing the shell ring rather than the stick, which is
+        // what stops a long decay reading as a sample being turned down.
+        target->tailCoeff    = toneCoeff * 0.45f;
+        target->invFrames    = sample != nullptr && sample->numFrames > 1
+                             ? 1.0f / (float) sample->numFrames : 0.0f;
         target->toneL        = 0.0f;
         target->toneR        = 0.0f;
         target->lane         = lane;
@@ -717,10 +742,14 @@ namespace hhx
         const float curve   = std::pow (vel, ting ? 1.15f : 0.75f);
         const float velGain = juce::jmap (depth, curve, 0.45f + 0.55f * curve);
 
+        // A ride is played through a whole section rather than struck for
+        // effect, so it sits further back still than the hats: at the level a
+        // close mic gives it, it reads as the loudest thing in the kit.
+        const float tingTrimDb = isRideLane (lane) ? -5.5f : (ting ? -3.5f : 0.0f);
         const float gain = velGain * trim
                          * juce::Decibels::decibelsToGain (slot.gainDb.load()
                                                            + kitTrimDb.load()
-                                                           + (ting ? -2.5f : 0.0f));
+                                                           + tingTrimDb);
         // Sticking: the performance alternates hands on the drums it plays with
         // sticks, odd round-robin slots being the off hand. The two hands do not
         // strike from the same place, so they do not sit in quite the same spot
@@ -830,7 +859,8 @@ namespace hhx
         // Each lane is summed on its own bus so its compressor and reverb send
         // only ever see that instrument, then folded into the output.
         const float mix = roomMix.load();
-        const bool  useRoom = mix > 0.001f && reverbBus.getNumSamples() >= numSamples;
+        const bool  useRoom = mix > 0.001f && roomSpace.load() != SpaceDry
+                           && reverbBus.getNumSamples() >= numSamples;
         const bool  perLane = laneBus.getNumSamples() >= numSamples;
 
         if (useRoom)
@@ -896,8 +926,13 @@ namespace hhx
                     float l = (a[0] + frac * (b[0] - a[0])) * toFloat;
                     float r = ch > 1 ? (a[1] + frac * (b[1] - a[1])) * toFloat : l;
 
-                    v.toneL += v.toneCoeff * (l - v.toneL);
-                    v.toneR += v.toneCoeff * (r - v.toneR);
+                    // Darken as the stroke rings down, over its own length.
+                    const float age    = (float) pos * v.invFrames;
+                    const float coeff  = v.toneCoeff
+                                       + (v.tailCoeff - v.toneCoeff) * age;
+
+                    v.toneL += coeff * (l - v.toneL);
+                    v.toneR += coeff * (r - v.toneR);
                     l = v.toneL;
                     r = v.toneR;
 
@@ -973,24 +1008,84 @@ namespace hhx
 
         if (useRoom)
         {
+            // Each space has its own size, darkness, pre-delay and how bright
+            // its return is allowed to be; the Size and Damping knobs then trim
+            // around whichever one is chosen.
+            struct Space { float size, damping, preDelayMs, topHz; };
+            static constexpr Space spaces[NumRoomSpaces] {
+                { 0.20f, 0.70f,  4.0f, 3800.0f },   // Dry: the booth itself
+                { 0.32f, 0.62f,  9.0f, 4600.0f },   // Studio
+                { 0.50f, 0.48f, 21.0f, 5200.0f },   // Room
+                { 0.82f, 0.26f, 34.0f, 4200.0f },   // Hall
+                { 0.62f, 0.14f,  5.0f, 7400.0f },   // Plate: bright, no pre-delay
+            };
+            const auto& space = spaces[(std::size_t) juce::jlimit (0, (int) NumRoomSpaces - 1,
+                                                                   roomSpace.load())];
+
             juce::Reverb::Parameters params;
-            params.roomSize  = 0.25f + 0.7f * roomSize.load();
-            params.damping   = roomDamping.load();
+            params.roomSize  = juce::jlimit (0.05f, 0.98f,
+                                             space.size + (roomSize.load() - 0.45f) * 0.6f);
+            params.damping   = juce::jlimit (0.0f, 1.0f,
+                                             space.damping + (roomDamping.load() - 0.5f) * 0.6f);
             params.width     = 1.0f;
             params.wetLevel  = 1.0f;
             params.dryLevel  = 0.0f;
             params.freezeMode = 0.0f;
             room.setParameters (params);
+
+            // Pre-delay: the strike reaches the close mic before it reaches the
+            // walls. Without this the return arrives with the attack and reads
+            // as an effect on the drum rather than the space around it.
+            const int preDelay = juce::jlimit (1, kRoomPreDelay,
+                                               (int) (space.preDelayMs * 0.001f
+                                                      * (float) currentRate));
+            {
+                auto* sendL = reverbBus.getWritePointer (0);
+                auto* sendR = reverbBus.getWritePointer (1);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const int slot = roomDelayWrite * 2;
+                    const float dl = roomDelayLine[(std::size_t) slot];
+                    const float dr = roomDelayLine[(std::size_t) slot + 1];
+                    roomDelayLine[(std::size_t) slot]     = sendL[i];
+                    roomDelayLine[(std::size_t) slot + 1] = sendR[i];
+                    roomDelayWrite = (roomDelayWrite + 1) % preDelay;
+                    sendL[i] = dl;
+                    sendR[i] = dr;
+                }
+            }
+
             room.processStereo (reverbBus.getWritePointer (0), reverbBus.getWritePointer (1),
                                 numSamples);
+
+            // And the return is darker than the kit: a room gives back body, not
+            // the top end a close mic hears.
+            const float toneCoeff = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                                     * space.topHz / (float) currentRate);
+
+            // Ducking: the room is held down while the kit is being struck and
+            // opens up in the gaps, which is what keeps a long decay from
+            // sitting on top of the next stroke. Fast to close, slow to open,
+            // the way a drummer hears the room answer.
+            const float duck    = roomDuck.load();
+            const float attack  = 1.0f - std::exp (-1.0f / (0.004f * (float) currentRate));
+            const float release = 1.0f - std::exp (-1.0f / (0.18f  * (float) currentRate));
 
             const auto* wetL = reverbBus.getReadPointer (0);
             const auto* wetR = reverbBus.getReadPointer (1);
             for (int i = 0; i < numSamples; ++i)
             {
-                outL[i] += wetL[i] * mix;
+                roomToneL += toneCoeff * (wetL[i] - roomToneL);
+                roomToneR += toneCoeff * (wetR[i] - roomToneR);
+
+                const float dry = std::max (std::abs (outL[i]),
+                                            outR != nullptr ? std::abs (outR[i]) : 0.0f);
+                roomDuckEnv += (dry > roomDuckEnv ? attack : release) * (dry - roomDuckEnv);
+
+                const float open = 1.0f / (1.0f + duck * 6.0f * roomDuckEnv);
+                outL[i] += roomToneL * mix * open;
                 if (outR != nullptr)
-                    outR[i] += wetR[i] * mix;
+                    outR[i] += roomToneR * mix * open;
             }
         }
 

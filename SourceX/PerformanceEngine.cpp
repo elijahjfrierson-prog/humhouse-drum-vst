@@ -431,6 +431,60 @@ namespace hhx
         return out;
     }
 
+    bool PerformanceEngine::fillIsPlayable (const PerformanceSettings& s,
+                                            const Phrase& f,
+                                            float scale,
+                                            bool  strict)
+    {
+        // Every stroke, in destination beats and then in seconds, because a
+        // fill is only good or bad at a tempo: the same written figure is a
+        // roll at 150 and a bar of slow flams at 70.
+        std::vector<float> beats;
+        beats.reserve (f.hits.size());
+        for (const auto& h : f.hits)
+            beats.push_back (h.gridBeat() * scale);
+        if (beats.size() < 3)
+            return false;
+
+        std::sort (beats.begin(), beats.end());
+
+        const float secPerBeat = 60.0f / std::max (20.0f, s.tempoBpm);
+        std::vector<float> gaps;
+        gaps.reserve (beats.size());
+        for (std::size_t i = 1; i < beats.size(); ++i)
+        {
+            const float d = beats[i] - beats[i - 1];
+            if (d > 0.01f)                     // simultaneous strokes are one stroke
+                gaps.push_back (d);
+        }
+        if (gaps.size() < 2)
+            return false;
+
+        const float fastest = *std::min_element (gaps.begin(), gaps.end());
+        std::vector<float> sorted = gaps;
+        std::sort (sorted.begin(), sorted.end());
+        const float typical = sorted[sorted.size() / 2];
+
+        // Two hands cannot play faster than about twenty strokes a second, and
+        // a figure whose strokes are further apart than a slow eighth is not a
+        // fill - it is scattered hits that never gather into one gesture.
+        if (fastest * secPerBeat < 0.048f)
+            return false;
+        if (strict && typical * secPerBeat > 0.46f)
+            return false;
+
+        // Half time is played half as busy: at this feel the groove is moving
+        // at half rate, so a fill of thirty-second notes over it reads as a
+        // different drummer barging in.
+        if (s.halfTime && fastest < (strict ? 0.22f : 0.11f))
+            return false;
+
+        // And it has to resolve: the figure must run right up to the downbeat
+        // it is handing over to, rather than stopping short and leaving a hole.
+        const float span = f.sourceBeatsPerBar() * (float) std::max (1, f.bars) * scale;
+        return beats.back() >= span - (strict ? 0.55f : 1.05f);
+    }
+
     int PerformanceEngine::fillIndexForPhrase (const PerformanceSettings& s,
                                                int phraseIndex) const
     {
@@ -457,7 +511,37 @@ namespace hhx
                 if (const int i = pick (q, {}); i >= 0)
                     avoid.push_back (i);
 
-        return pick (phraseIndex, avoid);
+        // The nearest fill to the pad position is only played if it is playable
+        // here; otherwise it is rejected and the search moves on, so a bad take
+        // is never heard rather than being smoothed over afterwards.
+        const float dstBar = std::max (1.0f, s.beatsPerBar);
+        std::vector<int> seen;
+        for (int attempt = 0; attempt < 16; ++attempt)
+        {
+            const int i = pick (phraseIndex, avoid);
+            if (i < 0)
+                break;
+
+            const auto& f = corpus->fill (i);
+            if (fillIsPlayable (s, f, dstBar / f.sourceBeatsPerBar(), true))
+                return i;
+
+            seen.push_back (i);
+            avoid.push_back (i);
+        }
+
+        // Nothing in the corpus reads well at this tempo and feel. The second
+        // pass only asks that the figure be physically playable and land near
+        // the downbeat; if even that fails the phrase keeps its groove through,
+        // which is what a drummer does rather than play a fill that fights the
+        // song.
+        for (const int i : seen)
+        {
+            const auto& f = corpus->fill (i);
+            if (fillIsPlayable (s, f, dstBar / f.sourceBeatsPerBar(), false))
+                return i;
+        }
+        return -1;
     }
 
     void PerformanceEngine::appendFill (const PerformanceSettings& s,

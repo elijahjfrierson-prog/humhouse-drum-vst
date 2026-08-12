@@ -48,6 +48,8 @@ namespace hhx
         inline constexpr const char* roomSize       = "roomSize";
         inline constexpr const char* roomDamping    = "roomDamping";
         inline constexpr const char* roomMix        = "roomMix";
+        inline constexpr const char* roomSpace      = "roomSpace";
+        inline constexpr const char* roomDuck       = "roomDuck";
 
         juce::String laneEnable (int lane);
         juce::String laneGhost (int lane);

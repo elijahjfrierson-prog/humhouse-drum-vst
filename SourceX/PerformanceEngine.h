@@ -65,6 +65,11 @@ namespace hhx
         std::uint8_t  fillStyleMask = 0;               // 0 = any style
         std::uint32_t fillLaneMask  = 0xFFFFFFFFu;
 
+        /** What the drummer is actually hearing. Fills are vetted against it:
+            the same written figure that reads as a roll at 150 falls apart as
+            slow flams at 70, so the tempo decides which fills are playable. */
+        float tempoBpm = 120.0f;
+
         // --- feel -------------------------------------------------------
         float swing          = 0.0f;
         bool  swingSixteenth = false;
@@ -221,6 +226,13 @@ namespace hhx
                          std::vector<Raw>& raw) const;
 
         int fillIndexForPhrase (const PerformanceSettings& s, int phraseIndex) const;
+
+        /** Whether a take is a fill a drummer would actually play here, at this
+            tempo and in this feel. */
+        static bool fillIsPlayable (const PerformanceSettings& s,
+                                    const Phrase& f,
+                                    float scale,
+                                    bool  strict = true);
 
         std::uint16_t characterMask (const PerformanceSettings& s) const;
 
