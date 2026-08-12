@@ -80,6 +80,30 @@ namespace hhx
                 || lane == LaneSnareRim   || lane == LanePerc;
         }
 
+        /** An accent cymbal: it marks a landmark in the form, so it is always
+            heard exactly on the beat it marks. */
+        bool isAccentCymbal (int lane)
+        {
+            return lane == LaneCrashL || lane == LaneCrashR || lane == LaneCrash3
+                || lane == LaneChina  || lane == LaneSplash || lane == LaneRideCrash;
+        }
+
+        /** Which subdivision a position belongs to, coarsest first. Thinning a
+            take walks these in order so what is left still keeps time: a
+            drummer playing eighths instead of sixteenths, not sixteenths with
+            holes in them. */
+        int subdivisionClass (float beatInBar)
+        {
+            const float sixteenths = beatInBar * 4.0f;
+            const float nearest    = std::round (sixteenths);
+            if (std::abs (sixteenths - nearest) > 0.35f)
+                return 0;                           // between the sixteenths
+            const int step = ((int) nearest) & 3;
+            if (step == 1 || step == 3) return 1;   // sixteenths
+            if (step == 2)              return 2;   // eighth off-beats
+            return 3;                               // quarters
+        }
+
         /** Lanes struck by hand and so played with alternating sticking: the
             snare family and the toms. The feet and the time-keeping cymbal
             stay on their own limb. */
@@ -620,34 +644,46 @@ namespace hhx
         if ((int) raw.size() <= limit)
             return;
 
-        // Order the decoration from most to least expendable and take the top
-        // off. The kick, the backbeat and the toms are the take; only the
-        // hat and ride chatter that pushed it past the pad's density goes.
-        std::vector<std::size_t> candidates;
-        candidates.reserve (raw.size());
-        for (std::size_t i = 0; i < raw.size(); ++i)
-            if (isOrnamentLane (raw[i].lane))
-                candidates.push_back (i);
-
-        const auto rankOf = [&] (std::size_t i)
-        {
-            const auto& h = raw[i];
-            const float inBar = h.beat - std::floor (h.beat / dstBar) * dstBar;
-            return metricWeight (inBar) * 1000.0f + (float) h.velocity;
-        };
-
-        std::sort (candidates.begin(), candidates.end(),
-                   [&] (std::size_t a, std::size_t b)
-                   {
-                       const float ra = rankOf (a), rb = rankOf (b);
-                       return ra != rb ? ra < rb : a < b;
-                   });
-
-        const std::size_t drop = std::min (candidates.size(),
-                                           (std::size_t) ((int) raw.size() - limit));
+        // Thin the decoration a whole subdivision at a time, and evenly within
+        // one, so what is left still keeps time. Dropping the quietest strokes
+        // wherever they happen to be - which is what this used to do - leaves
+        // sixteenths in clusters with half-bar holes between them, and that is
+        // what reads as boxy rather than as a drummer easing off.
         std::vector<bool> remove (raw.size(), false);
-        for (std::size_t i = 0; i < drop; ++i)
-            remove[candidates[i]] = true;
+        int needed = (int) raw.size() - limit;
+
+        for (int layer = 0; layer < 3 && needed > 0; ++layer)
+        {
+            std::vector<std::size_t> inLayer;
+            for (std::size_t i = 0; i < raw.size(); ++i)
+            {
+                if (! isOrnamentLane (raw[i].lane))
+                    continue;
+                const float inBar = raw[i].beat - std::floor (raw[i].beat / dstBar) * dstBar;
+                if (subdivisionClass (inBar) == layer)
+                    inLayer.push_back (i);
+            }
+            if (inLayer.empty())
+                continue;
+
+            std::sort (inLayer.begin(), inLayer.end(),
+                       [&] (std::size_t a, std::size_t b) { return raw[a].beat < raw[b].beat; });
+
+            if ((int) inLayer.size() <= needed)
+            {
+                for (const std::size_t i : inLayer)
+                    remove[i] = true;
+                needed -= (int) inLayer.size();
+                continue;
+            }
+
+            // Part of a layer goes: take them at an even stride so the strokes
+            // that stay are still periodic.
+            const double stride = (double) inLayer.size() / (double) needed;
+            for (int k = 0; k < needed; ++k)
+                remove[inLayer[(std::size_t) ((double) k * stride)]] = true;
+            needed = 0;
+        }
 
         std::size_t write = 0;
         for (std::size_t i = 0; i < raw.size(); ++i)
@@ -663,10 +699,15 @@ namespace hhx
                                          std::vector<Raw>& raw) const
     {
         const auto enabled = [&s] (int lane) { return (s.laneMask & (1u << lane)) != 0; };
-        const auto playing = [&raw] (auto&& predicate)
+        const auto playing = [&] (auto&& predicate)
         {
+            // A lane the player has switched out is not keeping time either.
             return std::any_of (raw.begin(), raw.end(),
-                                [&] (const Raw& h) { return predicate ((int) h.lane); });
+                                [&] (const Raw& h)
+                                {
+                                    return enabled ((int) h.lane)
+                                        && predicate ((int) h.lane);
+                                });
         };
 
         // A time keeper the whole phrase can lean on: eighths, quarters when
@@ -692,10 +733,177 @@ namespace hhx
         const bool hatsOn = enabled (LaneHatClosed);
         const bool rideOn = enabled (LaneRideBow);
 
-        if (hatsOn && ! playing (isHatLane) && ! playing (isRideLane))
+        // A take whose only cymbal work is a foot splash or a crashed ride is
+        // not keeping time on anything, so time is laid for it.
+        if (hatsOn && ! playing (isOrnamentLane))
             layTimeKeeper (LaneHatClosed, step, level);
-        else if (rideOn && ! hatsOn && ! playing (isRideLane))
+        else if (rideOn && ! hatsOn && ! playing (isOrnamentLane))
             layTimeKeeper (LaneRideBow, step, level);
+
+        // The time keeper has to be continuous. A take that plays sixteenths
+        // for a beat and a half and then leaves half a bar empty is not a
+        // drummer easing off, it is a hole, and holes are the single biggest
+        // reason a groove reads as one-shots stitched together. Whatever the
+        // take is keeping time on, the grid it started is carried through.
+        {
+            int counts[NumLanes] = {};
+            for (const Raw& h : raw)
+                if (isOrnamentLane ((int) h.lane))
+                    ++counts[h.lane];
+
+            int timeLane = -1;
+            for (int lane = 0; lane < NumLanes; ++lane)
+                if (counts[lane] > 0 && (timeLane < 0 || counts[lane] > counts[timeLane]))
+                    timeLane = lane;
+
+            if (timeLane >= 0 && enabled (timeLane))
+            {
+                std::vector<float> beats;
+                for (const Raw& h : raw)
+                    if ((int) h.lane == timeLane)
+                        beats.push_back (h.beat);
+                std::sort (beats.begin(), beats.end());
+
+                std::vector<float> gaps;
+                for (std::size_t i = 1; i < beats.size(); ++i)
+                    if (const float g = beats[i] - beats[i - 1]; g > 0.02f)
+                        gaps.push_back (g);
+                std::sort (gaps.begin(), gaps.end());
+
+                {
+                    // The subdivision the take is actually playing, read off its
+                    // own strokes rather than assumed - then coarsened until the
+                    // whole bar fits inside what the pad asked for. A hat part
+                    // is either sixteenths or eighths; it is never sixteenths
+                    // with a beat and a half missing out of the middle.
+                    const float median = gaps.empty() ? step : gaps[gaps.size() / 2];
+                    float grid = 0.5f;
+                    for (const float candidate : { 0.25f, 0.5f, 1.0f })
+                        if (std::abs (median - candidate) < std::abs (median - grid))
+                            grid = candidate;
+                    // Time is sixteenths or eighths. A stroke a beat is not time
+                    // being kept, it is the holes the take had left in.
+                    grid = std::clamp (grid, 0.25f, 0.5f);
+                    if (s.halfTime)
+                        grid = 0.5f;
+
+                    // How busy the time may be is the pad's complexity axis
+                    // only: Intensity decides how hard the kit is hit, never
+                    // which strokes are played.
+                    const float total = dstBar * (float) bars;
+                    const float perBar = (8.0f + 10.0f * std::clamp (s.complexity, 0.0f, 1.0f))
+                                       * (s.halfTime ? 0.7f : 1.0f);
+                    const int   limit = (int) std::lround (perBar * (float) bars);
+                    int structure = 0;
+                    for (const Raw& h : raw)
+                        if ((int) h.lane != timeLane)
+                            ++structure;
+                    // Eighths are the floor: a drummer thins sixteenths down to
+                    // eighths, never down to a stroke a beat, which is where a
+                    // groove stops keeping time at all.
+                    while (grid < 0.5f
+                           && (float) structure + total / grid > (float) limit)
+                        grid *= 2.0f;
+
+                    // The take's own dynamic on this lane, so the strokes that
+                    // are filled in belong to the same performance.
+                    std::vector<int> vels;
+                    for (const Raw& h : raw)
+                        if ((int) h.lane == timeLane)
+                            vels.push_back ((int) h.velocity);
+                    std::sort (vels.begin(), vels.end());
+                    const float own = vels.empty() ? level
+                                                   : (float) vels[vels.size() / 2] / 127.0f;
+                    const float base = 0.5f * own + 0.5f * level;
+
+                    // Anything this lane plays away from the grid it is keeping
+                    // is clutter, not time: it is pulled onto the grid instead
+                    // of sounding like a stray stick.
+                    for (Raw& h : raw)
+                        if ((int) h.lane == timeLane)
+                        {
+                            h.beat = std::round (h.beat / grid) * grid;
+                            h.dev  = 0.0f;
+                        }
+
+                    std::vector<Raw> added;
+                    for (float beat = 0.0f; beat < total - 0.001f; beat += grid)
+                    {
+                        // A crash covers the time it lands on: the hand is over
+                        // there, so no hat is added under it.
+                        const bool covered = std::any_of (raw.begin(), raw.end(),
+                            [&] (const Raw& h)
+                            {
+                                return (isOrnamentLane ((int) h.lane) || isAccentCymbal ((int) h.lane))
+                                    && std::abs (h.beat - beat) < grid * 0.45f;
+                            });
+                        if (covered)
+                            continue;
+
+                        const float inBar  = beat - std::floor (beat / dstBar) * dstBar;
+                        const bool  onBeat = std::abs (inBar - std::round (inBar)) < 0.01f;
+                        added.push_back ({ beat, 0.0f, (std::uint8_t) timeLane,
+                                           (std::uint8_t) std::clamp (
+                                               (int) std::lround (base * (onBeat ? 1.0f : 0.78f) * 127.0f),
+                                               1, 127) });
+                    }
+                    raw.insert (raw.end(), added.begin(), added.end());
+
+                    // Two strokes on one subdivision are one stroke.
+                    std::stable_sort (raw.begin(), raw.end(),
+                                      [] (const Raw& a, const Raw& b)
+                                      {
+                                          if (a.lane != b.lane) return a.lane < b.lane;
+                                          return a.beat < b.beat;
+                                      });
+                    std::vector<Raw> merged;
+                    merged.reserve (raw.size());
+                    for (const Raw& h : raw)
+                    {
+                        if (! merged.empty() && merged.back().lane == h.lane
+                            && std::abs (merged.back().beat - h.beat) < 0.01f)
+                        {
+                            merged.back().velocity = std::max (merged.back().velocity, h.velocity);
+                            continue;
+                        }
+                        merged.push_back (h);
+                    }
+                    raw.swap (merged);
+                }
+            }
+        }
+
+        // The backbeat is the groove. A take that has drifted out of the corpus
+        // without a snare on two and four does not read as a rock beat at all,
+        // so the missing stroke is played rather than left as a hole.
+        if (enabled (LaneSnare) && std::abs (s.beatsPerBar - 4.0f) < 0.01f && s.timeSigDen == 4)
+        {
+            for (int bar = 0; bar < bars; ++bar)
+            {
+                const float top = (float) bar * dstBar;
+                const std::vector<float> spots = s.halfTime
+                                               ? std::vector<float> { top + 2.0f }
+                                               : std::vector<float> { top + 1.0f, top + 3.0f };
+                for (const float beat : spots)
+                {
+                    const bool taken = std::any_of (raw.begin(), raw.end(),
+                        [&] (const Raw& h)
+                        {
+                            // Only a snare counts as the backbeat: a tom or a
+                            // ghost stroke on two does not hold a groove up.
+                            return (h.lane == LaneSnare || h.lane == LaneSnareRim
+                                    || h.lane == LaneSnareFlam || h.lane == LaneSnareRoll)
+                                && std::abs (h.beat - beat) < 0.13f;
+                        });
+                    if (taken)
+                        continue;
+                    raw.push_back ({ beat, 0.0f, (std::uint8_t) LaneSnare,
+                                     (std::uint8_t) std::clamp (
+                                         (int) std::lround ((0.62f + 0.30f * std::clamp (s.sectionVelocity, 0.0f, 1.0f))
+                                                            * 127.0f), 1, 127) });
+                }
+            }
+        }
 
         // Up in the heavy corner of the pad a drummer drives the time instead
         // of counting eighths. If the take is playing less than the pad asked
@@ -848,6 +1056,7 @@ namespace hhx
         beats.erase (std::unique (beats.begin(), beats.end()), beats.end());
 
         int index = 0;
+        std::vector<float> struck;
         for (const float beat : beats)
         {
             const bool taken = std::any_of (out.begin(), out.end(),
@@ -871,8 +1080,18 @@ namespace hhx
             out.push_back ({ std::max (0.0f, beat), (std::uint8_t) lane,
                              (std::uint8_t) std::clamp ((int) std::lround (level * 127.0f), 1, 127),
                              (std::uint8_t) (index % kRoundRobins) });
+            struck.push_back (std::max (0.0f, beat));
             ++index;
         }
+
+        // The crash is played with the hand that was keeping time, so the hat
+        // stroke underneath it drops right back: two cymbals sounding equally
+        // on one beat is the give-away that a machine placed them.
+        for (Hit& h : out)
+            if (isOrnamentLane (h.lane)
+                && std::any_of (struck.begin(), struck.end(),
+                                [&] (const float beat) { return std::abs (h.beat - beat) < 0.06f; }))
+                h.velocity = (std::uint8_t) std::max (1, (int) h.velocity / 3);
     }
 
     std::vector<Hit> PerformanceEngine::renderPhrase (const PerformanceSettings& base,
@@ -1039,17 +1258,30 @@ namespace hhx
             }
             else if (isHatLane (h.lane) && h.lane != LaneHatPedal && sec.hatOpenness > 0.0f)
             {
-                // Walk the openness ladder rather than jumping to "open hat".
+                // Walk the openness ladder rather than jumping to "open hat",
+                // and open it where a drummer's foot actually comes up: on the
+                // way out of the bar and on the off-beats. Opening whichever
+                // strokes a random number picked is what made the hat sound
+                // like a different instrument every other note.
                 int step = 0;
                 for (; step < kNumHatSteps; ++step)
                     if (kHatLadder[step] == h.lane)
                         break;
                 if (step < kNumHatSteps)
                 {
-                    const float amount = sec.hatOpenness * (float) (kNumHatSteps - 1);
-                    const int   extra  = (int) amount
-                        + (rand01 (seed, (std::uint64_t) (h.beat * 64.0f), 7) < amount - std::floor (amount) ? 1 : 0);
-                    h.lane = (std::uint8_t) kHatLadder[std::min (kNumHatSteps - 1, step + extra)];
+                    const float inBar   = h.beat - std::floor (h.beat / dstBar) * dstBar;
+                    const float toEnd   = dstBar - inBar;
+                    const bool  offBeat = subdivisionClass (inBar) == 2;
+                    const float amount  = sec.hatOpenness * (float) (kNumHatSteps - 1);
+
+                    int extra = 0;
+                    if (toEnd <= 0.51f)                       // the "and" of four
+                        extra = (int) std::lround (amount);
+                    else if (offBeat)
+                        extra = (int) std::lround (amount * 0.5f);
+
+                    if (extra > 0)
+                        h.lane = (std::uint8_t) kHatLadder[std::min (kNumHatSteps - 1, step + extra)];
                 }
             }
         }
@@ -1106,7 +1338,15 @@ namespace hhx
             // where it was placed: swinging it, leaning it or drifting it is
             // what made fills read as a separate idea from the groove.
             float beat = r.beat;
-            if (! r.fill)
+            if (isAccentCymbal (lane))
+            {
+                // A crash marks a landmark. Leaning it, swinging it or drifting
+                // it is what makes an arrangement sound like it is falling
+                // over, so it lands exactly on the subdivision it marks.
+                const float bar = std::floor (beat / dstBar) * dstBar;
+                beat = bar + std::round ((beat - bar) * 4.0f) / 4.0f;
+            }
+            else if (! r.fill)
             {
                 beat += r.dev * 2.0f * s.humanize + feelShift
                         + laneTimingBias (lane) * s.humanize;
@@ -1154,7 +1394,15 @@ namespace hhx
             // and a row of identical hits.
             const float inBar = beat - std::floor (beat / dstBar) * dstBar;
             if (isOrnamentLane (lane))
+            {
                 vel *= 0.80f + 0.26f * metricWeight (inBar);
+
+                // Time-keeping is played with the tip of the stick under the
+                // rest of the kit. At full velocity every stroke reaches for
+                // the hardest recorded layer, which is where the hat starts to
+                // click and string across the groove instead of sitting in it.
+                vel *= 0.88f;
+            }
 
             // Phrase breathing: the take lifts slightly into its own cadence
             // rather than sitting at one level for eight bars.
@@ -1169,6 +1417,11 @@ namespace hhx
             {
                 if (s.ghostAmount <= 0.02f)
                     continue;
+
+                // Hand percussion is a colour a drummer reaches for, not part
+                // of the kit: it only plays when the knob is asking for it.
+                if (lane == LanePerc && s.ghostAmount < 0.7f)
+                    continue;
                 vel *= 0.22f + 1.56f * s.ghostAmount;
             }
 
@@ -1182,6 +1435,12 @@ namespace hhx
             vel *= 1.0f + 0.03f * (rand01 (seed, i, 0x3Bu) - 0.5f) * 2.0f;
             vel *= 1.0f + 0.035f * cycleSin ((float) (phraseIndex * bars) / 16.0f
                                              + beat / (16.0f * dstBar));
+
+            // However hard the section is played, the time keeper stays under
+            // the kit: the top of a hat's velocity range is where it turns into
+            // a click.
+            if (isOrnamentLane (lane))
+                vel = std::min (vel, 104.0f);
 
             // --- sticking. A player has two hands, and they take turns as they
             // move around the kit: right, left, right. The off hand is a shade

@@ -569,8 +569,10 @@ int main (int argc, char** argv)
         const double low = perBar (0.0f, 0.2f);
 
         check (top <= 26.0, "the top of the pad is still a playable bar");
-        check (mid <= 17.0, "the middle of the pad stays sparse-to-moderate");
-        check (low <= 12.0 && low >= 3.0, "the bottom of the pad plays a simple beat");
+        // A simple beat is a kick, a backbeat and unbroken eighth-note time:
+        // around fourteen strokes a bar, not eight with holes in the hat.
+        check (mid <= 19.0, "the middle of the pad stays sparse-to-moderate");
+        check (low <= 16.0 && low >= 3.0, "the bottom of the pad plays a simple beat");
         check (top > mid && mid > low, "the pad gets busier from left to right");
 
         // Density is not the same thing as clutter: even wide open, a bar must
@@ -857,6 +859,105 @@ int main (int argc, char** argv)
             worst = std::min (worst, filled);
         }
         check (worst == 100, "every character populates all 100 XY cells");
+    }
+
+    // 17b. What actually makes a bar read as a drummer rather than one-shots
+    //      stitched together: unbroken cymbal time, a backbeat, crashes on the
+    //      beat they mark, and time-keeping played under the kit, not over it.
+    {
+        const auto isTime = [] (int lane)
+        {
+            return (lane >= hhx::LaneHatClosed && lane <= hhx::LaneHatBell
+                    && lane != hhx::LaneHatPedal)
+                || (lane >= hhx::LaneRideBow && lane <= hhx::LaneRideEdge);
+        };
+        const auto isAccent = [] (int lane)
+        {
+            return lane == hhx::LaneCrashL || lane == hhx::LaneCrashR
+                || lane == hhx::LaneCrash3 || lane == hhx::LaneChina
+                || lane == hhx::LaneSplash || lane == hhx::LaneRideCrash;
+        };
+
+        for (const float complexity : { 0.15f, 0.45f, 0.78f, 1.0f })
+            for (const float intensity : { 0.2f, 0.6f, 0.95f })
+                for (const bool half : { false, true })
+                {
+                    auto t = s;
+                    t.complexity = complexity;
+                    t.intensity  = intensity;
+                    t.halfTime   = half;
+                    t.humanize   = 0.5f;
+                    t.phraseBars = 4;
+
+                    const auto hits = engine.renderBars (t, 0, 8);
+                    const std::string at = " (c" + std::to_string ((int) (complexity * 100))
+                                         + " i" + std::to_string ((int) (intensity * 100))
+                                         + (half ? " half)" : ")");
+
+                    // Cymbal time never leaves a hole. A bar and a half of
+                    // sixteenths followed by silence is what sounded boxy.
+                    std::vector<float> time;
+                    float loudestHat = 0.0f;
+                    for (const auto& h : hits)
+                        if (isTime (h.lane) || isAccent (h.lane))
+                        {
+                            time.push_back (h.beat);
+                            if (isTime (h.lane))
+                                loudestHat = std::max (loudestHat, (float) h.velocity);
+                        }
+                    std::sort (time.begin(), time.end());
+
+                    float widest = 0.0f;
+                    for (std::size_t i = 1; i < time.size(); ++i)
+                        widest = std::max (widest, time[i] - time[i - 1]);
+                    check (time.size() > 8 && widest <= 1.02f,
+                           "cymbal time runs without a hole" + at);
+
+                    // Time-keeping stays under the kit.
+                    check (loudestHat <= 112.0f, "hats keep off the ceiling" + at);
+
+                    // Every bar has a backbeat.
+                    int missing = 0;
+                    for (int bar = 0; bar < 8; ++bar)
+                    {
+                        const float top = (float) bar * t.beatsPerBar;
+                        const bool  hit = std::any_of (hits.begin(), hits.end(),
+                            [&] (const hhx::Hit& h)
+                            {
+                                if (h.lane != hhx::LaneSnare && h.lane != hhx::LaneSnareRim
+                                    && h.lane != hhx::LaneSnareFlam)
+                                    return false;
+                                const float in = h.beat - top;
+                                return in > 0.5f && in < t.beatsPerBar - 0.35f;
+                            });
+                        if (! hit)
+                            ++missing;
+                    }
+                    check (missing == 0, "every bar has a backbeat" + at);
+
+                    // Crashes mark a beat exactly, whatever Humanize is doing.
+                    float worstCrash = 0.0f;
+                    for (const auto& h : hits)
+                        if (isAccent (h.lane))
+                        {
+                            const float in = h.beat - std::floor (h.beat / t.beatsPerBar) * t.beatsPerBar;
+                            worstCrash = std::max (worstCrash,
+                                                   std::abs (in * 4.0f - std::round (in * 4.0f)) / 4.0f);
+                        }
+                    check (worstCrash < 0.005f, "crashes land on the beat they mark" + at);
+                }
+    }
+
+    // 17c. Percussion is a colour the Ghost knob asks for, not something the
+    //      generator sprinkles in on its own.
+    {
+        auto quiet = s;
+        quiet.ghostAmount = 0.3f;
+        bool perc = false;
+        for (const auto& h : engine.renderBars (quiet, 0, 32))
+            if (h.lane == hhx::LanePerc)
+                perc = true;
+        check (! perc, "percussion stays out until the Ghost knob asks for it");
     }
 
     // 18. Load time: the corpus is parsed well inside the 150 ms budget.
