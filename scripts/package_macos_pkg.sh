@@ -12,7 +12,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 
-VERSION="${VERSION:-1.9.2}"
+VERSION="${VERSION:-1.9.8}"
 BUNDLE_ID="com.humhouse.humhousedrums.installer"
 PKG_OUT="${PKG_OUT:-HumHouse-Drums-X-macOS.pkg}"
 

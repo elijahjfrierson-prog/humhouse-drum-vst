@@ -151,13 +151,25 @@ def peak(path):
     return float(np.max(np.abs(audio))) if len(audio) else 0.0
 
 
+# Shortest recording that is a drum being hit. The upstream libraries contain a
+# few placeholder strokes of a handful of samples (MuldjordKit's first open hat,
+# for one); shipped as a kit sample, those play as a click and nothing else,
+# which is exactly what a gated sample sounds like.
+MIN_STROKE_SECONDS = 0.05
+
+
+def is_real_stroke(path):
+    info = sf.info(path)
+    return info.frames >= MIN_STROKE_SECONDS * info.samplerate
+
+
 def pick(base, profile, instruments, round_robins):
     """[layer][variant] -> {microphone: path}, softest layer first."""
     hits = []
     for instrument in instruments:
         close = profile["close"].get(instrument, "OHL")
         for _, mics in sorted(strokes(base, instrument).items()):
-            if close in mics:
+            if close in mics and is_real_stroke(mics[close]):
                 hits.append((peak(mics[close]), instrument, mics))
     if not hits:
         sys.exit(f"no strokes found for {instruments}")

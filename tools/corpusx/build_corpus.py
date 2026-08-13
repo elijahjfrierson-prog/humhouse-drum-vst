@@ -291,20 +291,54 @@ def score_musicality(notes: list[Note], bars: int, beats_per_bar: float) -> floa
         i = max(j, i + 1)
     tidy = max(0.0, 1.0 - clutter / len(notes) * 3.0)
 
+    # A part repeats. A drummer playing a song plays the same bar again with
+    # small differences; a warm-up or a run of ideas never states the same
+    # figure twice, which is exactly what "spray" sounds like. Compared as sets
+    # of (lane, sixteenth) so a few ghost notes or a moved hat do not count
+    # against the take.
+    def figure(lo: float, hi: float) -> set[tuple[int, int]]:
+        return {(n.lane, round((n.beat - lo) * 4.0)) for n in notes
+                if lo <= n.beat < hi}
+
+    halves = [(bar * beats_per_bar, (bar + 1) * beats_per_bar)
+              for bar in range(bars)] if bars >= 2 else \
+             [(0.0, beats_per_bar * 0.5), (beats_per_bar * 0.5, beats_per_bar)]
+    scores = []
+    for (a_lo, a_hi), (b_lo, b_hi) in zip(halves, halves[1:]):
+        a, b = figure(a_lo, a_hi), figure(b_lo, b_hi)
+        if a or b:
+            scores.append(len(a & b) / max(1, len(a | b)))
+    stated = sum(scores) / len(scores) if scores else 0.5
+    # Two statements of the same figure with ornament differences sit near
+    # 0.5, which is a part; the scale is stretched so that reads as good.
+    stated = min(1.0, stated * 1.9)
+
+    # No dead patches: something - time keeping, kick or snare - marks every
+    # beat of the bar, the way a played groove does.
+    marked = 0
+    for bar in range(bars):
+        for b in range(int(beats_per_bar)):
+            at = bar * beats_per_bar + b
+            if any(abs(n.beat - at) < 0.3 or at < n.beat < at + 1.0
+                   for n in notes):
+                marked += 1
+    covered = marked / max(1, bars * int(beats_per_bar))
+
     # Silence in the middle of a groove means the take stopped, or the slice
     # caught the end of one.
     edges = [0.0] + [n.beat for n in notes] + [span]
     hole = max(b - a for a, b in zip(edges, edges[1:]))
     flowing = 1.0 if hole <= beats_per_bar else max(0.0, 1.0 - (hole - beats_per_bar))
 
-    return (0.34 * foundation + 0.20 * grid + 0.16 * steady
-            + 0.14 * room + 0.08 * tidy + 0.08 * flowing)
+    return (0.27 * foundation + 0.16 * grid + 0.13 * steady
+            + 0.11 * room + 0.06 * tidy + 0.06 * flowing
+            + 0.13 * stated + 0.08 * covered)
 
 
 # A groove has to hold up on its own, so it is judged hard. A fill is a
 # departure by definition - it only has to be played in time and stay tidy.
-MIN_MUSICALITY_BEAT = 0.74
-MIN_MUSICALITY_FILL = 0.34
+MIN_MUSICALITY_BEAT = 0.80
+MIN_MUSICALITY_FILL = 0.42
 
 
 def score_intensity(notes: list[Note]) -> float:
@@ -825,13 +859,21 @@ def write_corpus(phrases: list[Phrase], out: Path) -> None:
 
 
 def write_manifest(phrases: list[Phrase], out: Path, corpus: Path) -> None:
+    # The corpus is often built to a scratch path before being copied in, and
+    # the kits and their credits live alongside it: the plug-in looks the
+    # library up by the name written here, and the licences require the kit
+    # credits to ship, so neither may be lost to a rebuild.
+    previous = {}
+    if out.exists():
+        previous = json.loads(out.read_text())
+
     per_char = defaultdict(int)
     for p in phrases:
         for bit, (name, *_rest) in enumerate(CHARACTERS):
             if p.char_mask & (1 << bit):
                 per_char[name] += 1
     manifest = {
-        "corpus": corpus.name,
+        "corpus": previous.get("corpus") or corpus.name,
         "format_version": FORMAT_VERSION,
         "phrases": len(phrases),
         "beats": sum(1 for p in phrases if p.kind == KIND_BEAT),
@@ -848,8 +890,11 @@ def write_manifest(phrases: list[Phrase], out: Path, corpus: Path) -> None:
                           "Learning to Groove with Inverse Sequence "
                           "Transformations (2019)",
             }
-        ],
+        ] + [a for a in previous.get("attribution", [])
+             if a.get("name") != "Groove MIDI Dataset"],
     }
+    if "kits" in previous:
+        manifest["kits"] = previous["kits"]
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(manifest, indent=2) + "\n")
 

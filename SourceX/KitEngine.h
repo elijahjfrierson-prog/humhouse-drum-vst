@@ -94,6 +94,20 @@ namespace hhx
         float getRoomDamping() const;
         float getRoomMix() const;
 
+        /** The spaces the kit can be heard in. Each one sets the room's own
+            character - its size, how dark it is, and how long the sound takes
+            to reach the walls - so the choice is a place rather than three
+            numbers to guess at. */
+        enum RoomSpace { SpaceDry = 0, SpaceStudio, SpaceRoom, SpaceHall, SpacePlate, NumRoomSpaces };
+        void setRoomSpace (int space);
+        int  getRoomSpace() const;
+
+        /** How far the room is pushed out of the way while the kit is being
+            struck, so the space is heard between the hits instead of over
+            them. */
+        void  setRoomDuck (float amount01);
+        float getRoomDuck() const;
+
         // --- kit mix -----------------------------------------------------
         /** Mic blend: 0 = close only, 1 = all the way back in the room. */
         void  setMicBlend (float blend01);
@@ -173,6 +187,13 @@ namespace hhx
             float  envDecay = 1.0f;
             float  release  = 1.0f;   // < 1 once the voice is being let go
             float  toneCoeff = 1.0f;   // one-pole low-pass, 1 = wide open
+            /** Where that low-pass ends up by the end of the recording. A drum
+                loses its top end as it rings down - the stick is heard at the
+                attack and the shell at the tail - so the voice darkens as it
+                plays. A sample held at one brightness and faded in level is
+                exactly what reads as plastic. */
+            float  tailCoeff = 1.0f;
+            float  invFrames = 0.0f;   // 1 / numFrames, for the tail above
             float  toneL = 0.0f;
             float  toneR = 0.0f;
             int    lane  = -1;
@@ -236,11 +257,25 @@ namespace hhx
 
         std::atomic<float> roomSize    { 0.45f };
         std::atomic<float> roomDamping { 0.5f };
-        std::atomic<float> roomMix     { 0.0f };
+        std::atomic<float> roomMix     { 0.22f };
 
         juce::Reverb              room;
         juce::AudioBuffer<float>  laneBus;      // one lane at a time
         juce::AudioBuffer<float>  reverbBus;
+
+        /** The room is the room the kit was played in, not an effect: the send
+            is held back by a few milliseconds so the strike is heard dry first,
+            and the return is rolled off, because a room does not give back the
+            top end a close mic hears. */
+        static constexpr int kRoomPreDelay = 2048;   // longest pre-delay, ~43 ms at 48 kHz
+        std::array<float, kRoomPreDelay * 2> roomDelayLine {};
+        int   roomDelayWrite = 0;
+        float roomToneL = 0.0f;
+        float roomToneR = 0.0f;
+        float roomDuckEnv = 0.0f;
+
+        std::atomic<int>   roomSpace { SpaceRoom };
+        std::atomic<float> roomDuck  { 0.35f };
 
         std::array<float, kBleedDelay> bleedLine {};
         int                            bleedWrite = 0;

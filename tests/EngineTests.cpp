@@ -13,6 +13,7 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -309,6 +310,59 @@ int main (int argc, char** argv)
         check (pairs > 0 && repeats == 0, "consecutive same-lane hits pick different variants");
     }
 
+    // 13b. Sticking: the drums played with sticks are played with two hands, so
+    //      consecutive strokes anywhere on the snare and toms swap hand - the
+    //      even round-robin slots being one hand and the odd ones the other.
+    {
+        auto busy = s;
+        busy.complexity = 0.85f;
+        busy.fillAmount = 1.0f;
+
+        int swaps = 0, sames = 0, last = -1;
+        for (const auto& h : engine.renderBars (busy, 0, 16))
+        {
+            if (! (hhx::isSnareLane (h.lane) || hhx::isTomLane (h.lane)))
+                continue;
+            const int hand = h.variant & 1;
+            if (last >= 0)
+                (hand == last ? sames : swaps) += 1;
+            last = hand;
+        }
+        // Two strokes with the same hand happen where one phrase runs into the
+        // next, as they do when a player crosses the kit; through the body of a
+        // phrase the hands take turns.
+        check (swaps > 20 && sames * 4 < swaps,
+               "the hands alternate across the snare and toms");
+    }
+
+    // 13c. The Ghost knob is the whole range of the thing: off means the ghost
+    //      strokes and the percussion colour are not played at all, and full
+    //      means there are more of them and they are heard.
+    {
+        const auto ghostly = [&] (float amount)
+        {
+            auto t = s;
+            t.ghostAmount = amount;
+            int count = 0, sum = 0;
+            for (const auto& h : engine.renderBars (t, 0, 16))
+                if (h.lane == hhx::LaneSnareGhost || h.lane == hhx::LaneSideStick
+                    || h.lane == hhx::LaneSnareRim || h.lane == hhx::LanePerc)
+                {
+                    ++count;
+                    sum += h.velocity;
+                }
+            return std::pair<int, double> { count, count > 0 ? (double) sum / count : 0.0 };
+        };
+
+        const auto off  = ghostly (0.0f);
+        const auto half = ghostly (0.5f);
+        const auto full = ghostly (1.0f);
+
+        check (off.first == 0, "Ghost at zero plays no ghost strokes at all");
+        check (full.first >= half.first, "Ghost at full plays at least as many ghosts");
+        check (full.second > half.second + 4.0, "Ghost at full is heard, not just present");
+    }
+
     // 14. The groove holds. A section keeps the take it was given for as long
     //     as nothing is turned, so a song does not restart itself every few
     //     bars; the fills are what keep it moving.
@@ -515,8 +569,10 @@ int main (int argc, char** argv)
         const double low = perBar (0.0f, 0.2f);
 
         check (top <= 26.0, "the top of the pad is still a playable bar");
-        check (mid <= 17.0, "the middle of the pad stays sparse-to-moderate");
-        check (low <= 12.0 && low >= 3.0, "the bottom of the pad plays a simple beat");
+        // A simple beat is a kick, a backbeat and unbroken eighth-note time:
+        // around fourteen strokes a bar, not eight with holes in the hat.
+        check (mid <= 19.0, "the middle of the pad stays sparse-to-moderate");
+        check (low <= 16.0 && low >= 3.0, "the bottom of the pad plays a simple beat");
         check (top > mid && mid > low, "the pad gets busier from left to right");
 
         // Density is not the same thing as clutter: even wide open, a bar must
@@ -670,6 +726,110 @@ int main (int argc, char** argv)
         check (stillFilled == 0, "Fills at zero really means no fills");
     }
 
+    // 15f-2. A fill glues the arrangement together, so it is played to the
+    // grid: with Humanize off every hit of it lands on a thirty second or a
+    // triplet sixteenth, in 4/4 and in a stretched metre alike.
+    {
+        const auto offGrid = [&] (const hhx::PerformanceSettings& set)
+        {
+            int bad = 0;
+            for (const auto& h : engine.renderBars (set, 0, 16))
+            {
+                const float r   = h.beat - std::floor (h.beat);
+                const float d32 = std::abs (r * 8.0f - std::round (r * 8.0f)) / 8.0f;
+                const float d24 = std::abs (r * 6.0f - std::round (r * 6.0f)) / 6.0f;
+                if (std::min (d32, d24) > 0.01f)
+                    ++bad;
+            }
+            return bad;
+        };
+
+        auto t = s;
+        t.humanize      = 0.0f;
+        t.swing         = 0.0f;
+        t.feel          = 0.5f;
+        t.fillAmount    = 1.0f;
+        t.phraseBars    = 2;
+        check (offGrid (t) == 0, "fills and groove sit on the grid with Humanize off");
+
+
+        auto waltz = t;
+        waltz.timeSigNum = 3;
+        waltz.beatsPerBar = 3.0f;
+        check (offGrid (waltz) == 0, "a fill stretched into 3/4 still lands on the grid");
+    }
+
+    // 15f-3. A fill is vetted against the tempo it is actually played at. At 70
+    // in half time the groove is moving at half rate, so the figures that read
+    // as rolls at 150 are rejected instead of being smoothed over afterwards -
+    // and the fill still resolves into the downbeat it hands over to.
+    {
+        // The fill is the last bar of a phrase that hands over with one, so it
+        // can be read back out of the render without the engine marking it.
+        const auto fillHits = [&] (const hhx::PerformanceSettings& set, int bars)
+        {
+            std::vector<std::vector<hhx::Hit>> out;
+            const float phraseBeats = (float) std::max (1, set.phraseBars) * set.beatsPerBar;
+            const auto all = engine.renderBars (set, 0, bars);
+            for (int phrase = 0; phrase * std::max (1, set.phraseBars) < bars; ++phrase)
+            {
+                if (! engine.phraseEndsWithFill (set, phrase))
+                    continue;
+                const float end   = (float) (phrase + 1) * phraseBeats;
+                const float start = end - set.fillLengthBars * set.beatsPerBar;
+                std::vector<hhx::Hit> one;
+                for (const auto& h : all)
+                    if (h.beat >= start - 0.001f && h.beat < end)
+                        one.push_back (h);
+                if (! one.empty())
+                    out.push_back (one);
+            }
+            return out;
+        };
+
+        auto slow = s;
+        slow.humanize   = 0.0f;
+        slow.swing      = 0.0f;
+        slow.fillAmount = 1.0f;
+        slow.phraseBars = 2;
+        slow.halfTime   = true;
+        slow.tempoBpm   = 70.0f;
+
+        const auto fills = fillHits (slow, 32);
+        check (! fills.empty(), "a slow half-time song still gets fills");
+
+        // Strokes closer than a sixteenth of the half-time pulse: at 70 that is
+        // a thirty-second-note roll over a groove playing half notes.
+        int tooFast = 0, short_ = 0;
+        for (const auto& fill : fills)
+        {
+            for (std::size_t i = 1; i < fill.size(); ++i)
+                if (const float d = fill[i].beat - fill[i - 1].beat; d > 0.001f && d < 0.2f)
+                    ++tooFast;
+
+            float last = 0.0f;
+            for (const auto& h : fill)
+                last = std::max (last, h.beat);
+            const float end = std::ceil (last / slow.beatsPerBar) * slow.beatsPerBar;
+            if (end - last > 1.3f)
+                ++short_;
+        }
+
+        check (tooFast == 0, "half-time fills are not thirty-second rolls at 70 bpm");
+        check (short_ == 0, "every half-time fill runs up to the downbeat");
+
+        // The same settings at 150 may reach for busier figures - the rule is
+        // about the sounding tempo, not about the feel alone.
+        auto fast = slow;
+        fast.halfTime = false;
+        fast.tempoBpm = 150.0f;
+        check (! fillHits (fast, 32).empty(), "fast songs still get fills");
+
+        auto slowStraight = slow;
+        slowStraight.halfTime = false;
+        check (! fillHits (slowStraight, 32).empty(), "slow straight-time songs still get fills");
+    }
+
     // 16. Landing zone: the XY position resolves to real neighbouring takes.
     {
         const auto zone = engine.landingZone (s, 8);
@@ -699,6 +859,157 @@ int main (int argc, char** argv)
             worst = std::min (worst, filled);
         }
         check (worst == 100, "every character populates all 100 XY cells");
+    }
+
+    // 17b. What actually makes a bar read as a drummer rather than one-shots
+    //      stitched together: unbroken cymbal time, a backbeat, crashes on the
+    //      beat they mark, and time-keeping played under the kit, not over it.
+    {
+        const auto isTime = [] (int lane)
+        {
+            return (lane >= hhx::LaneHatClosed && lane <= hhx::LaneHatBell
+                    && lane != hhx::LaneHatPedal)
+                || (lane >= hhx::LaneRideBow && lane <= hhx::LaneRideEdge);
+        };
+        const auto isAccent = [] (int lane)
+        {
+            return lane == hhx::LaneCrashL || lane == hhx::LaneCrashR
+                || lane == hhx::LaneCrash3 || lane == hhx::LaneChina
+                || lane == hhx::LaneSplash || lane == hhx::LaneRideCrash;
+        };
+
+        for (const float complexity : { 0.15f, 0.45f, 0.78f, 1.0f })
+            for (const float intensity : { 0.2f, 0.6f, 0.95f })
+                for (const bool half : { false, true })
+                {
+                    auto t = s;
+                    t.complexity = complexity;
+                    t.intensity  = intensity;
+                    t.halfTime   = half;
+                    t.humanize   = 0.5f;
+                    t.phraseBars = 4;
+
+                    const auto hits = engine.renderBars (t, 0, 8);
+                    const std::string at = " (c" + std::to_string ((int) (complexity * 100))
+                                         + " i" + std::to_string ((int) (intensity * 100))
+                                         + (half ? " half)" : ")");
+
+                    // Cymbal time never leaves a hole. A bar and a half of
+                    // sixteenths followed by silence is what sounded boxy.
+                    std::vector<float> time;
+                    float loudestHat = 0.0f;
+                    for (const auto& h : hits)
+                        if (isTime (h.lane) || isAccent (h.lane))
+                        {
+                            time.push_back (h.beat);
+                            if (isTime (h.lane))
+                                loudestHat = std::max (loudestHat, (float) h.velocity);
+                        }
+                    std::sort (time.begin(), time.end());
+
+                    float widest = 0.0f;
+                    for (std::size_t i = 1; i < time.size(); ++i)
+                        widest = std::max (widest, time[i] - time[i - 1]);
+                    check (time.size() > 8 && widest <= 1.02f,
+                           "cymbal time runs without a hole" + at);
+
+                    // Time-keeping stays under the kit.
+                    check (loudestHat <= 112.0f, "hats keep off the ceiling" + at);
+
+                    // Every bar has a backbeat.
+                    int missing = 0;
+                    for (int bar = 0; bar < 8; ++bar)
+                    {
+                        const float top = (float) bar * t.beatsPerBar;
+                        const bool  hit = std::any_of (hits.begin(), hits.end(),
+                            [&] (const hhx::Hit& h)
+                            {
+                                if (h.lane != hhx::LaneSnare && h.lane != hhx::LaneSnareRim
+                                    && h.lane != hhx::LaneSnareFlam)
+                                    return false;
+                                const float in = h.beat - top;
+                                return in > 0.5f && in < t.beatsPerBar - 0.35f;
+                            });
+                        if (! hit)
+                            ++missing;
+                    }
+                    check (missing == 0, "every bar has a backbeat" + at);
+
+                    // Crashes mark a beat exactly, whatever Humanize is doing.
+                    float worstCrash = 0.0f;
+                    for (const auto& h : hits)
+                        if (isAccent (h.lane))
+                        {
+                            const float in = h.beat - std::floor (h.beat / t.beatsPerBar) * t.beatsPerBar;
+                            worstCrash = std::max (worstCrash,
+                                                   std::abs (in * 4.0f - std::round (in * 4.0f)) / 4.0f);
+                        }
+                    check (worstCrash < 0.005f, "crashes land on the beat they mark" + at);
+                }
+    }
+
+    // 17c. Percussion is a colour the Ghost knob asks for, not something the
+    //      generator sprinkles in on its own.
+    {
+        auto quiet = s;
+        quiet.ghostAmount = 0.3f;
+        bool perc = false;
+        for (const auto& h : engine.renderBars (quiet, 0, 32))
+            if (h.lane == hhx::LanePerc)
+                perc = true;
+        check (! perc, "percussion stays out until the Ghost knob asks for it");
+    }
+
+    // 17d. Hat Openness is a real control: closed at zero, an audible open-hat
+    //      contrast at the top, and it reaches the fills too.
+    {
+        const auto openHats = [&] (float openness, bool fillsOnly)
+        {
+            auto t = s;
+            t.hatOpenness = openness;
+            t.fillAmount  = 1.0f;
+            t.phraseBars  = 4;
+            int n = 0;
+            for (const auto& h : engine.renderBars (t, 0, 16))
+            {
+                const bool inFillBar = std::fmod (std::floor (h.beat / t.beatsPerBar), 4.0f) == 3.0f;
+                if (fillsOnly && ! inFillBar)
+                    continue;
+                if (h.lane >= hhx::LaneHatOpen1 && h.lane <= hhx::LaneHatOpen4)
+                    ++n;
+            }
+            return n;
+        };
+
+        const int shut = openHats (0.0f, false);
+        const int wide = openHats (1.0f, false);
+        check (wide > shut * 2 + 4, "hat openness opens the hats when turned up");
+        check (openHats (1.0f, true) > 0, "fills get the open hats too");
+    }
+
+    // 17e. One hand, one cymbal: no two time-keeping strokes within a few
+    //      milliseconds of each other.
+    {
+        const auto isCymbalTime = [] (int lane)
+        {
+            return (lane >= hhx::LaneHatClosed && lane <= hhx::LaneHatBell
+                    && lane != hhx::LaneHatPedal)
+                || (lane >= hhx::LaneRideBow && lane <= hhx::LaneRideEdge);
+        };
+
+        for (const float openness : { 0.0f, 0.5f, 1.0f })
+        {
+            auto t = s;
+            t.hatOpenness = openness;
+            const auto hits = engine.renderBars (t, 0, 16);
+            int doubled = 0;
+            for (std::size_t i = 1; i < hits.size(); ++i)
+                for (std::size_t j = i; j-- > 0 && hits[i].beat - hits[j].beat < 0.06f;)
+                    if (isCymbalTime (hits[i].lane) && isCymbalTime (hits[j].lane))
+                        ++doubled;
+            check (doubled == 0, "no doubled cymbal strokes (open "
+                                 + std::to_string ((int) (openness * 100)) + ")");
+        }
     }
 
     // 18. Load time: the corpus is parsed well inside the 150 ms budget.

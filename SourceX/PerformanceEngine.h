@@ -65,6 +65,11 @@ namespace hhx
         std::uint8_t  fillStyleMask = 0;               // 0 = any style
         std::uint32_t fillLaneMask  = 0xFFFFFFFFu;
 
+        /** What the drummer is actually hearing. Fills are vetted against it:
+            the same written figure that reads as a roll at 150 falls apart as
+            slow flams at 70, so the tempo decides which fills are playable. */
+        float tempoBpm = 120.0f;
+
         // --- feel -------------------------------------------------------
         float swing          = 0.0f;
         bool  swingSixteenth = false;
@@ -158,6 +163,10 @@ namespace hhx
             float        dev      = 0.0f;
             std::uint8_t lane     = LaneKick;
             std::uint8_t velocity = 100;
+            /** A fill is played straight into the next section, so it takes no
+                swing, feel offset or drift: its timing is settled where it was
+                placed. */
+            bool         fill     = false;
         };
 
         struct Sources
@@ -184,6 +193,14 @@ namespace hhx
                          std::uint64_t seed,
                          std::vector<Hit>& out) const;
 
+        /** Collapses two cymbal strokes that land within a few milliseconds of
+            each other - a closed and an open hat on the same eighth, or a
+            phrase boundary landing on top of the phrase before it - into the
+            louder of the two. One hand cannot play both, and hearing them
+            together is what reads as a doubled, flammed sample. Hits must be
+            sorted by beat. */
+        static void collapseDoubledCymbals (std::vector<Hit>& out);
+
         /** Gives a switched-on kit piece a part of its own when the take does
             not play it, so the lane buttons add and subtract whole patterns
             the way Logic's kit-piece selector does. */
@@ -192,6 +209,14 @@ namespace hhx
                           int   bars,
                           std::uint64_t seed,
                           std::vector<Raw>& raw) const;
+
+        /** Adds the ghost strokes a drummer leans on when the Ghost knob is
+            asking for more of them than the take itself plays. */
+        void addGhostNotes (const PerformanceSettings& s,
+                            float dstBar,
+                            int   bars,
+                            std::uint64_t seed,
+                            std::vector<Raw>& raw) const;
 
         Sources pickSources (const PerformanceSettings& s,
                              int phraseIndex,
@@ -209,6 +234,13 @@ namespace hhx
                          std::vector<Raw>& raw) const;
 
         int fillIndexForPhrase (const PerformanceSettings& s, int phraseIndex) const;
+
+        /** Whether a take is a fill a drummer would actually play here, at this
+            tempo and in this feel. */
+        static bool fillIsPlayable (const PerformanceSettings& s,
+                                    const Phrase& f,
+                                    float scale,
+                                    bool  strict = true);
 
         std::uint16_t characterMask (const PerformanceSettings& s) const;
 

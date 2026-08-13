@@ -1069,8 +1069,19 @@ namespace hhx
         roomSizeKnob = std::make_unique<LabelledKnob> (state, pid::roomSize,    "Room Size");
         roomDampKnob = std::make_unique<LabelledKnob> (state, pid::roomDamping, "Room Damp");
         roomMixKnob  = std::make_unique<LabelledKnob> (state, pid::roomMix,     "Room Return");
-        for (auto* k : { roomSizeKnob.get(), roomDampKnob.get(), roomMixKnob.get() })
+        roomDuckKnob = std::make_unique<LabelledKnob> (state, pid::roomDuck,    "Duck");
+        for (auto* k : { roomSizeKnob.get(), roomDampKnob.get(), roomMixKnob.get(), roomDuckKnob.get() })
             addAndMakeVisible (*k);
+
+        roomSpaceBox.addItemList ({ "Dry", "Studio", "Room", "Hall", "Plate" }, 1);
+        addAndMakeVisible (roomSpaceBox);
+        comboAttachments.push_back (
+            std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+                state, pid::roomSpace, roomSpaceBox));
+
+        roomSpaceLabel.setJustificationType (juce::Justification::centred);
+        roomSpaceLabel.setColour (juce::Label::textColourId, DrumsXLookAndFeel::textDim());
+        addAndMakeVisible (roomSpaceLabel);
 
         setResizable (false, false);
         proc.setUiScale (proc.getUiScale());
@@ -1183,8 +1194,10 @@ namespace hhx
             row.tune->setVisible (mixp);
             row.damp->setVisible (mixp);
         }
-        for (auto* k : { roomSizeKnob.get(), roomDampKnob.get(), roomMixKnob.get() })
+        for (auto* k : { roomSizeKnob.get(), roomDampKnob.get(), roomMixKnob.get(), roomDuckKnob.get() })
             k->setVisible (mixp);
+        roomSpaceBox.setVisible (mixp);
+        roomSpaceLabel.setVisible (mixp);
 
         resized();
         repaint();
@@ -1540,8 +1553,12 @@ namespace hhx
             y += rowH;
         }
 
-        roomSizeKnob->setBounds (520, 130, 120, 120);
-        roomDampKnob->setBounds (650, 130, 120, 120);
-        roomMixKnob->setBounds  (780, 130, 120, 120);
+        roomSpaceLabel.setBounds (520, 108, 380, 16);
+        roomSpaceBox.setBounds   (620, 126, 180, 24);
+
+        roomSizeKnob->setBounds (520, 160, 120, 120);
+        roomDampKnob->setBounds (650, 160, 120, 120);
+        roomMixKnob->setBounds  (780, 160, 120, 120);
+        roomDuckKnob->setBounds (650, 285, 120, 120);
     }
 }

@@ -22,6 +22,25 @@ namespace hhx
     juce::String pid::laneComp (int lane)   { return "lane" + juce::String (lane) + "Comp"; }
     juce::String pid::laneSend (int lane)   { return "lane" + juce::String (lane) + "Send"; }
 
+    /** How much of each piece the room hears by default. A kit in a room is not
+        a kit with reverb on it: the kick is mostly floor, the snare and toms
+        throw a lot into the space, and the cymbals live in it. Setting these to
+        zero, as they were, is what made every stroke stop dead where its
+        recording ended. */
+    static float defaultRoomSend (int lane)
+    {
+        if (lane == LaneKick)       return 0.10f;
+        if (lane == LaneHatPedal)   return 0.08f;
+        if (isHatLane (lane))       return 0.16f;
+        if (lane == LaneSideStick || lane == LaneSnareRim) return 0.26f;
+        if (isSnareLane (lane))     return 0.34f;
+        if (isTomLane (lane))       return 0.40f;
+        if (isRideLane (lane))      return 0.28f;
+        if (isCymbalLane (lane))    return 0.44f;
+        if (lane == LanePerc)       return 0.30f;
+        return 0.20f;
+    }
+
     const std::vector<Character>& characters()
     {
         // Each character is a landing spot on one human corpus - a cluster plus
@@ -171,7 +190,13 @@ namespace hhx
                                                            NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::roomMix, 1 }, "Room Return",
-                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.22f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::roomSpace, 1 }, "Space",
+                                                           StringArray { "Dry", "Studio", "Room", "Hall", "Plate" },
+                                                           KitEngine::SpaceRoom));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::roomDuck, 1 }, "Room Duck",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
 
         for (int lane = 0; lane < NumLanes; ++lane)
@@ -204,7 +229,7 @@ namespace hhx
                 AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
             layout.add (std::make_unique<AudioParameterFloat> (
                 ParameterID { pid::laneSend (lane), 1 }, n + " Room Send",
-                NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                NormalisableRange<float> (0.0f, 1.0f, 0.01f), defaultRoomSend (lane),
                 AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         }
 
@@ -267,7 +292,8 @@ namespace hhx
         if (id == pid::micBlend)   kit.setMicBlend (value);
         else if (id == pid::bleed) kit.setBleed (value);
         else if (id == pid::crush) kit.setCrush (value);
-        else if (id == pid::roomSize || id == pid::roomDamping || id == pid::roomMix)
+        else if (id == pid::roomSize || id == pid::roomDamping || id == pid::roomMix
+                 || id == pid::roomSpace || id == pid::roomDuck)
             pushRoomParameters();
 
         // A performance knob edits the block that is selected, and only that
@@ -298,6 +324,7 @@ namespace hhx
             feed (p->getValue());
 
         feed ((double) seed.load());
+        feed (std::round (lastBpm.load()));
 
         {
             const juce::SpinLock::ScopedLockType sl (sectionLock);
@@ -469,6 +496,8 @@ namespace hhx
         };
 
         kit.setRoom (load (pid::roomSize), load (pid::roomDamping), load (pid::roomMix));
+        kit.setRoomSpace ((int) std::lround (load (pid::roomSpace)));
+        kit.setRoomDuck (load (pid::roomDuck));
     }
 
     void DrumsXProcessor::rebuildTimeline()
@@ -587,6 +616,11 @@ namespace hhx
             s.sections    = hostSections;
             s.arrangement = arrangement;
         }
+
+        // Rounded to whole beats per minute: the fill rules only care which
+        // figures are playable at this speed, and a host nudging the tempo by a
+        // hundredth should not re-render the song.
+        s.tempoBpm = (float) std::round (lastBpm.load());
 
         s.seed = seed.load();
         return s;
@@ -963,7 +997,11 @@ namespace hhx
             }
         }
 
-        lastBpm.store (bpm);
+        const double wasBpm = lastBpm.exchange (bpm);
+        // Which fills are playable depends on the tempo, so a tempo change is a
+        // reason to re-render - off this thread, once the beat has moved.
+        if (std::abs (std::round (wasBpm) - std::round (bpm)) >= 1.0)
+            triggerAsyncUpdate();
 
         if (! transportRunning)
         {
