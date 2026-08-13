@@ -985,6 +985,43 @@ int main (int argc, char** argv)
         const int wide = openHats (1.0f, false);
         check (wide > shut * 2 + 4, "hat openness opens the hats when turned up");
         check (openHats (1.0f, true) > 0, "fills get the open hats too");
+
+        // Turned up it is a different instrument, not a stroke of colour: most
+        // of the hat part is played open, and half the knob is already halfway
+        // up the ladder.
+        const auto openShare = [&] (float openness)
+        {
+            auto t = s;
+            t.hatOpenness = openness;
+            int open = 0, hats = 0;
+            for (const auto& h : engine.renderBars (t, 0, 16))
+            {
+                if (h.lane >= hhx::LaneHatClosed && h.lane <= hhx::LaneHatOpen4
+                    && h.lane != hhx::LaneHatPedal)
+                    ++hats;
+                if (h.lane >= hhx::LaneHatOpen1 && h.lane <= hhx::LaneHatOpen4)
+                    ++open;
+            }
+            return hats > 0 ? (float) open / (float) hats : 0.0f;
+        };
+
+        check (openShare (1.0f) > 0.8f, "wide open rides open, not just accents");
+        check (openShare (0.5f) > 0.3f, "half the knob is already half open");
+
+        // And the hat is played, not stamped: a real part leans on the beat and
+        // lets the strokes between it fall away.
+        {
+            auto t = s;
+            t.hatOpenness = 0.0f;
+            int lo = 127, hi = 0;
+            for (const auto& h : engine.renderBars (t, 0, 8))
+                if (h.lane == hhx::LaneHatClosed || h.lane == hhx::LaneHatTight)
+                {
+                    lo = std::min (lo, (int) h.velocity);
+                    hi = std::max (hi, (int) h.velocity);
+                }
+            check (hi - lo >= 12, "the hat part has real dynamics, not one level");
+        }
     }
 
     // 17e. One hand, one cymbal: no two time-keeping strokes within a few

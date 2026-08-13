@@ -749,7 +749,7 @@ namespace hhx
         // the kit and leaves the open hat to be the contrast you hear.
         const bool  shutHat = lane == LaneHatClosed || lane == LaneHatTight;
         const float tingTrimDb = isRideLane (lane) ? -5.5f
-                               : shutHat           ? -6.0f
+                               : shutHat           ? -3.0f
                                : (ting ? -3.5f : 0.0f);
         const float gain = velGain * trim
                          * juce::Decibels::decibelsToGain (slot.gainDb.load()
@@ -777,9 +777,13 @@ namespace hhx
         // lightly struck cymbal never excites its top octave. Without this a
         // ladder of level-matched multisamples reads as one flat, boxy hit.
         const float reach = juce::jmap (depth, 0.85f, 0.4f);
+        // A shut hat recorded on its own close mic is nearly all top octave:
+        // three quarters of its energy sits above 6 kHz and it has no tail to
+        // speak of, which is exactly what reads as a click rather than a hat.
+        // Rolling that octave off leaves the stick and the body of the cymbal.
         const float dark  = (1.0f - std::pow (vel, 0.8f)) * reach
-                          + (ting ? 0.16f : 0.0f)    // takes the wire off the top
-                          + (shutHat ? 0.10f : 0.0f); // and the click off a shut hat
+                          + (ting ? 0.16f : 0.0f)     // takes the wire off the top
+                          + (shutHat ? 0.24f : 0.0f); // and the click off a shut hat
         const float cutoff = 20000.0f * std::exp (-3.1f * dark);
         const float tone = dark < 0.02f
                          ? 1.0f
@@ -790,6 +794,13 @@ namespace hhx
         const juce::ScopedLock sl (voiceLock);
         chokeArticulations (articulation);
 
+        // Where the stroke is heard from. A shut hat has almost no ring of its
+        // own, so what makes it sound like a cymbal in a room instead of a
+        // sampled tick is the overheads and the room, not more of the hat mic.
+        const std::array<float, NumMics> micWeight = shutHat
+            ? std::array<float, NumMics> { 0.90f, 2.60f, 2.20f }
+            : std::array<float, NumMics> { 1.00f, 1.00f, 1.00f };
+
         for (int mic = 0; mic < NumMics; ++mic)
         {
             const auto& sample = chosen.mics[(std::size_t) mic];
@@ -797,7 +808,9 @@ namespace hhx
                 continue;
             const double increment = (sample->sourceRate / currentRate)
                                    * std::pow (2.0, cents / 1200.0);
-            startVoice (sample, lane, articulation, mic, gl, gr, increment, envDecay, tone);
+            const float w = micWeight[(std::size_t) mic];
+            startVoice (sample, lane, articulation, mic, gl * w, gr * w, increment,
+                        envDecay, tone);
         }
 
         slot.activity.store (1.0f);
@@ -809,7 +822,7 @@ namespace hhx
         // the openness ladder. Cymbal chokes stop their own cymbal.
         // A real hat closing damps the cymbal over a few milliseconds; killing
         // the voice outright is what made this sound like a noise gate.
-        const float choke = releaseCoefficient (0.055f);
+        const float choke = releaseCoefficient (0.085f);
         const auto killIf = [this, choke] (auto&& predicate)
         {
             for (auto& v : voices)

@@ -615,6 +615,15 @@ namespace hhx
             float vel = (float) h.velocity;
             vel *= 1.0f + (rand01 (seed, (std::uint64_t) (src * 64.0f), 0x1Eu) - 0.5f)
                           * 2.0f * s.fillVelVar * 0.4f;
+
+            // A fill is one gesture that hands the song over, so it is played
+            // into the downbeat: it starts under the groove and arrives above
+            // it. Played flat, a fill reads as a burst of notes rather than as
+            // something a drummer meant.
+            const float through = std::clamp ((beat - fillStartBeat)
+                                                  / std::max (0.25f, phraseBeats - fillStartBeat),
+                                              0.0f, 1.0f);
+            vel *= 0.86f + 0.26f * through;
             const Raw hit { beat, 0.0f, h.lane,
                             (std::uint8_t) std::clamp ((int) std::lround (vel), 1, 127),
                             true };
@@ -1310,18 +1319,38 @@ namespace hhx
                     const float toEnd   = dstBar - inBar;
                     const bool  offBeat = subdivisionClass (inBar) == 2;
 
-                    // Turned up, the hats sit open the way a punk drummer
-                    // rides them: widest coming out of the bar, wide on the
-                    // off-beats, and only just cracked on the down beats, so
-                    // the knob is a real contrast rather than a stroke or two.
+                    // Turned up, the hats ride open the way a punk drummer
+                    // plays them: the foot comes off and stays off, so the
+                    // off-beats and the way out of the bar are wide open and
+                    // the down beat is the only stroke the foot leans back
+                    // on. The knob has to read as a different instrument, not
+                    // as a stroke or two of colour.
                     const float weight = (toEnd <= 0.51f) ? 1.00f
-                                       : offBeat          ? 0.85f
-                                                          : 0.35f;
-                    const int extra = (int) std::lround (sec.hatOpenness * weight
-                                                         * (float) (kNumHatSteps - 1));
+                                       : offBeat          ? 1.00f
+                                                          : 0.72f;
+
+                    // Square-rooted, so half the knob is already half open
+                    // instead of one rung up a six-rung ladder.
+                    const float amount = std::sqrt (sec.hatOpenness) * weight
+                                         * (float) (kNumHatSteps - 1);
+
+                    // The fraction is spent as a real stroke rather than
+                    // rounded away, which is what keeps an open hat alive
+                    // instead of eight identical open strokes.
+                    const float frac  = amount - std::floor (amount);
+                    const int   extra = (int) amount
+                                      + (rand01 (seed, (std::uint64_t) (h.beat * 64.0f), 7) < frac
+                                             ? 1 : 0);
 
                     if (extra > 0)
+                    {
                         h.lane = (std::uint8_t) kHatLadder[std::min (kNumHatSteps - 1, step + extra)];
+
+                        // A hat is opened by leaning into it as well as by
+                        // lifting the foot, so the open stroke is heard.
+                        h.velocity = (std::uint8_t) std::min (
+                            127, (int) std::lround ((float) h.velocity * 1.10f));
+                    }
                 }
             }
         }
@@ -1441,13 +1470,15 @@ namespace hhx
                 // rest of the kit. At full velocity every stroke reaches for
                 // the hardest recorded layer, which is where the hat starts to
                 // click and string across the groove instead of sitting in it.
-                vel *= 0.88f;
+                vel *= 0.94f;
 
-                // A shut hat is the quietest thing on the kit: it keeps time
-                // without being heard as a part of its own. Open strokes are
-                // where the hat is allowed to speak.
-                if (lane == LaneHatClosed || lane == LaneHatTight)
-                    vel *= 0.92f;
+                // Hat dynamics are the groove. A drummer leans on the strokes
+                // that carry the beat and lets the ones between them fall
+                // away; a row of strokes at one level is what reads as a
+                // machine, so the accents run deeper on the hat than anywhere
+                // else on the kit.
+                if (isHatLane (lane) && lane != LaneHatPedal)
+                    vel *= 0.70f + 0.42f * metricWeight (inBar);
             }
 
             // Phrase breathing: the take lifts slightly into its own cadence
@@ -1486,7 +1517,7 @@ namespace hhx
             // the kit: the top of a hat's velocity range is where it turns into
             // a click.
             if (isOrnamentLane (lane))
-                vel = std::min (vel, 104.0f);
+                vel = std::min (vel, 110.0f);
 
             // --- sticking. A player has two hands, and they take turns as they
             // move around the kit: right, left, right. The off hand is a shade
