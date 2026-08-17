@@ -354,10 +354,26 @@ namespace hhx
         return h;
     }
 
+    juce::File DrumsXProcessor::contentFolderUnder (const juce::File& root)
+    {
+        // On macOS JUCE's "application data" locations are /Library and
+        // ~/Library, while an installer package writes to their Application
+        // Support subfolder; on Windows and Linux the root is already the data
+        // folder. Both spellings are searched so the installed tree is found
+        // wherever the platform's installer put it.
+        for (const auto& base : { root, root.getChildFile ("Application Support") })
+        {
+            const auto folder = base.getChildFile ("HumHouse/Drums X/Content");
+            if (folder.getChildFile ("content_manifest.json").existsAsFile())
+                return folder;
+        }
+
+        return {};
+    }
+
     juce::File DrumsXProcessor::findSharedContentFolder()
     {
         using SL = juce::File;
-        const juce::String leaf ("HumHouse/Drums X/Content");
 
         // Development and CI runs point at a content tree that was never
         // installed, so an override wins over the installed locations.
@@ -371,11 +387,8 @@ namespace hhx
 
         for (const auto& root : { SL::getSpecialLocation (SL::commonApplicationDataDirectory),
                                   SL::getSpecialLocation (SL::userApplicationDataDirectory) })
-        {
-            const auto folder = root.getChildFile (leaf);
-            if (folder.getChildFile ("content_manifest.json").existsAsFile())
+            if (const auto folder = contentFolderUnder (root); folder != juce::File())
                 return folder;
-        }
 
         return {};
     }
@@ -435,6 +448,10 @@ namespace hhx
                     break;
                 }
             }
+        }
+        else
+        {
+            contentDescription = "no installed content found";
         }
 
        #if HHX_HAS_CORPUS

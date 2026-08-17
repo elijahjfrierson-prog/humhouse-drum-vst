@@ -267,6 +267,62 @@ namespace hhx
                                                       { return v.mics[MicClose] == nullptr; }),
                                       layer.variants.end());
         }
+
+        dropRinglessShutHat();
+    }
+
+    float KitEngine::laneRingRatio (int lane) const
+    {
+        if (lane < 0 || lane >= NumLanes)
+            return 0.0f;
+
+        const auto& slot = lanes[(std::size_t) lane];
+        if (slot.layers.empty())
+            return 0.0f;
+
+        // Energy left after the stroke has gone by, against the energy of the
+        // stroke itself: a cymbal that rings keeps a fraction of its attack
+        // going, a damped tick keeps nothing.
+        float most = 0.0f;
+        for (const auto& variant : slot.layers.back().variants)
+        {
+            const auto& s = variant.mics[MicClose];
+            if (s == nullptr || s->numFrames <= 0)
+                continue;
+
+            const int chans  = std::max (1, s->numChannels);
+            const int attack = (int) (0.020 * s->sourceRate) * chans;
+            const int tail   = (int) (0.060 * s->sourceRate) * chans;
+            const int n      = (int) s->data.size();
+            if (n <= tail)
+                continue;
+
+            double attackEnergy = 0.0, tailEnergy = 0.0;
+            for (int i = 0; i < std::min (attack, n); ++i)
+                attackEnergy += (double) s->data[(std::size_t) i] * s->data[(std::size_t) i];
+            for (int i = tail; i < n; ++i)
+                tailEnergy += (double) s->data[(std::size_t) i] * s->data[(std::size_t) i];
+
+            if (attackEnergy > 0.0)
+                most = std::max (most, (float) (tailEnergy / attackEnergy));
+        }
+        return most;
+    }
+
+    void KitEngine::dropRinglessShutHat()
+    {
+        // The shut hat a groove keeps time on has to be the one that rings; a
+        // damped tick next to it in the openness ladder is heard as a click in
+        // the middle of the part.
+        const float closedRing = laneRingRatio (LaneHatClosed);
+        const float tightRing  = laneRingRatio (LaneHatTight);
+        if (closedRing <= 0.0f || tightRing <= 0.0f)
+            return;
+
+        if (tightRing < closedRing * 0.35f)
+            lanes[(std::size_t) LaneHatTight].layers.clear();
+        else if (closedRing < tightRing * 0.35f)
+            lanes[(std::size_t) LaneHatClosed].layers = lanes[(std::size_t) LaneHatTight].layers;
     }
 
     std::shared_ptr<KitEngine::Sample> KitEngine::readSample (juce::InputStream* stream)
@@ -747,9 +803,14 @@ namespace hhx
         // close mic gives it, it reads as the loudest thing in the kit.
         // A shut hat is the quietest thing a drummer plays: it keeps time under
         // the kit and leaves the open hat to be the contrast you hear.
+        // An open hat is the opposite: it is the stroke the part is heard on,
+        // so it speaks at the level of the kit rather than being trimmed back
+        // with the time-keeping cymbals.
         const bool  shutHat = lane == LaneHatClosed || lane == LaneHatTight;
+        const bool  openHat = lane >= LaneHatOpen1 && lane <= LaneHatOpen4;
         const float tingTrimDb = isRideLane (lane) ? -5.5f
                                : shutHat           ? -3.0f
+                               : openHat           ? -0.5f
                                : (ting ? -3.5f : 0.0f);
         const float gain = velGain * trim
                          * juce::Decibels::decibelsToGain (slot.gainDb.load()
@@ -822,9 +883,9 @@ namespace hhx
         // the openness ladder. Cymbal chokes stop their own cymbal.
         // A real hat closing damps the cymbal over a few milliseconds; killing
         // the voice outright is what made this sound like a noise gate.
-        const float choke = releaseCoefficient (0.085f);
-        const auto killIf = [this, choke] (auto&& predicate)
+        const auto killIf = [this] (float seconds, auto&& predicate)
         {
+            const float choke = releaseCoefficient (seconds);
             for (auto& v : voices)
                 if (v.active && predicate (v.articulation))
                     v.release = juce::jmin (v.release, choke);
@@ -833,17 +894,19 @@ namespace hhx
         if (articulation == LaneHatClosed || articulation == LaneHatTight
             || articulation == LaneHatPedal)
         {
-            killIf ([] (int a) { return a >= LaneHatOpen1 && a <= LaneHatOpen4; });
+            killIf (0.085f, [] (int a) { return a >= LaneHatOpen1 && a <= LaneHatOpen4; });
         }
         else if (articulation >= LaneHatOpen1 && articulation <= LaneHatOpen4)
         {
-            // A wider hat replaces a narrower one rather than stacking.
-            killIf ([articulation] (int a)
+            // A wider hat replaces a narrower one rather than stacking, but the
+            // foot has not come down: the cymbal it replaces washes out under
+            // the new stroke instead of being shut off.
+            killIf (0.16f, [articulation] (int a)
                     { return a >= LaneHatOpen1 && a <= LaneHatOpen4 && a != articulation; });
         }
         else if (articulation == LaneChina || articulation == LaneSplash)
         {
-            killIf ([articulation] (int a) { return a == articulation; });
+            killIf (0.085f, [articulation] (int a) { return a == articulation; });
         }
     }
 

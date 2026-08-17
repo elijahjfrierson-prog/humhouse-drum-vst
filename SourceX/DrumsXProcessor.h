@@ -198,6 +198,11 @@ namespace hhx
             bundled fallback content is present. */
         static juce::File findSharedContentFolder();
 
+        /** The content tree under one data root, in either the plain layout
+            (Windows, Linux) or the Application Support layout macOS installers
+            use. Invalid when the root holds no content. */
+        static juce::File contentFolderUnder (const juce::File& root);
+
         /** Human-readable description of what the instrument is playing from,
             e.g. "installed content 3" or "bundled content". */
         juce::String getContentDescription() const { return contentDescription; }

@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <random>
 #include <set>
 #include <string>
@@ -37,6 +38,20 @@ namespace
                                 hhx::pid::variationRhythm, hhx::pid::variationCymbal,
                                 hhx::pid::followSections };
         return ids;
+    }
+
+    /** The processor reads its content location from the environment when it is
+        constructed, so the kit-browser test has to set it there. */
+    void setContentDirEnv (const juce::String& value)
+    {
+       #if JUCE_WINDOWS
+        _putenv_s ("HHX_CONTENT_DIR", value.toRawUTF8());
+       #else
+        if (value.isEmpty())
+            ::unsetenv ("HHX_CONTENT_DIR");
+        else
+            ::setenv ("HHX_CONTENT_DIR", value.toRawUTF8(), 1);
+       #endif
     }
 }
 
@@ -469,13 +484,115 @@ int main()
         bool hats = true;
         for (const int lane : { hhx::LaneHatTight, hhx::LaneHatClosed, hhx::LaneHatOpen1,
                                 hhx::LaneHatOpen3, hhx::LaneHatPedal })
-            if (rock.numLayersForLane (lane) == 0)
+            if (rock.resolveLane (lane) < 0)
                 hats = false;
-        check (hats, "tight, closed, open and pedal hats are separate recordings");
+        check (hats, "every rung of the openness ladder plays something");
+
+        check (rock.numLayersForLane (hhx::LaneHatClosed) > 0
+               && rock.numLayersForLane (hhx::LaneHatOpen1) > 0
+               && rock.numLayersForLane (hhx::LaneHatOpen3) > 0,
+               "shut and open hats are separate recordings");
+
+        // A hat that keeps time has to ring: a stroke that is all attack and
+        // no tail is heard as a click in the middle of the part, which is
+        // what a damped "tight" recording plays back as.
+        const auto ringOf = [&rock] (int lane)
+        {
+            const int n = 24000;
+            juce::AudioBuffer<float> buf (2, n);
+            buf.clear();
+            rock.noteOn (lane, 0.8f);
+            rock.renderNextBlock (buf, 0, n);
+
+            double attack = 0.0, tail = 0.0;
+            for (int i = 0; i < n; ++i)
+            {
+                const double s = 0.5 * (buf.getSample (0, i) + buf.getSample (1, i));
+                if (i < 960)        attack += s * s;   // first 20 ms
+                else if (i > 2880)  tail   += s * s;   // after 60 ms
+            }
+            rock.allNotesOff();
+            return attack > 0.0 ? tail / attack : 0.0;
+        };
+
+        for (const int lane : { hhx::LaneHatClosed, hhx::LaneHatTight })
+            check (ringOf (lane) > 0.15,
+                   juce::String ("the shut hat rings instead of clicking, lane ")
+                       + juce::String (lane));
+        check (ringOf (hhx::LaneHatOpen3) > 4.0 * ringOf (hhx::LaneHatClosed),
+               "the open hat washes far longer than the shut one");
 
         check (rock.laneHasMic (hhx::LaneSnare, hhx::MicOverhead)
                && rock.laneHasMic (hhx::LaneSnare, hhx::MicRoom),
                "the shipped kit has overhead and room mics");
+    }
+
+    // 6. The kit browser: every kit the installed manifest declares must reach
+    //    the picker and must actually load. A kit that is staged but silently
+    //    dropped here is a kit the user cannot find.
+    {
+        const juce::File content = juce::File (HHX_SHIPPED_KIT_DIR).getParentDirectory()
+                                                                   .getParentDirectory();
+        const auto manifest = juce::JSON::parse (content.getChildFile ("content_manifest.json"));
+
+        juce::StringArray declared;
+        if (const auto* kits = manifest["kits"].getArray())
+            for (const auto& entry : *kits)
+                if (content.getChildFile (entry["folder"].toString())
+                           .getChildFile ("kit.json").existsAsFile())
+                    declared.add (entry["name"].toString());
+
+        check (declared.size() >= 3, "the content tree declares its kits");
+
+        setContentDirEnv (content.getFullPathName());
+        hhx::DrumsXProcessor installed;
+        installed.prepareToPlay (48000.0, 128);
+        setContentDirEnv ({});
+
+        const auto offered = installed.getAvailableKits();
+        bool all = offered.size() == declared.size();
+        for (const auto& name : declared)
+            if (! offered.contains (name))
+                all = false;
+        check (all, "the kit picker offers every installed kit");
+
+        bool loads = true;
+        for (int i = 0; i < offered.size(); ++i)
+        {
+            installed.selectKit (i);
+            if (installed.getSelectedKit() != i
+                || installed.getKit().numLoadedSamples() <= 0)
+                loads = false;
+        }
+        check (loads, "switching to each installed kit loads its samples");
+    }
+
+    // 7. Where the installers actually write: a macOS package lands the tree in
+    //    <root>/Application Support/HumHouse/Drums X/Content while JUCE's data
+    //    root is only /Library, so both layouts have to resolve or the plug-in
+    //    silently plays the compiled-in fallback kit.
+    {
+        const auto root = juce::File::createTempFile ("hhx_root");
+        root.deleteFile();
+
+        check (hhx::DrumsXProcessor::contentFolderUnder (root) == juce::File(),
+               "an empty data root offers no content");
+
+        for (const auto* layout : { "HumHouse/Drums X/Content",
+                                    "Application Support/HumHouse/Drums X/Content" })
+        {
+            const auto tree = root.getChildFile (layout);
+            tree.createDirectory();
+            tree.getChildFile ("content_manifest.json").replaceWithText ("{}");
+
+            check (hhx::DrumsXProcessor::contentFolderUnder (root) == tree,
+                   juce::String ("installed content is found at ") + layout);
+
+            tree.getParentDirectory().getParentDirectory().getParentDirectory()
+                .deleteRecursively();
+        }
+
+        root.deleteRecursively();
     }
    #endif
 

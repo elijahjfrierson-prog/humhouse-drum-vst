@@ -222,6 +222,16 @@ namespace hhx
             layers keep the order they declared; kits that do not (loose files)
             are ordered by how loud they are. */
         void finaliseKit (bool sortByLoudness);
+
+        /** How much of a lane's loudest recording is ring rather than stroke:
+            the energy left after the attack against the attack's own. */
+        float laneRingRatio (int lane) const;
+
+        /** Some libraries record the tight/edge hat as a bare stick tick with
+            the cymbal damped: no ring at all, which plays back as a click
+            rather than a hat. Such a lane is dropped so the ringing shut hat
+            covers it through the usual fallback chain. */
+        void dropRinglessShutHat();
         std::shared_ptr<Sample> readSample (juce::InputStream* stream);
         int loadFromManifest (const juce::File& folder, const juce::var& manifest);
         void startVoice (const std::shared_ptr<Sample>& sample, int lane, int articulation,
