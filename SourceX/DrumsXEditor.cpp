@@ -1002,6 +1002,9 @@ namespace hhx
                 kitBox.addItem (kits[i], i + 1);
             kitBox.setSelectedId (proc.getSelectedKit() + 1, juce::dontSendNotification);
             kitBox.setTextWhenNoChoicesAvailable ("No installed kits");
+            // Otherwise the box reads as blank until it is opened, which looks
+            // like a broken picker rather than a missing install.
+            kitBox.setTextWhenNothingSelected ("No installed kits");
             kitBox.onChange = [this] { proc.selectKit (kitBox.getSelectedId() - 1); };
             addAndMakeVisible (kitBox);
         }

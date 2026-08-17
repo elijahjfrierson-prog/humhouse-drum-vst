@@ -106,6 +106,32 @@ ALSA lib seq_hw.c:466:(snd_seq_hw_open) open /dev/snd/seq failed: No such file o
 
 Anything matching `assert|leaked|segmentation|abort` is a real failure.
 
+## Installed content vs the bundled fallback (KIT page header)
+
+The KIT page label (`DrumsXEditor.cpp`, `kitNameLabel`) reads
+`KIT - <KITNAME>   (<contentDescription>)` and is the fastest way to prove which content tree the
+plug-in actually opened:
+
+| Launch | Expected header | Kit picker |
+|---|---|---|
+| `HHX_CONTENT_DIR=<repo>/content` | `installed content 3 + kit Naked Rock` | Naked Rock, Muldjord Metal, DRS Rock |
+| `env -u HHX_CONTENT_DIR` (nothing installed on this VM) | `no installed content found + bundled kit`, kit name `SOCALROCK` | empty box; popup shows the `No installed kits` placeholder |
+| manifest `format_version` mismatch | `bundled content (installed content is version N)` | — |
+
+Use `env -u HHX_CONTENT_DIR` (not just omitting it) to test the fallback, and first confirm no real
+install exists in the data roots that `findSharedContentFolder()` searches — on Linux those are
+`~/.config/HumHouse/Drums X/Content` and `/usr/share/HumHouse/Drums X/Content`, plus (since the
+macOS fix) an `Application Support/` variant of each. The env override is checked *before* the data
+roots, so a passing override test does not prove the installed-location search works; always test
+both directions.
+
+The kit picker is populated **only** from the manifest `kits` array, so the compiled-in SoCal Rock
+kit never appears as a picker entry even when it is the kit being played — a blank combo box with
+`SOCALROCK` in the header is correct behaviour, not a bug.
+
+RSS depends heavily on the loaded kit: ~40 MB on the bundled kit, but **~300 MB with the installed
+Naked Rock kit** (732 FLACs). Compare RSS against a same-kit baseline, not against old numbers.
+
 ## Gotcha: stale knob readouts (fixed at 07acceb, may regress)
 
 `LabelledKnob::paint` draws the numeric % text on the *parent* component, which a slider attachment
