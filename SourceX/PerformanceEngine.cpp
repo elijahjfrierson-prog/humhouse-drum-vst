@@ -197,6 +197,13 @@ namespace hhx
         out.variationCymbal = found->variationCymbal;
         out.sectionHint     = found->section;
 
+        // Each block carries its own kit: an intro can be toms only while the
+        // chorus behind it still plays everything, because the switches mask
+        // this block instead of the song.
+        out.laneMask     = base.laneMask     & found->laneMask;
+        out.fillLaneMask = base.fillLaneMask & found->laneMask;
+        out.ghostMask    = base.ghostMask    | found->ghostMask;
+
         // Blocks of the same kind share a groove, so the second chorus is the
         // same chorus played again rather than a different song: what makes the
         // repeat live is the fills, the round robins and the humanisation,
@@ -1351,6 +1358,58 @@ namespace hhx
                         h.velocity = (std::uint8_t) std::min (
                             127, (int) std::lround ((float) h.velocity * 1.10f));
                     }
+                }
+            }
+        }
+
+        // A piece switched out of a block does not leave a hole in the part: a
+        // drummer moves the figure onto whatever is still in front of him, so
+        // an intro of nothing but toms plays the song's groove on the toms
+        // rather than a bar of silence with a couple of tom hits in it.
+        {
+            const auto on = [&s] (int lane) { return (s.laneMask & (1u << lane)) != 0; };
+            const auto firstOn = [&on] (std::initializer_list<int> preference)
+            {
+                for (const int lane : preference)
+                    if (on (lane))
+                        return lane;
+                return -1;
+            };
+
+            const int  tom     = firstOn ({ LaneTom2, LaneTom1, LaneTom3, LaneTom4 });
+            const int  timeTom = firstOn ({ LaneTom1, LaneTom2, LaneTom3, LaneTom4 });
+            const bool timeOn  = on (LaneHatClosed) || on (LaneRideBow);
+
+            for (Raw& h : raw)
+            {
+                const int lane = (int) h.lane;
+                if (on (lane))
+                    continue;
+
+                if (isSnareLane (lane) && ! on (LaneSnare))
+                {
+                    // While a cymbal is still keeping time, switching the snare
+                    // out means the backbeat is gone, as it is in Logic. Only
+                    // once the cymbals are out too - a tom-led intro - does the
+                    // figure move onto the toms rather than disappear.
+                    if (tom >= 0 && ! timeOn)
+                        h.lane = (std::uint8_t) tom;
+                }
+                else if (isHatLane (lane) && on (LaneRideBow))
+                {
+                    h.lane = (std::uint8_t) LaneRideBow;
+                }
+                else if (isRideLane (lane) && on (LaneHatClosed))
+                {
+                    h.lane = (std::uint8_t) LaneHatClosed;
+                }
+                else if (isOrnamentLane (lane) && ! timeOn && timeTom >= 0)
+                {
+                    // Time on a tom is played on the beat, not as sixteenths:
+                    // the off-beat strokes are dropped with the cymbal.
+                    const float inBar = h.beat - std::floor (h.beat / dstBar) * dstBar;
+                    if (std::abs (inBar - std::round (inBar)) < 0.01f)
+                        h.lane = (std::uint8_t) timeTom;
                 }
             }
         }

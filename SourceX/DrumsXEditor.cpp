@@ -782,11 +782,15 @@ namespace hhx
                 group.in = std::make_unique<juce::TextButton> (spec.name);
                 group.in->setClickingTogglesState (false);
                 group.in->onClick = [flip] { flip (false); };
+                group.in->setTooltip (juce::String (spec.name)
+                                      + " in or out of the selected block only");
                 addAndMakeVisible (*group.in);
 
                 group.ghost = std::make_unique<juce::TextButton> ("G");
                 group.ghost->setClickingTogglesState (false);
                 group.ghost->onClick = [flip] { flip (true); };
+                group.ghost->setTooltip (juce::String (spec.name)
+                                         + " played as ghost notes in the selected block");
                 addAndMakeVisible (*group.ghost);
 
                 laneGroups.push_back (std::move (group));
@@ -1086,6 +1090,22 @@ namespace hhx
         roomSpaceLabel.setColour (juce::Label::textColourId, DrumsXLookAndFeel::textDim());
         addAndMakeVisible (roomSpaceLabel);
 
+        punchKnob = std::make_unique<LabelledKnob> (state, pid::punch, "Punch");
+        glueKnob  = std::make_unique<LabelledKnob> (state, pid::glue,  "Glue");
+        driveKnob = std::make_unique<LabelledKnob> (state, pid::drive, "Drive");
+        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get() })
+            addAndMakeVisible (*k);
+
+        mixVoicingBox.addItemList ({ "Raw", "Modern", "Punch", "Room", "Vintage" }, 1);
+        addAndMakeVisible (mixVoicingBox);
+        comboAttachments.push_back (
+            std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+                state, pid::mixVoicing, mixVoicingBox));
+
+        mixVoicingLabel.setJustificationType (juce::Justification::centred);
+        mixVoicingLabel.setColour (juce::Label::textColourId, DrumsXLookAndFeel::textDim());
+        addAndMakeVisible (mixVoicingLabel);
+
         setResizable (false, false);
         proc.setUiScale (proc.getUiScale());
         applyScale();
@@ -1201,6 +1221,10 @@ namespace hhx
             k->setVisible (mixp);
         roomSpaceBox.setVisible (mixp);
         roomSpaceLabel.setVisible (mixp);
+        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get() })
+            k->setVisible (mixp);
+        mixVoicingBox.setVisible (mixp);
+        mixVoicingLabel.setVisible (mixp);
 
         resized();
         repaint();
@@ -1559,9 +1583,16 @@ namespace hhx
         roomSpaceLabel.setBounds (520, 108, 380, 16);
         roomSpaceBox.setBounds   (620, 126, 180, 24);
 
-        roomSizeKnob->setBounds (520, 160, 120, 120);
-        roomDampKnob->setBounds (650, 160, 120, 120);
-        roomMixKnob->setBounds  (780, 160, 120, 120);
-        roomDuckKnob->setBounds (650, 285, 120, 120);
+        roomSizeKnob->setBounds (520, 158, 112, 112);
+        roomDampKnob->setBounds (644, 158, 112, 112);
+        roomMixKnob->setBounds  (768, 158, 112, 112);
+        roomDuckKnob->setBounds (644, 274, 112, 112);
+
+        mixVoicingLabel.setBounds (520, 396, 380, 16);
+        mixVoicingBox.setBounds   (620, 414, 180, 24);
+
+        punchKnob->setBounds (520, 444, 112, 112);
+        glueKnob->setBounds  (644, 444, 112, 112);
+        driveKnob->setBounds (768, 444, 112, 112);
     }
 }

@@ -50,6 +50,10 @@ namespace hhx
         inline constexpr const char* roomMix        = "roomMix";
         inline constexpr const char* roomSpace      = "roomSpace";
         inline constexpr const char* roomDuck       = "roomDuck";
+        inline constexpr const char* mixVoicing     = "mixVoicing";
+        inline constexpr const char* punch          = "punch";
+        inline constexpr const char* glue           = "glue";
+        inline constexpr const char* drive          = "drive";
 
         juce::String laneEnable (int lane);
         juce::String laneGhost (int lane);
@@ -233,6 +237,7 @@ namespace hhx
         void rebuildTimeline();
         void loadContent();
         void pushRoomParameters();
+        void pushMixParameters();
         std::uint64_t settingsHash() const;
 
         juce::MidiMessageSequence buildSequence (int numBars, int laneFilter) const;

@@ -251,6 +251,9 @@ namespace hhx
         std::unique_ptr<LabelledKnob> roomSizeKnob, roomDampKnob, roomMixKnob, roomDuckKnob;
         juce::ComboBox roomSpaceBox;
         juce::Label    roomSpaceLabel { {}, "SPACE" };
+        std::unique_ptr<LabelledKnob> punchKnob, glueKnob, driveKnob;
+        juce::ComboBox mixVoicingBox;
+        juce::Label    mixVoicingLabel { {}, "PRODUCTION" };
 
         std::unique_ptr<juce::FileChooser> chooser;
         int startupChecks = 16;

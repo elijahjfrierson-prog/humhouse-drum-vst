@@ -76,6 +76,16 @@ namespace hhx
                 || id == pid::variationRhythm || id == pid::variationCymbal;
         }
 
+        /** The kit-piece switches belong to a block too: a toms-only intro is a
+            property of the intro, not of the song. */
+        bool isSectionLaneParameter (const juce::String& id)
+        {
+            for (int lane = 0; lane < NumLanes; ++lane)
+                if (id == pid::laneEnable (lane) || id == pid::laneGhost (lane))
+                    return true;
+            return false;
+        }
+
         int laneToMidiNote (int lane) { return laneToNote (lane); }
 
         const char* prettyLaneName (int lane) { return laneName (lane); }
@@ -199,6 +209,19 @@ namespace hhx
                                                            NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
 
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::mixVoicing, 1 }, "Mix",
+                                                           StringArray { "Raw", "Modern", "Punch", "Room", "Vintage" },
+                                                           KitEngine::MixModern));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::punch, 1 }, "Punch",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::glue, 1 }, "Glue",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::drive, 1 }, "Drive",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.2f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+
         for (int lane = 0; lane < NumLanes; ++lane)
         {
             const juce::String n (prettyLaneName (lane));
@@ -247,6 +270,7 @@ namespace hhx
         kit.setMicBlend (apvts.getRawParameterValue (pid::micBlend)->load());
         kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
         kit.setCrush (apvts.getRawParameterValue (pid::crush)->load());
+        pushMixParameters();
 
         // A conventional rock song form. Hosts that expose markers can replace
         // it through setSections(); the performance only follows it when
@@ -295,10 +319,14 @@ namespace hhx
         else if (id == pid::roomSize || id == pid::roomDamping || id == pid::roomMix
                  || id == pid::roomSpace || id == pid::roomDuck)
             pushRoomParameters();
+        else if (id == pid::mixVoicing || id == pid::punch || id == pid::glue
+                 || id == pid::drive)
+            pushMixParameters();
 
         // A performance knob edits the block that is selected, and only that
         // block; the rest of the arrangement re-renders to exactly what it was.
-        if (! syncingSection.load() && isSectionParameter (id))
+        if (! syncingSection.load()
+            && (isSectionParameter (id) || isSectionLaneParameter (id)))
             captureParamsIntoSelectedSection();
 
         // Re-render off the audio thread. Nothing the user typed into the
@@ -341,6 +369,8 @@ namespace hhx
                 feed (sec.halfTime ? 1.0 : 0.0);
                 feed ((double) sec.variationRhythm);
                 feed ((double) sec.variationCymbal);
+                feed ((double) sec.laneMask);
+                feed ((double) sec.ghostMask);
             }
         }
 
@@ -473,6 +503,7 @@ namespace hhx
         kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
         kit.setCrush (apvts.getRawParameterValue (pid::crush)->load());
         pushRoomParameters();
+        pushMixParameters();
     }
 
     void DrumsXProcessor::selectKit (int index)
@@ -515,6 +546,20 @@ namespace hhx
         kit.setRoom (load (pid::roomSize), load (pid::roomDamping), load (pid::roomMix));
         kit.setRoomSpace ((int) std::lround (load (pid::roomSpace)));
         kit.setRoomDuck (load (pid::roomDuck));
+    }
+
+    void DrumsXProcessor::pushMixParameters()
+    {
+        const auto load = [this] (const juce::String& id)
+        {
+            const auto* p = apvts.getRawParameterValue (id);
+            return p != nullptr ? p->load() : 0.0f;
+        };
+
+        kit.setMixVoicing ((int) std::lround (load (pid::mixVoicing)));
+        kit.setPunch (load (pid::punch));
+        kit.setGlue (load (pid::glue));
+        kit.setDrive (load (pid::drive));
     }
 
     void DrumsXProcessor::rebuildTimeline()
@@ -634,6 +679,16 @@ namespace hhx
             s.arrangement = arrangement;
         }
 
+        // With blocks on the strip the piece switches belong to the selected
+        // block, so the song-wide mask has to stay open: an intro of nothing
+        // but toms must not take the hats out of the chorus behind it.
+        if (! s.arrangement.empty())
+        {
+            s.laneMask     = 0xFFFFFFFFu;
+            s.fillLaneMask = 0xFFFFFFFFu;
+            s.ghostMask    = 0;
+        }
+
         // Rounded to whole beats per minute: the fill rules only care which
         // figures are playable at this speed, and a host nudging the tempo by a
         // hundredth should not re-render the song.
@@ -666,6 +721,17 @@ namespace hhx
         sec.halfTime        = get (pid::halfTime) > 0.5f;
         sec.variationRhythm = (int) get (pid::variationRhythm);
         sec.variationCymbal = (int) get (pid::variationCymbal);
+
+        std::uint32_t blockMask = 0, blockGhost = 0;
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            if (get (pid::laneEnable (lane)) > 0.5f)
+                blockMask |= (1u << lane);
+            if (get (pid::laneGhost (lane)) > 0.5f)
+                blockGhost |= (1u << lane);
+        }
+        sec.laneMask  = blockMask;
+        sec.ghostMask = blockGhost;
     }
 
     void DrumsXProcessor::pushSectionToParams (int index)
@@ -693,6 +759,14 @@ namespace hhx
         set (pid::halfTime,   sec.halfTime ? 1.0f : 0.0f);
         set (pid::variationRhythm, (float) sec.variationRhythm);
         set (pid::variationCymbal, (float) sec.variationCymbal);
+
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            set (pid::laneEnable (lane).toRawUTF8(),
+                 (sec.laneMask  & (1u << lane)) != 0 ? 1.0f : 0.0f);
+            set (pid::laneGhost (lane).toRawUTF8(),
+                 (sec.ghostMask & (1u << lane)) != 0 ? 1.0f : 0.0f);
+        }
         syncingSection.store (false);
     }
 
@@ -1253,6 +1327,8 @@ namespace hhx
             block.setProperty ("halfTime", sec.halfTime, nullptr);
             block.setProperty ("varRhythm", sec.variationRhythm, nullptr);
             block.setProperty ("varCymbal", sec.variationCymbal, nullptr);
+            block.setProperty ("lanes", (juce::int64) sec.laneMask, nullptr);
+            block.setProperty ("ghosts", (juce::int64) sec.ghostMask, nullptr);
             blocks.appendChild (block, nullptr);
         }
         state.appendChild (blocks, nullptr);
@@ -1313,6 +1389,11 @@ namespace hhx
                 sec.halfTime        = (bool)  block.getProperty ("halfTime", false);
                 sec.variationRhythm = (int)   block.getProperty ("varRhythm", 0);
                 sec.variationCymbal = (int)   block.getProperty ("varCymbal", 0);
+                // Sessions saved before the switches were per block played the
+                // whole kit in every block, which is what the default is.
+                sec.laneMask  = (std::uint32_t) (juce::int64) block.getProperty (
+                                    "lanes", (juce::int64) ((1u << NumLanes) - 1u));
+                sec.ghostMask = (std::uint32_t) (juce::int64) block.getProperty ("ghosts", (juce::int64) 0);
                 restored.push_back (sec);
             }
 

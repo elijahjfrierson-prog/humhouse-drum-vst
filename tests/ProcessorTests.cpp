@@ -313,6 +313,144 @@ int main()
         check (song.numSections() == 40, "a section can be removed again");
     }
 
+    // 3c. Kit pieces belong to a block, not to the song: an intro of nothing
+    //     but toms must leave every other block playing the whole kit.
+    {
+        hhx::DrumsXProcessor song;
+        song.prepareToPlay (48000.0, 128);
+        for (int i = 0; i < 3; ++i)
+            song.addSection();
+        song.setSelectedSection (0);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+        for (int lane = 0; lane < hhx::NumLanes; ++lane)
+            song.getAPVTS().getParameter (hhx::pid::laneEnable (lane))
+                ->setValueNotifyingHost (hhx::isTomLane (lane) ? 1.0f : 0.0f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (30);
+
+        const auto blocks = song.getArrangement();
+        check ((blocks[0].laneMask & (1u << hhx::LaneHatClosed)) == 0
+               && (blocks[0].laneMask & (1u << hhx::LaneTom1)) != 0,
+               "switching a piece off lands in the selected block");
+
+        const std::uint32_t wholeKit = (1u << hhx::NumLanes) - 1u;
+        bool othersFull = true;
+        for (std::size_t i = 1; i < blocks.size(); ++i)
+            if (blocks[i].laneMask != wholeKit)
+                othersFull = false;
+        check (othersFull, "the blocks around it keep the whole kit");
+
+        if (const auto tl = song.getTimeline())
+        {
+            const int introBars = std::max (1, blocks[0].numBars);
+            int introToms = 0, introOther = 0, laterPieces = 0;
+            for (const auto& h : tl->hits)
+            {
+                const int bar = (int) (h.beat / tl->beatsPerBar);
+                if (bar < introBars)
+                {
+                    if (hhx::isTomLane (h.lane)) ++introToms;
+                    else                         ++introOther;
+                }
+                else if (bar < introBars + std::max (1, blocks[1].numBars)
+                         && ! hhx::isTomLane (h.lane))
+                    ++laterPieces;
+            }
+            check (introToms > 0 && introOther == 0,
+                   "a toms-only intro plays a tom part and nothing else");
+            check (laterPieces > 0, "the block after it still plays the rest of the kit");
+        }
+        else
+        {
+            check (false, "the timeline is rendered");
+        }
+
+        juce::MemoryBlock state;
+        song.getStateInformation (state);
+        hhx::DrumsXProcessor reloaded;
+        reloaded.setStateInformation (state.getData(), (int) state.getSize());
+        const auto restored = reloaded.getArrangement();
+        check (! restored.empty() && restored[0].laneMask == blocks[0].laneMask
+               && restored.back().laneMask == wholeKit,
+               "each block's pieces are saved with the project");
+    }
+
+    // 3d. The mix chain: the production voicings change how the kit is seated
+    //     without ever handing the host a clipped buffer, and the same settings
+    //     always render the same audio.
+    {
+        hhx::DrumsXProcessor mixed;
+        mixed.prepareToPlay (48000.0, 128);
+        mixed.getAPVTS().getParameter (hhx::pid::complexity)->setValueNotifyingHost (0.9f);
+        mixed.getAPVTS().getParameter (hhx::pid::intensity)->setValueNotifyingHost (0.9f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+        const auto* voicingParam = mixed.getAPVTS().getParameter (hhx::pid::mixVoicing);
+        check (voicingParam != nullptr
+               && voicingParam->getNumSteps() == (int) hhx::KitEngine::NumMixVoicings,
+               "the mix page offers every production voicing");
+
+        const auto render = [&mixed] (int voicing, float punch)
+        {
+            mixed.getAPVTS().getParameter (hhx::pid::mixVoicing)
+                ->setValueNotifyingHost ((float) voicing
+                                         / (float) (hhx::KitEngine::NumMixVoicings - 1));
+            mixed.getAPVTS().getParameter (hhx::pid::punch)->setValueNotifyingHost (punch);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+            // A fresh prepare, so each pass starts from the same room tails and
+            // envelopes: the comparison is of the mix, not of what was ringing.
+            mixed.stop();
+            mixed.prepareToPlay (48000.0, 128);
+            mixed.play();
+
+            juce::AudioBuffer<float> buffer (2, 128);
+            juce::MidiBuffer midi;
+            std::vector<float> audio;
+            double peak = 0.0;
+            for (int i = 0; i < 48000 * 4 / 128; ++i)
+            {
+                buffer.clear();
+                midi.clear();
+                mixed.processBlock (buffer, midi);
+                peak = std::max (peak, (double) buffer.getMagnitude (0, buffer.getNumSamples()));
+                for (int n = 0; n < buffer.getNumSamples(); ++n)
+                    audio.push_back (buffer.getSample (0, n));
+            }
+            return std::make_pair (audio, peak);
+        };
+
+        const auto raw     = render (hhx::KitEngine::MixRaw,    0.5f);
+        const auto modern  = render (hhx::KitEngine::MixModern, 0.5f);
+        const auto again   = render (hhx::KitEngine::MixModern, 0.5f);
+        const auto punched = render (hhx::KitEngine::MixPunch,  1.0f);
+
+        check (raw.second > 0.001 && modern.second > 0.001,
+               "the kit still plays through the mix chain");
+        check (raw.first != modern.first, "the production voicing changes the sound");
+        check (punched.second <= 1.0 && modern.second <= 1.0 && raw.second <= 1.0,
+               "no voicing pushes the output past full scale");
+
+        const auto rms = [] (const std::vector<float>& audio)
+        {
+            double sum = 0.0;
+            for (const float v : audio)
+                sum += (double) v * (double) v;
+            return audio.empty() ? 0.0 : std::sqrt (sum / (double) audio.size());
+        };
+        check (rms (modern.first) > rms (raw.first) * 1.02,
+               "the produced kit sits louder than the raw close mics");
+
+        // The seat a voicing gives the kit is a property of the mix, not of
+        // which round robin happened to be next, so two passes of the same
+        // settings have to land at the same level.
+        const double drift = std::abs (rms (modern.first) - rms (again.first))
+                           / std::max (1.0e-9, rms (modern.first));
+        std::printf ("note  mix seat repeats within %.2f %%\n", 100.0 * drift);
+        check (drift < 0.05, "the same mix settings seat the kit at the same level");
+        mixed.stop();
+    }
+
     // 4. Kit format: a folder of 8 velocity layers x 4 round robins x 3 mics
     //    loads at full depth, through kit.json and through the filenames alone.
     {

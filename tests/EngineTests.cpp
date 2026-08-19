@@ -509,6 +509,79 @@ int main (int argc, char** argv)
                "a block that starts mid-phrase still plays its own dynamics");
     }
 
+    // 15b. Kit pieces are per block: an intro of nothing but toms leaves the
+    //      chorus behind it playing the whole kit.
+    {
+        const std::uint32_t wholeKit = (1u << hhx::NumLanes) - 1u;
+        std::uint32_t tomsOnly = 0, snareLanes = 0;
+        for (int lane = 0; lane < hhx::NumLanes; ++lane)
+        {
+            if (hhx::isTomLane (lane))   tomsOnly   |= (1u << lane);
+            if (hhx::isSnareLane (lane)) snareLanes |= (1u << lane);
+        }
+
+        auto song = s;
+        song.arrangement = { { 1, 4, hhx::SectionIntro,  0.4f, 0.5f, 0.55f, 0.2f, 0.0f, false, 0, 0,
+                               tomsOnly, 0 },
+                             { 2, 8, hhx::SectionChorus, 0.8f, 0.9f, 0.9f,  0.6f, 0.0f, false, 0, 0,
+                               wholeKit, 0 } };
+        const auto hits = engine.renderBars (song, 0, 12);
+
+        int introToms = 0, introOther = 0, chorusHats = 0, chorusSnare = 0, chorusKick = 0;
+        for (const auto& h : hits)
+        {
+            const int bar = (int) (h.beat / 4.0f);
+            if (bar < 4)
+            {
+                if (hhx::isTomLane (h.lane)) ++introToms;
+                else                         ++introOther;
+            }
+            else
+            {
+                if (hhx::isHatLane (h.lane))   ++chorusHats;
+                if (hhx::isSnareLane (h.lane)) ++chorusSnare;
+                if (h.lane == hhx::LaneKick)   ++chorusKick;
+            }
+        }
+        check (introToms >= 8 && introOther == 0,
+               "a toms-only intro plays a tom part and nothing else");
+        check (chorusHats > 0 && chorusSnare > 0 && chorusKick > 0,
+               "the chorus behind it still plays hats, snare and kick");
+        check (sameHits (hits, engine.renderBars (song, 0, 12)),
+               "per-block pieces render the same every time");
+
+        // The mask belongs to the block it is on, so the chorus is untouched by it.
+        auto full = song;
+        full.arrangement[0].laneMask = wholeKit;
+        const auto fullHits = engine.renderBars (full, 0, 12);
+        const auto barsFrom = [] (const std::vector<hhx::Hit>& in, int firstBar)
+        {
+            std::vector<hhx::Hit> out;
+            for (const auto& h : in)
+                if ((int) (h.beat / 4.0f) >= firstBar)
+                    out.push_back (h);
+            return out;
+        };
+        check (sameHits (barsFrom (hits, 4), barsFrom (fullHits, 4)),
+               "switching a piece in the intro leaves the chorus bit-identical");
+
+        // Switching one piece out while the rest of the kit plays takes that
+        // part off, the way clicking it off in Logic does - it is not quietly
+        // re-voiced onto something else.
+        auto noSnare = s;
+        noSnare.arrangement = { { 1, 8, hhx::SectionChorus, 0.7f, 0.8f, 0.8f, 0.4f, 0.0f, false, 0, 0,
+                                  wholeKit & ~snareLanes, 0 } };
+        int snareHits = 0, tomHits = 0, hatHits = 0;
+        for (const auto& h : engine.renderBars (noSnare, 0, 8))
+        {
+            if (hhx::isSnareLane (h.lane)) ++snareHits;
+            if (hhx::isTomLane (h.lane))   ++tomHits;
+            if (hhx::isHatLane (h.lane))   ++hatHits;
+        }
+        check (snareHits == 0 && hatHits > 0, "switching the snare out takes the snare part off");
+        check (tomHits <= 8, "and does not hand the backbeat to the toms");
+    }
+
     const auto isCrash = [] (int lane)
     {
         return lane == hhx::LaneCrashL || lane == hhx::LaneCrashR

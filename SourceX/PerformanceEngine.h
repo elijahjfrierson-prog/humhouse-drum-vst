@@ -40,6 +40,12 @@ namespace hhx
         bool  halfTime   = false;
         int   variationRhythm = 0;
         int   variationCymbal = 0;
+
+        /** Which kit pieces this block plays, and which of them are pushed
+            down to ghost level. A toms-only intro is a mask on that block:
+            the pieces it drops are still played by every other block. */
+        std::uint32_t laneMask  = (1u << NumLanes) - 1u;
+        std::uint32_t ghostMask = 0;
     };
 
     /** How many bars the whole arrangement covers. */

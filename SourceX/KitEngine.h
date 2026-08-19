@@ -123,6 +123,32 @@ namespace hhx
         void  setCrush (float amount01);
         float getCrush() const;
 
+        // --- produced mix ------------------------------------------------
+        /** How the kit is engineered rather than how it is played. A raw close
+            mic never sits in a mix on its own: it is high-passed to make room
+            for the bass, shaped so the stick is heard over a dense arrangement,
+            glued on a bus and driven a little. Each voicing is one of those
+            treatments, the way a mixed kit arrives already sitting. */
+        enum MixVoicing { MixRaw = 0, MixModern, MixPunch, MixRoom, MixVintage, NumMixVoicings };
+        void setMixVoicing (int voicing);
+        int  getMixVoicing() const;
+
+        /** Transient design on each piece: how far the stick is pushed in front
+            of the shell. Above 0.5 the attack is emphasised, below it the
+            sustain is. */
+        void  setPunch (float amount01);
+        float getPunch() const;
+
+        /** Bus compression across the whole kit: the thing that makes a kit
+            read as one instrument instead of separate samples. */
+        void  setGlue (float amount01);
+        float getGlue() const;
+
+        /** Saturation on the kit bus, which is where the last few dB of
+            loudness come from without the peaks growing. */
+        void  setDrive (float amount01);
+        float getDrive() const;
+
         /** `variant` is the round-robin slot the performance engine chose, so
             two consecutive strokes on a lane never fire the same sample. */
         void noteOn (int lane, float velocity01, int variant = 0);
@@ -174,7 +200,32 @@ namespace hhx
             std::atomic<float> activity { 0.0f };
             std::atomic<int>   roundRobin { 0 };
             float              compEnv { 0.0f };   // audio thread only
+
+            // Mix state, audio thread only.
+            float hpState[2] { 0.0f, 0.0f };   // high-pass integrator per side
+            float fastEnv { 0.0f };            // transient design: stick
+            float slowEnv { 0.0f };            //                   shell
         };
+
+        /** What a piece needs before it sits in a mix: where its low end stops
+            being useful, and how much of its top belongs to the stick. */
+        struct LaneVoicing
+        {
+            float highPassHz  = 0.0f;
+            float attack      = 0.0f;   // how much transient design it takes
+            float sustainTrim = 0.0f;   // dB taken off its ring
+        };
+
+        static LaneVoicing voicingForLane (int lane, int voicing);
+
+        /** The lane's own shaping: high-pass, then transient design. Runs on the
+            lane bus so a snare can be pushed forward without the cymbals
+            following it. */
+        void shapeLane (LaneSlot& slot, int lane, float* busL, float* busR, int numSamples);
+
+        /** The kit bus: glue compression, saturation, the voicing's tilt, and a
+            ceiling so a hard-hit chorus cannot clip the host. */
+        void processKitBus (float* outL, float* outR, int numSamples);
 
         struct Voice
         {
@@ -286,6 +337,17 @@ namespace hhx
 
         std::atomic<int>   roomSpace { SpaceRoom };
         std::atomic<float> roomDuck  { 0.35f };
+
+        std::atomic<int>   mixVoicing { MixModern };
+        std::atomic<float> punch      { 0.5f };
+        std::atomic<float> glue       { 0.35f };
+        std::atomic<float> drive      { 0.2f };
+
+        // Kit bus state, audio thread only.
+        float busCompEnv = 0.0f;
+        float busTiltL   = 0.0f;
+        float busTiltR   = 0.0f;
+        float busCeiling = 1.0f;
 
         std::array<float, kBleedDelay> bleedLine {};
         int                            bleedWrite = 0;

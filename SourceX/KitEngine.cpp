@@ -36,7 +36,15 @@ namespace hhx
         roomToneR = 0.0f;
         roomDuckEnv = 0.0f;
         for (auto& l : lanes)
+        {
             l.compEnv = 0.0f;
+            l.hpState[0] = l.hpState[1] = 0.0f;
+            l.fastEnv = l.slowEnv = 0.0f;
+        }
+
+        busCompEnv = 0.0f;
+        busTiltL = busTiltR = 0.0f;
+        busCeiling = 1.0f;
 
         allNotesOff();
     }
@@ -656,6 +664,208 @@ namespace hhx
     void KitEngine::setCrush (float amount01)  { crush.store (juce::jlimit (0.0f, 1.0f, amount01)); }
     float KitEngine::getCrush() const          { return crush.load(); }
 
+    void KitEngine::setMixVoicing (int voicing)
+    {
+        mixVoicing.store (juce::jlimit (0, (int) NumMixVoicings - 1, voicing));
+    }
+
+    int   KitEngine::getMixVoicing() const     { return mixVoicing.load(); }
+    void  KitEngine::setPunch (float amount01) { punch.store (juce::jlimit (0.0f, 1.0f, amount01)); }
+    float KitEngine::getPunch() const          { return punch.load(); }
+    void  KitEngine::setGlue (float amount01)  { glue.store (juce::jlimit (0.0f, 1.0f, amount01)); }
+    float KitEngine::getGlue() const           { return glue.load(); }
+    void  KitEngine::setDrive (float amount01) { drive.store (juce::jlimit (0.0f, 1.0f, amount01)); }
+    float KitEngine::getDrive() const          { return drive.load(); }
+
+    KitEngine::LaneVoicing KitEngine::voicingForLane (int lane, int voicing)
+    {
+        if (voicing == MixRaw)
+            return {};
+
+        // Where each family stops being useful at the bottom, and how much of it
+        // is stick rather than shell. These are the moves an engineer makes on
+        // every rock kit before anything else: the kick keeps its fundamental
+        // and loses the rumble under it, the snare gives up the low end it only
+        // shares with the kick, and the cymbals are high-passed hard because
+        // everything they have below 300 Hz is spill.
+        LaneVoicing v;
+        if (lane == LaneKick)                       v = { 28.0f,  0.55f, 0.8f };
+        else if (isSnareLane (lane))                v = { 85.0f,  0.70f, 0.6f };
+        else if (isTomLane (lane))                  v = { 70.0f,  0.45f, 0.4f };
+        else if (isHatLane (lane))                  v = { 340.0f, 0.35f, 0.0f };
+        else if (isRideLane (lane) || isCymbalLane (lane)) v = { 260.0f, 0.20f, 0.0f };
+        else                                        v = { 180.0f, 0.30f, 0.2f };
+
+        // The voicings differ in how hard those moves are pushed, not in what
+        // they are: Modern is the mixed-record default, Punch leans on the
+        // transient, Room leaves the low end and the ring alone, Vintage is the
+        // softest treatment of the four.
+        switch (voicing)
+        {
+            case MixPunch:   v.attack *= 1.6f; v.sustainTrim *= 1.6f; break;
+            case MixRoom:    v.attack *= 0.6f; v.sustainTrim  = 0.0f;
+                             v.highPassHz *= 0.7f;                    break;
+            case MixVintage: v.attack *= 0.5f; v.sustainTrim *= 0.4f;
+                             v.highPassHz *= 0.8f;                    break;
+            default: break;   // Modern
+        }
+
+        return v;
+    }
+
+    void KitEngine::shapeLane (LaneSlot& slot, int lane, float* busL, float* busR, int numSamples)
+    {
+        const int   voicing = mixVoicing.load();
+        const auto  v       = voicingForLane (lane, voicing);
+        const float amount  = punch.load();
+
+        if (voicing == MixRaw || numSamples <= 0)
+            return;
+
+        if (v.highPassHz > 1.0f)
+        {
+            // One-pole high-pass per side, taken as the difference between the
+            // signal and its own low-passed copy.
+            const float coeff = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                                 * v.highPassHz / (float) currentRate);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                slot.hpState[0] += coeff * (busL[i] - slot.hpState[0]);
+                busL[i] -= slot.hpState[0];
+                if (busR != nullptr)
+                {
+                    slot.hpState[1] += coeff * (busR[i] - slot.hpState[1]);
+                    busR[i] -= slot.hpState[1];
+                }
+            }
+        }
+
+        // Transient design: two envelope followers on the same signal, one that
+        // keeps up with the stick and one that only hears the shell. Where they
+        // differ is the attack, so their difference is the gain. This is what
+        // makes a close mic read in a dense mix without simply being louder.
+        const float attackAmt  = v.attack      * (0.4f + 1.2f * amount);
+        const float sustainAmt = v.sustainTrim * (0.4f + 1.2f * amount);
+        if (attackAmt <= 0.001f && sustainAmt <= 0.001f)
+            return;
+
+        const float fast = 1.0f - std::exp (-1.0f / (0.0015f * (float) currentRate));
+        const float slow = 1.0f - std::exp (-1.0f / (0.030f  * (float) currentRate));
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float peak = juce::jmax (std::abs (busL[i]),
+                                           busR != nullptr ? std::abs (busR[i]) : 0.0f);
+            slot.fastEnv += fast * (peak - slot.fastEnv);
+            slot.slowEnv += slow * (peak - slot.slowEnv);
+
+            const float diff = slot.fastEnv - slot.slowEnv;
+            const float norm = diff / (slot.fastEnv + 1.0e-4f);
+
+            float gain = 1.0f;
+            if (norm > 0.0f)  gain += attackAmt  * norm;          // stick
+            else              gain += sustainAmt * norm * 0.5f;   // ring
+
+            gain = juce::jlimit (0.25f, 4.0f, gain);
+            busL[i] *= gain;
+            if (busR != nullptr)
+                busR[i] *= gain;
+        }
+    }
+
+    void KitEngine::processKitBus (float* outL, float* outR, int numSamples)
+    {
+        const int voicing = mixVoicing.load();
+        if (voicing == MixRaw)
+            return;
+
+        const float glueAmt  = glue.load();
+        const float driveAmt = drive.load();
+
+        // Bus compression: slow enough to let the attack through, released over
+        // a bar's worth of time so the kit breathes as one instrument. This is
+        // the difference between separate samples and a kit.
+        if (glueAmt > 0.001f)
+        {
+            const float threshold = juce::Decibels::decibelsToGain (-14.0f - 6.0f * glueAmt);
+            const float ratio     = 1.6f + 2.4f * glueAmt;
+            const float attack    = 1.0f - std::exp (-1.0f / (0.015f * (float) currentRate));
+            const float release   = 1.0f - std::exp (-1.0f / (0.250f * (float) currentRate));
+            const float makeUp    = juce::Decibels::decibelsToGain (3.5f * glueAmt);
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float peak = juce::jmax (std::abs (outL[i]),
+                                               outR != nullptr ? std::abs (outR[i]) : 0.0f);
+                const float coeff = peak > busCompEnv ? attack : release;
+                busCompEnv += coeff * (peak - busCompEnv);
+
+                float gain = makeUp;
+                if (busCompEnv > threshold)
+                    gain *= std::pow (busCompEnv / threshold, 1.0f / ratio - 1.0f);
+
+                outL[i] *= gain;
+                if (outR != nullptr)
+                    outR[i] *= gain;
+            }
+        }
+
+        // Tilt: how the finished kit is balanced top to bottom. Vintage gives
+        // some of the top back to the shells, Modern and Punch lift it.
+        const float tiltDb = voicing == MixVintage ? -2.0f
+                           : voicing == MixRoom    ? -0.5f
+                           : voicing == MixPunch   ?  1.5f
+                                                   :  1.0f;
+        if (std::abs (tiltDb) > 0.01f)
+        {
+            const float coeff = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                                 * 2200.0f / (float) currentRate);
+            const float lift  = juce::Decibels::decibelsToGain (tiltDb) - 1.0f;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                busTiltL += coeff * (outL[i] - busTiltL);
+                outL[i] += (outL[i] - busTiltL) * lift;
+                if (outR != nullptr)
+                {
+                    busTiltR += coeff * (outR[i] - busTiltR);
+                    outR[i] += (outR[i] - busTiltR) * lift;
+                }
+            }
+        }
+
+        // Saturation, then a ceiling. The drive is where the loudness comes
+        // from - the peaks round over instead of growing - and the ceiling only
+        // ever works on what is left, so a hard chorus cannot clip the host.
+        if (driveAmt > 0.001f || voicing == MixVintage)
+        {
+            const float amt   = juce::jlimit (0.0f, 1.0f,
+                                              driveAmt + (voicing == MixVintage ? 0.2f : 0.0f));
+            const float pre   = 1.0f + 3.0f * amt;
+            const float post  = 1.0f / std::tanh (pre * 0.7f) * 0.7f;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                outL[i] = outL[i] * (1.0f - amt) + std::tanh (outL[i] * pre) * post * amt;
+                if (outR != nullptr)
+                    outR[i] = outR[i] * (1.0f - amt) + std::tanh (outR[i] * pre) * post * amt;
+            }
+        }
+
+        const float ceiling = juce::Decibels::decibelsToGain (-0.5f);
+        const float recover = 1.0f - std::exp (-1.0f / (0.100f * (float) currentRate));
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float peak = juce::jmax (std::abs (outL[i]),
+                                           outR != nullptr ? std::abs (outR[i]) : 0.0f);
+            const float needed = peak > ceiling ? ceiling / peak : 1.0f;
+            busCeiling = needed < busCeiling ? needed
+                                             : busCeiling + recover * (needed - busCeiling);
+
+            outL[i] *= busCeiling;
+            if (outR != nullptr)
+                outR[i] *= busCeiling;
+        }
+    }
+
     float KitEngine::getLaneActivity (int lane) const
     {
         return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].activity.load() : 0.0f;
@@ -1036,6 +1246,10 @@ namespace hhx
             if (! perLane)
                 continue;
 
+            // The piece is engineered before it is levelled, so its compressor
+            // sees a mix-ready instrument rather than a raw close mic.
+            shapeLane (slot, lane, busL, busR, numSamples);
+
             const float comp = slot.compression.load();
             if (comp > 0.001f)
             {
@@ -1192,16 +1406,18 @@ namespace hhx
 
         if (crushAmt > 0.001f)
         {
-            const float drive = 1.0f + 6.0f * crushAmt;
+            const float crushDrive = 1.0f + 6.0f * crushAmt;
             for (int i = 0; i < numSamples; ++i)
             {
                 const float mono = 0.5f * (outL[i] + (outR != nullptr ? outR[i] : outL[i]));
-                const float crushed = std::tanh (mono * drive) * (0.7f / drive) * drive * 0.5f;
+                const float crushed = std::tanh (mono * crushDrive) * 0.35f;
                 outL[i] = outL[i] * (1.0f - 0.5f * crushAmt) + crushed * crushAmt;
                 if (outR != nullptr)
                     outR[i] = outR[i] * (1.0f - 0.5f * crushAmt) + crushed * crushAmt;
             }
         }
+
+        processKitBus (outL, outR, numSamples);
 
         const float decay = std::pow (0.5f, (float) numSamples / (float) (currentRate * 0.12));
         for (auto& l : lanes)
