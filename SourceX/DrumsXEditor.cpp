@@ -215,6 +215,34 @@ namespace hhx
         }
 
         bool dragRunning = false;
+
+        /** The kit as a player thinks of it: seven pieces, each standing for the
+            articulation lanes behind it. Both the piece switches and the block
+            menu work in these terms rather than in 30 lanes. */
+        struct PieceGroup { const char* name; std::vector<int> lanes; };
+
+        std::vector<int> laneRange (int first, int last)
+        {
+            std::vector<int> lanes;
+            for (int lane = first; lane <= last; ++lane)
+                lanes.push_back (lane);
+            return lanes;
+        }
+
+        const std::vector<PieceGroup>& pieceGroups()
+        {
+            static const std::vector<PieceGroup> groups
+            {
+                { "KICK",  laneRange (LaneKick,      LaneKick) },
+                { "SNARE", laneRange (LaneSnare,     LaneSnareRoll) },
+                { "HATS",  laneRange (LaneHatClosed, LaneHatBell) },
+                { "RIDE",  laneRange (LaneRideBow,   LaneRideCrash) },
+                { "CRASH", laneRange (LaneCrashL,    LaneSplash) },
+                { "TOMS",  laneRange (LaneTom1,      LaneTom4) },
+                { "PERC",  laneRange (LanePerc,      LanePerc) }
+            };
+            return groups;
+        }
     }
 
     bool midiDragInProgress()
@@ -234,6 +262,31 @@ namespace hhx
         auto& file = dragFile();
         file = folder.getChildFile ("HumHouse Drums X " + juce::String (numBars) + " bars.mid");
         if (! proc.exportArrangementMidi (file, numBars))
+            return false;
+
+        dragRunning = true;
+        const bool started = juce::DragAndDropContainer::performExternalDragDropOfFiles (
+            juce::StringArray (file.getFullPathName()), false, &source,
+            [] { dragRunning = false; });
+
+        if (! started)
+            dragRunning = false;
+
+        return started;
+    }
+
+    bool startManualMidiDrag (juce::Component& source, DrumsXProcessor& proc)
+    {
+        if (dragRunning || ! proc.hasManualNotes())
+            return false;
+
+        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("HumHouse Drums X");
+        folder.createDirectory();
+
+        auto& file = dragFile();
+        file = folder.getChildFile ("HumHouse Drums X pattern.mid");
+        if (! proc.exportManualMidi (file))
             return false;
 
         dragRunning = true;
@@ -463,7 +516,29 @@ namespace hhx
         for (const int bars : { 2, 4, 8, 16, 32 })
             lengths.addItem (200 + bars, juce::String (bars) + " bars");
 
+        // "Play as": the whole block in one click, from coming in on kick and
+        // hats to a chorus with the crashes wide open.
+        juce::PopupMenu presets;
+        for (int p = 0; p <= (int) DrumsXProcessor::BlockPreset::wholeKit; ++p)
+            presets.addItem (300 + p,
+                             DrumsXProcessor::blockPresetName ((DrumsXProcessor::BlockPreset) p));
+
+        // Which pieces this block plays, without disturbing the blocks either
+        // side of it.
+        const auto lanes = proc.getSectionLanes (index);
+        juce::PopupMenu pieces;
+        for (int gp = 0; gp < (int) pieceGroups().size(); ++gp)
+        {
+            const auto& group = pieceGroups()[(std::size_t) gp];
+            bool on = false;
+            for (const int lane : group.lanes)
+                on = on || (lanes & (1u << lane)) != 0;
+            pieces.addItem (400 + gp, group.name, true, on);
+        }
+
         juce::PopupMenu m;
+        m.addSubMenu ("Play as", presets);
+        m.addSubMenu ("Pieces", pieces);
         m.addSubMenu ("Section", types);
         m.addSubMenu ("Length", lengths);
         m.addItem (2, "Duplicate");
@@ -474,7 +549,15 @@ namespace hhx
                          {
                              if (safe == nullptr)
                                  return;
-                             if (result >= 200)      safe->proc.setSectionBars (index, result - 200);
+                             if (result >= 400)
+                             {
+                                 const int gp = result - 400;
+                                 if (gp < (int) pieceGroups().size())
+                                     safe->proc.toggleSectionPiece (index, pieceGroups()[(std::size_t) gp].lanes);
+                             }
+                             else if (result >= 300)
+                                 safe->proc.applyBlockPreset (index, (DrumsXProcessor::BlockPreset) (result - 300));
+                             else if (result >= 200) safe->proc.setSectionBars (index, result - 200);
                              else if (result >= 100) safe->proc.setSectionType (index, result - 100);
                              else if (result == 2)   safe->proc.duplicateSection (index);
                              else if (result == 3)   safe->proc.removeSection (index);
@@ -541,6 +624,8 @@ namespace hhx
     {
         gestureLane = gestureStep = -1;
         adjusting = false;
+        moving = false;
+        draggedOut = false;
 
         int lane = 0, step = 0;
         if (! cellAt (e.getPosition(), lane, step))
@@ -549,6 +634,15 @@ namespace hhx
         gestureLane  = lane;
         gestureStep  = step;
         gestureValue = erasing ? 0.0f : 0.8f;
+
+        // A left click on a written cell picks that note up instead of wiping
+        // it: it is only erased if the gesture ends where it began.
+        if (erasing && ! e.mods.isRightButtonDown())
+        {
+            moving = true;
+            gestureValue = proc.getManualStep (lane, step);
+            return;
+        }
 
         proc.setManualStep (lane, step, gestureValue);
         repaint();
@@ -562,6 +656,29 @@ namespace hhx
         int lane = 0, step = 0;
         const bool inCell   = cellAt (e.getPosition(), lane, step);
         const bool sameCell = ! inCell || (lane == gestureLane && step == gestureStep);
+
+        // Carrying a note off the grid entirely drops the pattern into the host
+        // as MIDI, the way the arrangement blocks drag out.
+        if (! inCell && ! draggedOut && e.getDistanceFromDragStart() >= 12
+            && ! getLocalBounds().contains (e.getPosition()))
+        {
+            draggedOut = startManualMidiDrag (*this, proc);
+            if (draggedOut)
+                return;
+        }
+
+        // Picked-up note: it follows the pointer and lands where it is dropped.
+        if (moving)
+        {
+            if (sameCell)
+                return;
+            proc.setManualStep (gestureLane, gestureStep, 0.0f);
+            proc.setManualStep (lane, step, gestureValue);
+            gestureLane = lane;
+            gestureStep = step;
+            repaint();
+            return;
+        }
 
         // A vertical drag that never leaves the clicked cell sets that one
         // note's velocity, so nudging the mouse cannot place anything else.
@@ -590,10 +707,54 @@ namespace hhx
         repaint();
     }
 
-    void ManualPatternGrid::mouseUp (const juce::MouseEvent&)
+    void ManualPatternGrid::mouseUp (const juce::MouseEvent& e)
     {
+        // A pick-up that never travelled is a plain click: erase the note.
+        if (moving && ! draggedOut && e.getDistanceFromDragStart() < 6)
+        {
+            proc.setManualStep (gestureLane, gestureStep, 0.0f);
+            repaint();
+        }
+
         gestureLane = gestureStep = -1;
         adjusting = false;
+        moving = false;
+        draggedOut = false;
+    }
+
+    bool ManualPatternGrid::isInterestedInFileDrag (const juce::StringArray& files)
+    {
+        for (const auto& f : files)
+            if (f.endsWithIgnoreCase (".mid") || f.endsWithIgnoreCase (".midi"))
+                return true;
+        return false;
+    }
+
+    void ManualPatternGrid::fileDragEnter (const juce::StringArray&, int, int)
+    {
+        fileOver = true;
+        repaint();
+    }
+
+    void ManualPatternGrid::fileDragExit (const juce::StringArray&)
+    {
+        fileOver = false;
+        repaint();
+    }
+
+    void ManualPatternGrid::filesDropped (const juce::StringArray& files, int, int)
+    {
+        fileOver = false;
+
+        for (const auto& path : files)
+        {
+            if (! (path.endsWithIgnoreCase (".mid") || path.endsWithIgnoreCase (".midi")))
+                continue;
+            if (proc.importManualMidi (juce::File (path)))
+                break;
+        }
+
+        repaint();
     }
 
     //==============================================================================
@@ -659,6 +820,15 @@ namespace hhx
         const float mid = area.getX() + area.getWidth() * 0.5f;
         g.setColour (DrumsXLookAndFeel::line().brighter (0.3f));
         g.drawVerticalLine ((int) mid, (float) area.getY(), (float) area.getBottom());
+
+        if (fileOver)
+        {
+            g.setColour (DrumsXLookAndFeel::accent());
+            g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 4.0f, 2.0f);
+            g.setFont (uiFont (12.0f, true));
+            g.drawText ("DROP MIDI TO PLAY IT", getLocalBounds().removeFromTop (18),
+                        juce::Justification::centred, false);
+        }
     }
 
     //==============================================================================
@@ -745,23 +915,10 @@ namespace hhx
         // Kit-piece lane strip: each group can be dropped out of the performance
         // or pushed down to ghost notes without touching the mix.
         {
-            struct GroupSpec { const char* name; int first, last; };
-            const GroupSpec specs[]
-            {
-                { "KICK",   LaneKick,      LaneKick },
-                { "SNARE",  LaneSnare,     LaneSnareRoll },
-                { "HATS",   LaneHatClosed, LaneHatBell },
-                { "RIDE",   LaneRideBow,   LaneRideCrash },
-                { "CRASH",  LaneCrashL,    LaneSplash },
-                { "TOMS",   LaneTom1,      LaneTom4 },
-                { "PERC",   LanePerc,      LanePerc }
-            };
-
-            for (const auto& spec : specs)
+            for (const auto& spec : pieceGroups())
             {
                 LaneGroup group;
-                for (int lane = spec.first; lane <= spec.last; ++lane)
-                    group.lanes.push_back (lane);
+                group.lanes = spec.lanes;
 
                 const auto lanes = group.lanes;
                 const auto flip = [this, lanes] (bool ghost)

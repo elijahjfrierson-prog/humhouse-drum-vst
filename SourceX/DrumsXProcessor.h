@@ -177,6 +177,20 @@ namespace hhx
         void setSectionBars (int index, int bars);
         void setSectionType (int index, int section);
 
+        /** Which kit pieces the block plays. The strip's piece switches write
+            this for the selected block; the menu writes it for any block. */
+        std::uint32_t getSectionLanes (int index) const;
+        void setSectionLanes (int index, std::uint32_t laneMask);
+        /** Flip one kit-piece group (its lanes) in or out of one block. */
+        void toggleSectionPiece (int index, const std::vector<int>& lanes);
+
+        /** One click from "come in on kick and hats" to "chorus with the crashes
+            wide open": the block's pieces, dynamics and fills at once. */
+        enum class BlockPreset { kickHatsIntro, kickSnareIntro, tomsIntro, verse,
+                                 build, chorus, crashChorus, wholeKit };
+        void applyBlockPreset (int index, BlockPreset preset);
+        static const char* blockPresetName (BlockPreset preset);
+
         std::shared_ptr<const Timeline> getTimeline() const;
 
         // --- transport (standalone) --------------------------------------
@@ -193,6 +207,16 @@ namespace hhx
         float getManualStep (int lane, int step) const;
         void  clearManual();
         bool  isManualMode() const;
+
+        /** Drop a MIDI file on the grid: its notes land on the lanes they
+            address, quantised to the grid's sixteenths and folded into the
+            grid's two bars. Returns false when the file holds no drum notes. */
+        bool importManualMidi (const juce::File& source);
+        /** Drag the grid out of the plugin as its own two-bar MIDI file. */
+        bool exportManualMidi (const juce::File& dest) const;
+        /** True when any step is written, so the UI can tell an empty grid from
+            an edited one. */
+        bool hasManualNotes() const;
 
         // --- export ---------------------------------------------------------
         bool exportArrangementMidi (const juce::File& dest, int numBars) const;

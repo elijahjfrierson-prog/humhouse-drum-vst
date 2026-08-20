@@ -195,6 +195,17 @@ namespace hhx
         return -1;
     }
 
+    int noteToLane (int note)
+    {
+        // The HumHouse map is one note per articulation, so an exported file
+        // round-trips exactly; anything written against the GM map still lands
+        // on the right piece.
+        for (int lane = 0; lane < NumLanes; ++lane)
+            if (laneToNote (lane) == note)
+                return lane;
+        return gmNoteToLane (note);
+    }
+
     bool GrooveCorpus::loadFromMemory (const void* data, std::size_t numBytes)
     {
         loaded = false;

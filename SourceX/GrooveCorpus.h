@@ -90,6 +90,9 @@ namespace hhx
     /** The HumHouse drum map: one distinct note per articulation, used when the
         plugin emits or exports MIDI. */
     int laneToNote (int lane);
+    /** The reverse of laneToNote, falling back to the GM map. -1 when the note
+        addresses no piece on the kit. */
+    int noteToLane (int note);
 
     /** A drum hit ready to play: absolute beat inside the rendered timeline.
 

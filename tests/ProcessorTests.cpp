@@ -375,6 +375,105 @@ int main()
                "each block's pieces are saved with the project");
     }
 
+    // 3c-ii. Block presets and the block's piece menu: one click writes an
+    //        intro that comes in on kick and hats, or a chorus with the crashes
+    //        wide open, and only that block moves.
+    {
+        hhx::DrumsXProcessor song;
+        song.prepareToPlay (48000.0, 128);
+        for (int i = 0; i < 2; ++i)
+            song.addSection();
+        song.setSelectedSection (1);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+        const auto before = song.getArrangement();
+        song.applyBlockPreset (0, hhx::DrumsXProcessor::BlockPreset::kickHatsIntro);
+        song.applyBlockPreset (2, hhx::DrumsXProcessor::BlockPreset::crashChorus);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+        auto blocks = song.getArrangement();
+        const auto plays = [] (const hhx::ArrangementSection& sec, int lane)
+        { return (sec.laneMask & (1u << lane)) != 0; };
+
+        check (blocks[0].section == hhx::SectionIntro
+               && plays (blocks[0], hhx::LaneKick)
+               && plays (blocks[0], hhx::LaneHatClosed)
+               && ! plays (blocks[0], hhx::LaneSnare)
+               && ! plays (blocks[0], hhx::LaneCrashL),
+               "the kick-and-hats intro preset plays those pieces and no others");
+        check (blocks[2].section == hhx::SectionChorus
+               && plays (blocks[2], hhx::LaneCrashL)
+               && blocks[2].velocity > blocks[0].velocity + 0.3f
+               && blocks[2].fillAmount > blocks[0].fillAmount,
+               "the crash chorus preset opens the whole kit up and plays it harder");
+        check (std::abs (blocks[1].velocity - before[1].velocity) < 0.001f
+               && blocks[1].laneMask == before[1].laneMask,
+               "a preset leaves the block next to it alone");
+
+        // The same piece groups the menu offers, toggled on one block only.
+        const std::vector<int> hats { hhx::LaneHatClosed, hhx::LaneHatTight, hhx::LaneHatOpen1,
+                                      hhx::LaneHatOpen2, hhx::LaneHatOpen3, hhx::LaneHatOpen4,
+                                      hhx::LaneHatPedal, hhx::LaneHatSplash, hhx::LaneHatBell };
+        song.toggleSectionPiece (0, hats);
+        blocks = song.getArrangement();
+        check (! plays (blocks[0], hhx::LaneHatClosed) && plays (blocks[0], hhx::LaneKick),
+               "toggling a piece off a block takes all of its articulations out");
+        song.toggleSectionPiece (0, hats);
+        blocks = song.getArrangement();
+        check (plays (blocks[0], hhx::LaneHatOpen2),
+               "toggling it back on returns the whole group");
+
+        // A preset on the selected block also has to reach the knobs, or the UI
+        // would keep showing the old dynamics.
+        song.applyBlockPreset (1, hhx::DrumsXProcessor::BlockPreset::tomsIntro);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        const auto* tomOn = song.getAPVTS().getRawParameterValue (hhx::pid::laneEnable (hhx::LaneTom1));
+        const auto* hatOn = song.getAPVTS().getRawParameterValue (hhx::pid::laneEnable (hhx::LaneHatClosed));
+        check (tomOn != nullptr && hatOn != nullptr
+               && tomOn->load() > 0.5f && hatOn->load() < 0.5f,
+               "a preset on the selected block moves its piece switches too");
+    }
+
+    // 3c-iii. The manual grid takes a MIDI file dropped on it and drags its own
+    //         pattern back out, so a pattern can be moved between the plugin
+    //         and the host without the arrangement coming with it.
+    {
+        hhx::DrumsXProcessor proc;
+        proc.prepareToPlay (48000.0, 128);
+        check (! proc.hasManualNotes(), "an untouched grid holds no notes");
+
+        proc.setManualStep (hhx::LaneKick, 0, 1.0f);
+        proc.setManualStep (hhx::LaneSnare, 8, 0.75f);
+        proc.setManualStep (hhx::LaneHatClosed, 30, 0.5f);
+        check (proc.hasManualNotes(), "the grid knows it has been written");
+
+        const auto dest = juce::File::createTempFile ("hhx_pattern.mid");
+        check (proc.exportManualMidi (dest) && dest.getSize() > 0,
+               "the grid drags out as a MIDI file");
+
+        hhx::DrumsXProcessor dropped;
+        dropped.prepareToPlay (48000.0, 128);
+        check (dropped.importManualMidi (dest), "that file drops back onto a grid");
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+        check (dropped.getManualStep (hhx::LaneKick, 0) > 0.9f
+               && dropped.getManualStep (hhx::LaneSnare, 8) > 0.6f
+               && dropped.getManualStep (hhx::LaneHatClosed, 30) > 0.35f,
+               "every note lands on the lane and step it was written on");
+        check (dropped.getManualStep (hhx::LaneKick, 1) == 0.0f,
+               "nothing else is written");
+        check (dropped.isManualMode(), "a dropped pattern is switched on to play");
+
+        const auto notMidi = juce::File::createTempFile ("hhx_not.mid");
+        notMidi.replaceWithText ("this is not a MIDI file");
+        check (! dropped.importManualMidi (notMidi)
+               && dropped.getManualStep (hhx::LaneKick, 0) > 0.9f,
+               "a file that holds no drum notes is refused and changes nothing");
+
+        dest.deleteFile();
+        notMidi.deleteFile();
+    }
+
     // 3d. The mix chain: the production voicings change how the kit is seated
     //     without ever handing the host a clipped buffer, and the same settings
     //     always render the same audio.

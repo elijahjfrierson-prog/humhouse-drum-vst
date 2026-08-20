@@ -59,6 +59,10 @@ namespace hhx
         could not be written or a drag is already running. */
     bool startMidiDrag (juce::Component& source, DrumsXProcessor&, int numBars);
 
+    /** The same for the manual grid: drags the two-bar pattern out on its own,
+        so the edited pattern can be dropped straight into a track. */
+    bool startManualMidiDrag (juce::Component& source, DrumsXProcessor&);
+
     /** True while an external MIDI drag is in flight, so the component that
         started it can swallow the click that would otherwise follow. */
     bool midiDragInProgress();
@@ -114,8 +118,13 @@ namespace hhx
 
         A gesture stays on the cell it started in unless the pointer really
         travels to another one, and it never writes the same cell twice, so a
-        small hand movement no longer sprays notes across the kit. */
-    class ManualPatternGrid : public juce::Component
+        small hand movement no longer sprays notes across the kit.
+
+        A note can also be picked up and dropped on another cell, a MIDI file
+        dropped on the grid becomes the pattern, and dragging off the grid drops
+        the pattern into the host as MIDI. */
+    class ManualPatternGrid : public juce::Component,
+                              public juce::FileDragAndDropTarget
     {
     public:
         explicit ManualPatternGrid (DrumsXProcessor&);
@@ -125,6 +134,11 @@ namespace hhx
         void mouseDrag (const juce::MouseEvent&) override;
         void mouseUp (const juce::MouseEvent&) override;
 
+        bool isInterestedInFileDrag (const juce::StringArray& files) override;
+        void fileDragEnter (const juce::StringArray&, int, int) override;
+        void fileDragExit (const juce::StringArray&) override;
+        void filesDropped (const juce::StringArray& files, int x, int y) override;
+
     private:
         bool cellAt (juce::Point<int> p, int& lane, int& step) const;
 
@@ -132,7 +146,10 @@ namespace hhx
         int   gestureLane = -1, gestureStep = -1;
         bool  erasing = false;
         bool  adjusting = false;          // dragging one note's velocity
+        bool  moving = false;             // carrying a note to another cell
+        bool  draggedOut = false;         // this gesture left as a MIDI file
         float gestureValue = 0.0f;
+        bool  fileOver = false;           // a MIDI file is hovering the grid
     };
 
     /** Drag this out of the plugin to drop the arrangement into the host as a

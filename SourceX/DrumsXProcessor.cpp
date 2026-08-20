@@ -923,6 +923,174 @@ namespace hhx
         updateHostDisplay();
     }
 
+    namespace
+    {
+        std::uint32_t lanesMask (std::initializer_list<int> lanes)
+        {
+            std::uint32_t m = 0;
+            for (const int lane : lanes)
+                m |= (1u << lane);
+            return m;
+        }
+
+        std::uint32_t rangeMask (int first, int last)
+        {
+            std::uint32_t m = 0;
+            for (int lane = first; lane <= last; ++lane)
+                m |= (1u << lane);
+            return m;
+        }
+
+        std::uint32_t kickMask()  { return lanesMask ({ LaneKick }); }
+        std::uint32_t snareMask() { return rangeMask (LaneSnare, LaneSnareRoll); }
+        std::uint32_t hatMask()   { return rangeMask (LaneHatClosed, LaneHatBell); }
+        std::uint32_t rideMask()  { return rangeMask (LaneRideBow, LaneRideCrash); }
+        std::uint32_t crashMask() { return rangeMask (LaneCrashL, LaneSplash); }
+        std::uint32_t tomMask()   { return rangeMask (LaneTom1, LaneTom4); }
+    }
+
+    const char* DrumsXProcessor::blockPresetName (BlockPreset preset)
+    {
+        switch (preset)
+        {
+            case BlockPreset::kickHatsIntro:  return "Intro: kick and hats";
+            case BlockPreset::kickSnareIntro: return "Intro: kick and snare";
+            case BlockPreset::tomsIntro:      return "Intro: toms";
+            case BlockPreset::verse:          return "Verse: full kit, held back";
+            case BlockPreset::build:          return "Build: ride, rising";
+            case BlockPreset::chorus:         return "Chorus: full kit";
+            case BlockPreset::crashChorus:    return "Chorus: crashes wide open";
+            case BlockPreset::wholeKit:       return "Whole kit";
+        }
+        return "Whole kit";
+    }
+
+    void DrumsXProcessor::applyBlockPreset (int index, BlockPreset preset)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            if (index < 0 || index >= (int) arrangement.size())
+                return;
+
+            auto& sec = arrangement[(std::size_t) index];
+            const auto everything = 0xFFFFFFFFu;
+
+            switch (preset)
+            {
+                case BlockPreset::kickHatsIntro:
+                    sec.section    = SectionIntro;
+                    sec.laneMask   = kickMask() | hatMask();
+                    sec.velocity   = 0.45f;
+                    sec.intensity  = 0.25f;
+                    sec.complexity = 0.25f;
+                    sec.fillAmount = 0.15f;
+                    break;
+                case BlockPreset::kickSnareIntro:
+                    sec.section    = SectionIntro;
+                    sec.laneMask   = kickMask() | snareMask();
+                    sec.velocity   = 0.5f;
+                    sec.intensity  = 0.3f;
+                    sec.complexity = 0.25f;
+                    sec.fillAmount = 0.2f;
+                    break;
+                case BlockPreset::tomsIntro:
+                    sec.section    = SectionIntro;
+                    sec.laneMask   = kickMask() | tomMask();
+                    sec.velocity   = 0.55f;
+                    sec.intensity  = 0.35f;
+                    sec.complexity = 0.4f;
+                    sec.fillAmount = 0.25f;
+                    break;
+                case BlockPreset::verse:
+                    sec.section    = SectionVerse;
+                    sec.laneMask   = everything & ~crashMask();
+                    sec.velocity   = 0.6f;
+                    sec.intensity  = 0.45f;
+                    sec.complexity = 0.4f;
+                    sec.fillAmount = 0.3f;
+                    break;
+                case BlockPreset::build:
+                    sec.section    = SectionBridge;
+                    sec.laneMask   = kickMask() | snareMask() | rideMask() | tomMask();
+                    sec.velocity   = 0.7f;
+                    sec.intensity  = 0.6f;
+                    sec.complexity = 0.55f;
+                    sec.fillAmount = 0.5f;
+                    break;
+                case BlockPreset::chorus:
+                    sec.section    = SectionChorus;
+                    sec.laneMask   = everything;
+                    sec.velocity   = 0.85f;
+                    sec.intensity  = 0.8f;
+                    sec.complexity = 0.6f;
+                    sec.fillAmount = 0.55f;
+                    break;
+                case BlockPreset::crashChorus:
+                    sec.section    = SectionChorus;
+                    sec.laneMask   = everything;
+                    sec.velocity   = 1.0f;
+                    sec.intensity  = 1.0f;
+                    sec.complexity = 0.75f;
+                    sec.fillAmount = 0.8f;
+                    break;
+                case BlockPreset::wholeKit:
+                    sec.laneMask   = everything;
+                    break;
+            }
+
+            // A preset says which pieces play, never which are demoted to
+            // ghost strokes: that stays the player's choice.
+            sec.ghostMask &= sec.laneMask;
+        }
+
+        if (index == selectedSection.load())
+            pushSectionToParams (index);
+
+        rebuildTimeline();
+        updateHostDisplay();
+    }
+
+    std::uint32_t DrumsXProcessor::getSectionLanes (int index) const
+    {
+        const juce::SpinLock::ScopedLockType sl (sectionLock);
+        if (index < 0 || index >= (int) arrangement.size())
+            return 0xFFFFFFFFu;
+        return arrangement[(std::size_t) index].laneMask;
+    }
+
+    void DrumsXProcessor::setSectionLanes (int index, std::uint32_t laneMask)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            if (index < 0 || index >= (int) arrangement.size())
+                return;
+            auto& sec = arrangement[(std::size_t) index];
+            sec.laneMask  = laneMask;
+            sec.ghostMask &= laneMask;
+        }
+
+        if (index == selectedSection.load())
+            pushSectionToParams (index);
+
+        rebuildTimeline();
+        updateHostDisplay();
+    }
+
+    void DrumsXProcessor::toggleSectionPiece (int index, const std::vector<int>& lanes)
+    {
+        if (lanes.empty())
+            return;
+
+        std::uint32_t group = 0;
+        for (const int lane : lanes)
+            if (lane >= 0 && lane < NumLanes)
+                group |= (1u << lane);
+
+        const auto current = getSectionLanes (index);
+        const bool on = (current & group) != 0;
+        setSectionLanes (index, on ? (current & ~group) : (current | group));
+    }
+
     void DrumsXProcessor::setSections (std::vector<SectionSpan> spans)
     {
         {
@@ -984,6 +1152,131 @@ namespace hhx
                 lane.fill (0.0f);
         }
         triggerAsyncUpdate();
+    }
+
+    bool DrumsXProcessor::hasManualNotes() const
+    {
+        const std::lock_guard<std::mutex> lock (manualMutex);
+        for (const auto& lane : manualGrid)
+            for (const float v : lane)
+                if (v > 0.0f)
+                    return true;
+        return false;
+    }
+
+    bool DrumsXProcessor::importManualMidi (const juce::File& source)
+    {
+        auto stream = source.createInputStream();
+        if (stream == nullptr)
+            return false;
+
+        juce::MidiFile file;
+        if (! file.readFrom (*stream))
+            return false;
+
+        const int format = file.getTimeFormat();
+        if (format <= 0)                       // SMPTE files carry no musical grid
+            return false;
+        const double ticksPerQuarter = (double) format;
+
+        std::array<std::array<float, kManualSteps>, NumLanes> grid {};
+        bool any = false;
+
+        for (int t = 0; t < file.getNumTracks(); ++t)
+        {
+            const auto* track = file.getTrack (t);
+            if (track == nullptr)
+                continue;
+
+            for (int e = 0; e < track->getNumEvents(); ++e)
+            {
+                const auto& msg = track->getEventPointer (e)->message;
+                if (! msg.isNoteOn())
+                    continue;
+
+                const int lane = noteToLane (msg.getNoteNumber());
+                if (lane < 0)
+                    continue;
+
+                // Sixteenths, and anything past the grid's two bars wraps onto
+                // it, so dropping a longer loop still lands in time.
+                const double quarters = msg.getTimeStamp() / ticksPerQuarter;
+                int step = (int) std::llround (quarters * 4.0);
+                if (step < 0)
+                    continue;
+                step %= kManualSteps;
+
+                auto& cell = grid[(std::size_t) lane][(std::size_t) step];
+                cell = std::max (cell, juce::jlimit (0.1f, 1.0f, msg.getFloatVelocity()));
+                any = true;
+            }
+        }
+
+        if (! any)
+            return false;
+
+        {
+            const std::lock_guard<std::mutex> lock (manualMutex);
+            manualGrid = grid;
+        }
+
+        // A dropped pattern is meant to be played, so the page switches itself
+        // into manual mode rather than silently holding the notes.
+        if (auto* p = apvts.getParameter (pid::manualMode))
+            p->setValueNotifyingHost (1.0f);
+
+        rebuildTimeline();
+        updateHostDisplay();
+        return true;
+    }
+
+    bool DrumsXProcessor::exportManualMidi (const juce::File& dest) const
+    {
+        juce::MidiFile file;
+        file.setTicksPerQuarterNote (kTicksPerQuarter);
+
+        const auto s = buildSettings();
+        juce::MidiMessageSequence meta;
+        meta.addEvent (juce::MidiMessage::timeSignatureMetaEvent (s.timeSigNum, s.timeSigDen), 0.0);
+        meta.addEvent (juce::MidiMessage::tempoMetaEvent (
+            (int) std::llround (60'000'000.0 / lastBpm.load())), 0.0);
+        meta.addEvent (juce::MidiMessage::textMetaEvent (3, "HumHouse Drums X pattern"), 0.0);
+        file.addTrack (meta);
+
+        juce::MidiMessageSequence seq;
+        {
+            const std::lock_guard<std::mutex> lock (manualMutex);
+            for (int lane = 0; lane < NumLanes; ++lane)
+            {
+                for (int step = 0; step < kManualSteps; ++step)
+                {
+                    const float v = manualGrid[(std::size_t) lane][(std::size_t) step];
+                    if (v <= 0.0f)
+                        continue;
+
+                    const int    note = laneToMidiNote (lane);
+                    const double tick = (double) step * 0.25 * kTicksPerQuarter;
+                    const auto   vel  = (juce::uint8) juce::jlimit (1, 127, (int) std::lround (v * 127.0f));
+                    seq.addEvent (juce::MidiMessage::noteOn (10, note, vel), tick);
+                    seq.addEvent (juce::MidiMessage::noteOff (10, note), tick + kNoteTicks);
+                }
+            }
+        }
+        if (seq.getNumEvents() == 0)
+            return false;
+
+        seq.updateMatchedPairs();
+        seq.addEvent (juce::MidiMessage::textMetaEvent (3, "Drums"), 0.0);
+        file.addTrack (seq);
+
+        dest.getParentDirectory().createDirectory();
+        if (auto stream = dest.createOutputStream())
+        {
+            stream->setPosition (0);
+            stream->truncate();
+            return file.writeTo (*stream);
+        }
+        return false;
     }
 
     //==============================================================================
