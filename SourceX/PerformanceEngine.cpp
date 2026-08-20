@@ -175,12 +175,17 @@ namespace hhx
         int pos = wrap (bar, total);
 
         const ArrangementSection* found = &base.arrangement.back();
-        for (const auto& sec : base.arrangement)
+        const ArrangementSection* next  = &base.arrangement.front();
+        int barsInBlock = std::max (1, found->numBars);
+        for (std::size_t i = 0; i < base.arrangement.size(); ++i)
         {
+            const auto& sec = base.arrangement[i];
             const int n = std::max (1, sec.numBars);
             if (pos < n)
             {
-                found = &sec;
+                found       = &sec;
+                barsInBlock = n;
+                next        = &base.arrangement[(i + 1) % base.arrangement.size()];
                 break;
             }
             pos -= n;
@@ -209,6 +214,28 @@ namespace hhx
         // repeat live is the fills, the round robins and the humanisation,
         // which all move with the bar.
         out.sectionSalt     = 0x9E3779B1ull * (std::uint64_t) (found->section + 1);
+
+        // Which part is played belongs to the song, not to the block: the pad
+        // decides it once and every block plays that same part, so an intro is
+        // the verse held back rather than a different groove.
+        out.songComplexity = base.complexity;
+        out.songIntensity  = base.intensity;
+
+        // A drummer arrives at the next section instead of stepping into it, so
+        // the run-in to a block leans towards how hard that block is played: a
+        // chorus is grown into over the bars before it, and the verse after one
+        // is come down to rather than dropped into.
+        if (next != found)
+        {
+            const int lead = std::min (4, barsInBlock);
+            const int into = pos - (barsInBlock - lead);   // 0-based within the run-in
+            if (into >= 0)
+            {
+                const float t = ((float) into + 1.0f) / (float) lead;
+                out.sectionVelocity += 0.7f * t * (next->velocity - found->velocity);
+            }
+        }
+        out.sectionVelocity = std::clamp (out.sectionVelocity, 0.0f, 1.0f);
         return out;
     }
 
@@ -298,14 +325,21 @@ namespace hhx
                                                                std::uint64_t seed) const
     {
         Sources out;
+        (void) phraseIndex;   // the part is the song's, not the phrase's
 
-        const int section = sectionAtBar (s, phraseIndex * std::max (1, s.phraseBars));
+        // The part is looked up at the song's pad position, never the block's.
+        // A block that is quieter or busier than the song plays the same take
+        // harder or softer; it does not fetch a different one, which is what
+        // used to make an intro and the verse after it sound like two songs.
+        PerformanceSettings song = s;
+        if (s.songComplexity >= 0.0f) song.complexity = s.songComplexity;
+        if (s.songIntensity  >= 0.0f) song.intensity  = s.songIntensity;
 
         float cx = 0.0f, in = 0.0f;
-        corpusTarget (s, cx, in);
+        corpusTarget (song, cx, in);
         // A wide shortlist so the heavy corner of the pad has real dense takes
         // to draw from, not only whatever happens to sit nearest to it.
-        const auto ranked = corpus->neighbours (cx, in, characterMask (s),
+        const auto ranked = corpus->neighbours (cx, in, characterMask (song),
                                                 std::max (1, s.phraseBars), 24,
                                                 s.timeSigNum, s.timeSigDen);
         if (ranked.empty())
@@ -322,7 +356,7 @@ namespace hhx
 
         std::vector<int> dense;
         {
-            const float floorPerBar = 0.55f * densityCap (s);
+            const float floorPerBar = 0.55f * densityCap (song);
             for (const int i : ranked)
                 if (perBar (i) >= floorPerBar)
                     dense.push_back (i);
@@ -350,12 +384,13 @@ namespace hhx
         const int n = std::min (12, (int) pool.size());
         float weights[12] {};
         float total = 0.0f;
+        // Deliberately blind to which section is playing: a take tagged
+        // "chorus" is not a different song from the one tagged "verse", and
+        // preferring it per block is what used to swap the part underneath the
+        // listener at every section boundary.
         for (int i = 0; i < n; ++i)
         {
-            float w = 1.0f / (1.0f + (float) i * 0.55f);
-            if (section >= 0 && corpus->beat (pool[(std::size_t) i]).section
-                                    == (std::uint8_t) section)
-                w *= 2.0f;
+            const float w = 1.0f / (1.0f + (float) i * 0.55f);
             weights[i] = w;
             total += w;
         }
@@ -386,7 +421,7 @@ namespace hhx
         const int shortlist = std::min (n, 4);
         int order[4] { 0, 1, 2, 3 };
         {
-            const float wanted = 0.9f * densityCap (s);
+            const float wanted = 0.9f * densityCap (song);
             std::stable_sort (order, order + shortlist,
                               [&] (int a, int b)
                               {
@@ -399,8 +434,12 @@ namespace hhx
         int primary = order[wrap ((int) (rand01 (songSeed (s), 0x5Bu) * (float) choices)
                                   + s.variationRhythm, choices)];
         {
-            const auto& song  = corpus->beat (pool[(std::size_t) primary]);
-            const int   start = wrap (primary + 1 + (int) (rand01 (seed, 0x9Du) * 3.0f), n);
+            const auto& part  = corpus->beat (pool[(std::size_t) primary]);
+            // The step to a neighbouring take is drawn from the song too, so it
+            // is the song that has a slightly different favourite - not each
+            // block picking its own.
+            const int   start = wrap (primary + 1
+                                      + (int) (rand01 (songSeed (s), 0x9Du) * 3.0f), n);
             for (int step = 0; step < n; ++step)
             {
                 const int i = wrap (start + step, n);
@@ -408,12 +447,12 @@ namespace hhx
                     break;
 
                 const auto& other = corpus->beat (pool[(std::size_t) i]);
-                if (other.bars != song.bars || other.sigNum != song.sigNum
-                    || other.sigDen != song.sigDen
-                    || (other.charMask & song.charMask) == 0)
+                if (other.bars != part.bars || other.sigNum != part.sigNum
+                    || other.sigDen != part.sigDen
+                    || (other.charMask & part.charMask) == 0)
                     continue;
-                if (std::abs (other.complexity - song.complexity) > 0.10f
-                    || std::abs (other.swing - song.swing) > 0.10f)
+                if (std::abs (other.complexity - part.complexity) > 0.10f
+                    || std::abs (other.swing - part.swing) > 0.10f)
                     continue;
                 // And it has to be as good a match for where the pad is sitting
                 // as the song's own take, or the section would drift away from
@@ -1157,10 +1196,26 @@ namespace hhx
 
         const int   bars        = std::max (1, base.phraseBars);
         // Whichever arrangement block owns this phrase supplies its settings.
-        const PerformanceSettings s = settingsForBar (base, phraseIndex * bars);
+        PerformanceSettings s   = settingsForBar (base, phraseIndex * bars);
         const float dstBar      = std::max (1.0f, s.beatsPerBar);
         const float phraseBeats = dstBar * (float) bars;
         const std::uint64_t seed = mix (blockSeed (s) ^ mix ((std::uint64_t) phraseIndex + 1));
+
+        // An intro comes in on the kick and the hats: the same groove with the
+        // backbeat and the toms left out, which is the vibe without having to
+        // build it by hand. Touching that block's kit switches - or the pad -
+        // hands the decision straight back to the user, and the fill that runs
+        // into the verse still plays the whole kit.
+        if (sectionAtBar (s, phraseIndex * bars) == SectionIntro
+            && (s.laneMask == 0xFFFFFFFFu || s.laneMask == (1u << NumLanes) - 1u))
+        {
+            std::uint32_t intro = 1u << LaneKick;
+            for (int lane = 0; lane < NumLanes; ++lane)
+                if (isHatLane (lane) || lane == LaneCrashL || lane == LaneCrashR
+                    || (s.rideInsteadOfHat && isRideLane (lane)))
+                    intro |= 1u << lane;
+            s.laneMask = intro;
+        }
 
         // --- section colouring -------------------------------------------
         PerformanceSettings sec = s;
@@ -1171,7 +1226,6 @@ namespace hhx
                 // step across the pad would fetch a different song entirely.
                 sec.complexity *= 0.92f;
                 sec.sectionVelocity *= 0.82f;
-                sec.rideInsteadOfHat = true;
                 break;
             case SectionChorus:
                 sec.sectionVelocity = std::min (1.0f, sec.sectionVelocity + 0.10f);

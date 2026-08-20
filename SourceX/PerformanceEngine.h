@@ -61,6 +61,13 @@ namespace hhx
         float complexity   = 0.45f;   // pad X: which take is picked
         float intensity    = 0.55f;   // pad Y: which take is picked
         float sectionVelocity = 0.55f; // Intensity knob: how hard it is played
+
+        /** The song's own pad position. The part is chosen from this, so every
+            block of the arrangement plays the same part and the block's own
+            knobs only decide how hard and how busy it is played. Negative
+            means "there is no arrangement": use complexity/intensity. */
+        float songComplexity = -1.0f;
+        float songIntensity  = -1.0f;
         int   character    = 1;        // index into the corpus character table
 
         // --- fills ------------------------------------------------------

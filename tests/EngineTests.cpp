@@ -457,7 +457,10 @@ int main (int argc, char** argv)
             }
             return out;
         };
-        check (sameHits (barsOnly (before, 0, 8), barsOnly (after, 0, 8)),
+        // Up to its run-in: the last four bars of a block are played towards
+        // how hard the next one is, so editing a block is meant to change how
+        // the bars before it arrive at it. Everything earlier is untouched.
+        check (sameHits (barsOnly (before, 0, 4), barsOnly (after, 0, 4)),
                "editing a block leaves the block before it untouched");
         // Everything past the downbeat the previous block's fill resolves onto:
         // that crash belongs to the fill, so it is the one note a neighbour may
@@ -478,7 +481,10 @@ int main (int argc, char** argv)
         // Appending never rewrites what came before it: the "+" button is safe.
         auto grown = song;
         grown.arrangement.push_back ({ 4, 8, hhx::SectionOutro, 0.5f, 0.6f, 0.6f, 0.5f, 0.0f, false, 0, 0 });
-        check (sameHits (before, engine.renderBars (grown, 0, 24)),
+        // Again, bar for bar except the run-in the new last block is now
+        // arrived at: appending must not rewrite the song, only what leads
+        // into what follows it.
+        check (sameHits (barsOnly (before, 0, 20), barsOnly (engine.renderBars (grown, 0, 24), 0, 20)),
                "appending a block leaves the existing song identical");
         check (hhx::arrangementBars (grown.arrangement) == 32, "the appended block extends the song");
 
@@ -625,6 +631,103 @@ int main (int argc, char** argv)
         padUp.intensity = 0.95f;
         check (! sameHits (engine.renderBars (s, 0, 8), engine.renderBars (padUp, 0, 8)),
                "the pad still chooses a different take");
+    }
+
+    // 15c-ii. One song, not a playlist: intro, verse and chorus are the same
+    //         part played differently, the intro comes in on kick and hats, and
+    //         a block leans into how hard the next one is played.
+    {
+        // A bar's part, ignoring how hard it was hit and ignoring the crashes
+        // and fills that decorate it: kick and snare, on the beat grid.
+        const auto spine = [&] (const std::vector<hhx::Hit>& hits, int firstBar, int lastBar)
+        {
+            std::vector<std::string> out;
+            for (const auto& h : hits)
+            {
+                const int bar = (int) (h.beat / 4.0f);
+                if (bar < firstBar || bar >= lastBar)
+                    continue;
+                if (h.lane != hhx::LaneKick && ! hhx::isSnareLane (h.lane))
+                    continue;
+                const float inBar = h.beat - (float) bar * 4.0f;
+                out.push_back (std::to_string (h.lane == hhx::LaneKick ? 0 : 1) + "@"
+                               + std::to_string ((int) std::round (inBar * 4.0f)));
+            }
+            std::sort (out.begin(), out.end());
+            out.erase (std::unique (out.begin(), out.end()), out.end());
+            return out;
+        };
+        const auto overlap = [] (const std::vector<std::string>& a,
+                                 const std::vector<std::string>& b)
+        {
+            if (a.empty() || b.empty())
+                return 0.0;
+            std::vector<std::string> both;
+            std::set_intersection (a.begin(), a.end(), b.begin(), b.end(),
+                                   std::back_inserter (both));
+            return (double) both.size()
+                 / (double) std::max (a.size(), b.size());
+        };
+
+        auto song = s;
+        song.arrangement = { { 1, 4, hhx::SectionIntro,  0.45f, 0.5f,  0.35f, 0.2f, 0.0f, false, 0, 0 },
+                             { 2, 8, hhx::SectionVerse,  0.45f, 0.5f,  0.55f, 0.3f, 0.0f, false, 0, 0 },
+                             { 3, 8, hhx::SectionChorus, 0.6f,  0.85f, 0.95f, 0.5f, 0.0f, false, 0, 0 } };
+        const auto hits = engine.renderBars (song, 0, 20);
+
+        // Bars taken from the middle of each block, clear of the fills at the
+        // ends: the verse and the chorus are the same groove.
+        check (overlap (spine (hits, 5, 7), spine (hits, 13, 15)) >= 0.7,
+               "the chorus plays the verse's groove, not a different song");
+
+        // The intro is that same groove with the kit held back.
+        int introKick = 0, introHat = 0, introSnare = 0, introTom = 0;
+        for (const auto& h : hits)
+        {
+            if ((int) (h.beat / 4.0f) >= 3)     // the last intro bar hands over with a fill
+                continue;
+            if (h.lane == hhx::LaneKick)        ++introKick;
+            else if (hhx::isHatLane (h.lane))   ++introHat;
+            else if (hhx::isSnareLane (h.lane)) ++introSnare;
+            else if (hhx::isTomLane (h.lane))   ++introTom;
+        }
+        check (introKick > 0 && introHat > 0 && introSnare == 0 && introTom == 0,
+               "an intro comes in on kick and hats by default");
+
+        // Asking for the whole kit on that block is still the user's call.
+        auto wholeIntro = song;
+        wholeIntro.arrangement[0].laneMask = (1u << hhx::NumLanes) - 2u;   // all but the kick
+        int keptSnare = 0;
+        for (const auto& h : engine.renderBars (wholeIntro, 0, 4))
+            if (hhx::isSnareLane (h.lane))
+                ++keptSnare;
+        check (keptSnare > 0, "touching the intro's kit switches hands the choice back");
+
+        // The bars that run into the next block are played towards it: the same
+        // verse grows into a loud chorus and comes down into a quiet one, which
+        // is measured by turning the chorus down and nothing else.
+        const auto meanVelIn = [] (const std::vector<hhx::Hit>& in, int firstBar, int lastBar)
+        {
+            double sum = 0.0; int n = 0;
+            for (const auto& h : in)
+            {
+                const int bar = (int) (h.beat / 4.0f);
+                if (bar >= firstBar && bar < lastBar)
+                {
+                    sum += h.velocity;
+                    ++n;
+                }
+            }
+            return n == 0 ? 0.0 : sum / (double) n;
+        };
+        auto down = song;
+        down.arrangement[2].velocity = 0.15f;
+        const auto downHits = engine.renderBars (down, 0, 20);
+
+        check (meanVelIn (hits, 8, 12) > meanVelIn (downHits, 8, 12) + 4.0,
+               "a block leans into how hard the next one is played");
+        check (meanVelIn (hits, 4, 8) == meanVelIn (downHits, 4, 8),
+               "and the bars before that run-in are played the same either way");
     }
 
     // 15d. Density: the pad stays inside what a drummer would actually play,
