@@ -47,15 +47,17 @@ namespace hhx
         // a feel bias - not a different note generator. That is exactly how
         // Logic's drummers differ from one another.
         static const std::vector<Character> c {
-            { "Ethan  -  Pop Rock",    0, 0.35f, 0.45f, 0.06f, 0.55f, 0.10f, false },
-            { "Nikki  -  Retro Rock",  1, 0.45f, 0.50f, 0.18f, 0.70f, 0.05f, false },
-            { "Jesse  -  Hard Rock",   2, 0.55f, 0.78f, 0.00f, 0.35f, 0.20f, false },
-            { "Max    -  Punk Rock",   3, 0.72f, 0.90f, 0.00f, 0.20f, 0.35f, false },
-            { "Kane   -  Metal",       4, 0.80f, 0.95f, 0.00f, 0.15f, 0.20f, false },
-            { "Ruby   -  Shuffle",     5, 0.50f, 0.55f, 0.55f, 0.75f, 0.05f, false },
-            { "Cole   -  Half Time",   6, 0.40f, 0.70f, 0.08f, 0.45f, 0.10f, false },
-            { "Logan  -  Roots Rock",  7, 0.45f, 0.58f, 0.14f, 0.62f, 0.10f, false },
-            { "Darcy  -  Prog",        8, 0.72f, 0.66f, 0.05f, 0.55f, 0.15f, true  },
+            { "Ethan  -  Pop Rock",    0, 0.35f, 0.45f, 0.06f, 0.55f, 0.10f, false, false },
+            { "Nikki  -  Retro Rock",  1, 0.45f, 0.50f, 0.18f, 0.70f, 0.05f, false, false },
+            { "Jesse  -  Hard Rock",   2, 0.55f, 0.78f, 0.00f, 0.35f, 0.20f, false, false },
+            { "Max    -  Punk Rock",   3, 0.72f, 0.90f, 0.00f, 0.20f, 0.35f, false, false },
+            { "Kane   -  Metal",       4, 0.80f, 0.95f, 0.00f, 0.15f, 0.20f, false, false },
+            { "Ruby   -  Shuffle",     5, 0.50f, 0.55f, 0.55f, 0.75f, 0.05f, false, false },
+            // Cole is the half-time drummer: picking him plays half time, it is
+            // not a bias the groove search can talk him out of.
+            { "Cole   -  Half Time",   6, 0.40f, 0.70f, 0.08f, 0.45f, 0.10f, false, true  },
+            { "Logan  -  Roots Rock",  7, 0.45f, 0.58f, 0.14f, 0.62f, 0.10f, false, false },
+            { "Darcy  -  Prog",        8, 0.72f, 0.66f, 0.05f, 0.55f, 0.15f, true,  false },
         };
         return c;
     }
@@ -113,10 +115,13 @@ namespace hhx
         const auto semiStr = [] (float v, int) { return String (v, 2) + " st"; };
 
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::complexity, 1 },
-                                                           "Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.45f,
+                                                           // Opens on the simple side, a little above the middle for
+                                                           // loudness: a plain groove played with weight, which is
+                                                           // where a session starts rather than in the busy corner.
+                                                           "Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.28f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::intensity, 1 },
-                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
+                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.62f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::sectionLevel, 1 },
                                                            "Section Intensity", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
@@ -182,6 +187,11 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterInt> (ParameterID { pid::variationCymbal, 1 },
                                                          "Hat / Ride Variation", 0, 7, 0));
         layout.add (std::make_unique<AudioParameterBool> (ParameterID { pid::manualMode, 1 }, "Manual Pattern", false));
+        // How the drummer is started. "Always Play" is the old behaviour; the
+        // other two put the host's MIDI in charge, so the kit can enter at bar
+        // 8 of a song, or play notes drawn in the DAW's piano roll verbatim.
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::triggerMode, 1 }, "Trigger",
+                                                            StringArray { "Always Play", "When MIDI Held", "Play My Notes" }, 0));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::outputLevel, 1 },
                                                            "Output", NormalisableRange<float> (-24.0f, 12.0f, 0.1f), 0.0f));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::micBlend, 1 }, "Mic Blend",
@@ -221,6 +231,12 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::drive, 1 }, "Drive",
                                                            NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.2f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::squeeze, 1 }, "Squeeze",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::squeezeGlow, 1 }, "Glow",
+                                                           StringArray { "Off", "Clean", "Tube", "Tape", "Transformer" },
+                                                           KitEngine::GlowClean));
 
         for (int lane = 0; lane < NumLanes; ++lane)
         {
@@ -320,7 +336,7 @@ namespace hhx
                  || id == pid::roomSpace || id == pid::roomDuck)
             pushRoomParameters();
         else if (id == pid::mixVoicing || id == pid::punch || id == pid::glue
-                 || id == pid::drive)
+                 || id == pid::drive || id == pid::squeeze || id == pid::squeezeGlow)
             pushMixParameters();
 
         // A performance knob edits the block that is selected, and only that
@@ -560,6 +576,8 @@ namespace hhx
         kit.setPunch (load (pid::punch));
         kit.setGlue (load (pid::glue));
         kit.setDrive (load (pid::drive));
+        kit.setSqueeze (load (pid::squeeze));
+        kit.setSqueezeGlow ((int) std::lround (load (pid::squeezeGlow)));
     }
 
     void DrumsXProcessor::rebuildTimeline()
@@ -610,6 +628,7 @@ namespace hhx
         set (pid::ghost,       c.ghost);
         set (pid::hatOpenness, c.hatOpenness);
         set (pid::rideMode,    c.ride ? 1.0f : 0.0f);
+        set (pid::halfTime,    c.halfTime ? 1.0f : 0.0f);
     }
 
     PerformanceSettings DrumsXProcessor::buildSettings() const
@@ -647,7 +666,8 @@ namespace hhx
         s.ghostAmount    = get (pid::ghost);
         s.hatOpenness    = get (pid::hatOpenness);
         s.rideInsteadOfHat = get (pid::rideMode) > 0.5f;
-        s.halfTime       = get (pid::halfTime) > 0.5f;
+        s.halfTime       = get (pid::halfTime) > 0.5f
+                        || characters()[(std::size_t) charIdx].halfTime;
 
         const int phraseChoice = (int) get (pid::phraseBars);
         s.phraseBars     = phraseChoice == 0 ? 1 : (phraseChoice == 1 ? 2 : 4);
@@ -1287,28 +1307,55 @@ namespace hhx
         if (! isManualMode())
             return engine.renderBars (s, startBar, numBars);
 
-        // Manual mode plays the user's grid verbatim, looping every two bars.
-        // Nothing the generator does can touch it.
+        // Manual mode plays the pattern the player wrote, but plays it the way
+        // a drummer would rather than looping it: the notes are theirs, while
+        // the fills at the phrase ends, the piece switches of the block and its
+        // section loudness come from the arrangement. Nothing is added inside
+        // the bar, so what is written is what is heard.
         std::vector<Hit> out;
         const std::lock_guard<std::mutex> lock (manualMutex);
+        const int phraseBars = juce::jmax (1, s.phraseBars);
+
         for (int bar = 0; bar < numBars; ++bar)
         {
-            const int  sourceBar = (startBar + bar) % kManualBars;
-            const float barStart = (float) (startBar + bar) * s.beatsPerBar;
+            const int   absBar   = startBar + bar;
+            const auto  sec      = engine.settingsForBar (s, absBar);
+            const int   sourceBar = absBar % kManualBars;
+            const float barStart = (float) absBar * s.beatsPerBar;
+
+            // Where this bar sits in its phrase decides whether it hands over
+            // with a fill, and the block's own loudness scales the strokes.
+            const int   phrase   = absBar / phraseBars;
+            const bool  lastBar  = ((absBar + 1) % phraseBars) == 0;
+            const float fillBeats = lastBar
+                                  ? std::min (s.beatsPerBar,
+                                              s.beatsPerBar * juce::jmax (0.5f, s.fillLengthBars))
+                                  : 0.0f;
+            const auto  fill = fillBeats > 0.0f ? engine.fillForPhrase (s, phrase, fillBeats)
+                                                : std::vector<Hit> {};
+            const float fillStart = s.beatsPerBar - fillBeats;
+            const float level = 0.72f + 0.5f * juce::jlimit (0.0f, 1.0f, sec.sectionVelocity);
+
             for (int lane = 0; lane < NumLanes; ++lane)
             {
-                if ((s.laneMask & (1u << lane)) == 0)
+                if ((sec.laneMask & (1u << lane)) == 0)
                     continue;
                 for (int step = 0; step < 16; ++step)
                 {
                     const float v = manualGrid[(std::size_t) lane][(std::size_t) (sourceBar * 16 + step)];
                     if (v <= 0.0f)
                         continue;
-                    const float beat = barStart + s.beatsPerBar * ((float) step / 16.0f);
-                    out.push_back ({ beat, (std::uint8_t) lane,
-                                     (std::uint8_t) juce::jlimit (1, 127, juce::roundToInt (v * 127.0f)) });
+                    const float inBar = s.beatsPerBar * ((float) step / 16.0f);
+                    if (! fill.empty() && inBar >= fillStart - 0.01f)
+                        continue;               // the fill takes over the bar here
+                    out.push_back ({ barStart + inBar, (std::uint8_t) lane,
+                                     (std::uint8_t) juce::jlimit (1, 127,
+                                         juce::roundToInt (v * 127.0f * level)) });
                 }
             }
+
+            for (const auto& h : fill)
+                out.push_back ({ barStart + fillStart + h.beat, h.lane, h.velocity });
         }
         std::sort (out.begin(), out.end(), [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
         return out;
@@ -1348,10 +1395,113 @@ namespace hhx
     {
         juce::ScopedNoDenormals noDenormals;
         buffer.clear();
-        midi.clear();
 
         const double sampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
         const int    numSamples = buffer.getNumSamples();
+
+        const auto* triggerParam = apvts.getRawParameterValue (pid::triggerMode);
+        const int   trigger = triggerParam != nullptr ? (int) std::lround (triggerParam->load()) : 0;
+
+        // What the host is sending us decides whether the drummer plays at all,
+        // so the incoming notes are read before the buffer is reused for our
+        // own output. In "Play My Notes" they are the performance.
+        struct GateEdge { int offset; bool open; };
+        std::array<GateEdge, 32> edges {};
+        int numEdges = 0;
+
+        for (const auto meta : midi)
+        {
+            const auto msg = meta.getMessage();
+            const int  at  = juce::jlimit (0, juce::jmax (0, numSamples - 1), meta.samplePosition);
+
+            if (msg.isNoteOn())
+            {
+                ++heldNotes;
+            }
+            else if (msg.isNoteOff())
+            {
+                heldNotes = juce::jmax (0, heldNotes - 1);
+            }
+            else if (msg.isAllNotesOff() || msg.isAllSoundOff())
+            {
+                heldNotes = 0;
+            }
+            else
+            {
+                continue;
+            }
+
+            const bool wantOpen = heldNotes > 0;
+            if (wantOpen != gateOpen && numEdges < (int) edges.size())
+            {
+                gateOpen = wantOpen;
+                edges[(std::size_t) numEdges++] = { at, wantOpen };
+            }
+        }
+
+        // The kit's own strokes are played from the host's notes in "Play My
+        // Notes": the drawn part is the truth, we only voice it.
+        int numHostHits = 0;
+        std::array<PendingHit, 64> hostHits {};
+        if (trigger == 2)
+        {
+            for (const auto meta : midi)
+            {
+                const auto msg = meta.getMessage();
+                if (! msg.isNoteOn())
+                    continue;
+                const int lane = noteToLane (msg.getNoteNumber());
+                if (lane < 0 || numHostHits >= (int) hostHits.size())
+                    continue;
+                hostHits[(std::size_t) numHostHits++] =
+                    { juce::jlimit (0, juce::jmax (0, numSamples - 1), meta.samplePosition),
+                      (std::uint8_t) lane,
+                      (std::uint8_t) juce::jlimit (1, 127, (int) msg.getVelocity()),
+                      (std::uint8_t) 0 };
+            }
+        }
+
+        const bool gateAtBlockStart = numEdges > 0 ? ! edges[0].open : gateOpen;
+
+        /** Whether the drummer is allowed to strike at this point in the block. */
+        const auto gatedAt = [&] (int offset)
+        {
+            if (trigger == 0)
+                return true;
+            if (trigger == 2)
+                return false;
+            bool open = gateAtBlockStart;
+            for (int i = 0; i < numEdges; ++i)
+                if (edges[(std::size_t) i].offset <= offset)
+                    open = edges[(std::size_t) i].open;
+            return open;
+        };
+
+        midi.clear();
+
+        if (trigger == 2)
+        {
+            int cursor = 0;
+            for (int i = 0; i < numHostHits; ++i)
+            {
+                const auto& h = hostHits[(std::size_t) i];
+                if (h.offset > cursor)
+                {
+                    kit.renderNextBlock (buffer, cursor, h.offset - cursor);
+                    cursor = h.offset;
+                }
+                kit.noteOn (h.lane, (float) h.velocity / 127.0f, h.variant);
+                midi.addEvent (juce::MidiMessage::noteOn (10, laneToMidiNote (h.lane),
+                                                          (juce::uint8) h.velocity), h.offset);
+                midi.addEvent (juce::MidiMessage::noteOff (10, laneToMidiNote (h.lane)),
+                               juce::jmin (numSamples - 1, h.offset + 8));
+            }
+            if (cursor < numSamples)
+                kit.renderNextBlock (buffer, cursor, numSamples - cursor);
+
+            applyOutputStage (buffer);
+            return;
+        }
 
         const auto* tempoModeParam = apvts.getRawParameterValue (pid::tempoMode);
         const bool  manualTempo = tempoModeParam != nullptr && tempoModeParam->load() > 0.5f;
@@ -1434,6 +1584,12 @@ namespace hhx
 
                 const int offset = juce::jlimit (0, numSamples - 1,
                                                  (int) std::llround (((double) h.beat - timeOrigin) / beatsPerSample));
+                // Held-note trigger: strokes outside the held span are never
+                // struck, so the kit can enter at bar 8 of a song. Whatever is
+                // already ringing is left to ring out.
+                if (! gatedAt (offset))
+                    continue;
+
                 const int note = laneToMidiNote (h.lane);
                 midi.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), offset);
                 midi.addEvent (juce::MidiMessage::noteOff (10, note), juce::jmin (numSamples - 1, offset + 8));

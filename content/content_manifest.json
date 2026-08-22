@@ -1,21 +1,21 @@
 {
   "corpus": "rock_corpus.hhc",
-  "format_version": 3,
-  "phrases": 9666,
-  "beats": 8923,
+  "format_version": 4,
+  "phrases": 12575,
+  "beats": 11832,
   "fills": 743,
-  "derived": 4825,
+  "derived": 7734,
   "characters": {
-    "Half Time": 897,
-    "Hard Rock": 1727,
-    "Metal": 1148,
+    "Half Time": 1186,
+    "Hard Rock": 1932,
+    "Metal": 1697,
     "Metal 2x Kick": 4430,
-    "Pop Rock": 503,
-    "Prog": 1135,
-    "Punk": 1497,
-    "Rock": 1864,
-    "Roots Rock": 607,
-    "Shuffle": 504
+    "Pop Rock": 215,
+    "Prog": 1114,
+    "Punk": 2178,
+    "Rock": 1379,
+    "Roots Rock": 568,
+    "Shuffle": 446
   },
   "articulations": 30,
   "attribution": [
@@ -53,6 +53,11 @@
     {
       "name": "Muldjord Metal",
       "folder": "Kits/MuldjordMetal",
+      "default": false
+    },
+    {
+      "name": "Sludge Nu Metal",
+      "folder": "Kits/SludgeNuMetal",
       "default": false
     },
     {

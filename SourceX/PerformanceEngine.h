@@ -151,6 +151,14 @@ namespace hhx
 
         bool phraseEndsWithFill (const PerformanceSettings& s, int phraseIndex) const;
 
+        /** The fill this phrase hands over with, as beats from the start of the
+            fill. Manual mode keeps the player's own pattern as the groove and
+            asks for this, so a written pattern is still played with fills the
+            way a drummer plays it rather than looped verbatim. */
+        std::vector<Hit> fillForPhrase (const PerformanceSettings& s,
+                                        int   phraseIndex,
+                                        float fillBeats) const;
+
         /** Where the current XY position lands: the nearest real takes, for the
             landing-zone display on the performance page.
         */

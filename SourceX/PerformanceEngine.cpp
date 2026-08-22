@@ -546,7 +546,7 @@ namespace hhx
         // Half time is played half as busy: at this feel the groove is moving
         // at half rate, so a fill of thirty-second notes over it reads as a
         // different drummer barging in.
-        if (s.halfTime && fastest < (strict ? 0.22f : 0.11f))
+        if (strict && s.halfTime && fastest < 0.22f)
             return false;
 
         // And it has to resolve: the figure must run right up to the downbeat
@@ -565,7 +565,8 @@ namespace hhx
             return corpus->pickFill (s.fillComplexity, s.intensity, bars,
                                      (int) (mix (seed ^ 0xF111ull) % 16u), avoid,
                                      s.fillLaneMask & s.laneMask, s.fillStyleMask,
-                                     s.timeSigNum, s.timeSigDen);
+                                     s.timeSigNum, s.timeSigDen,
+                                     characterMask (s));
         };
 
         // Recently-used ring buffer: the last few fills are excluded so the
@@ -687,6 +688,53 @@ namespace hhx
                 continue;
             }
             raw.push_back (hit);
+        }
+
+        // At half time the groove moves at half rate, so the fill is played at
+        // half rate too: strokes closer together than a sixteenth of the
+        // half-time pulse are thinned to the louder one, which is the figure a
+        // drummer plays over a half-time groove rather than a roll barging in.
+        if (s.halfTime)
+        {
+            std::stable_sort (raw.begin(), raw.end(),
+                              [] (const Raw& a, const Raw& b) { return a.beat < b.beat; });
+            std::vector<Raw> kept;
+            kept.reserve (raw.size());
+            float lastBeat = -10.0f;
+            for (const auto& r : raw)
+            {
+                if (! r.fill)
+                {
+                    kept.push_back (r);
+                    continue;
+                }
+                if (r.beat - lastBeat < 0.2f && std::abs (r.beat - lastBeat) > 0.01f)
+                    continue;
+                lastBeat = r.beat;
+                kept.push_back (r);
+            }
+            raw.swap (kept);
+        }
+
+        // A drummer riding the hats does not take the foot off them to play a
+        // fill: the hat keeps the quarter under the figure. Only the quarters
+        // no cymbal already covers are added, so the fill keeps its shape and
+        // the openness knob is heard through it as well as under the groove.
+        if (s.hatOpenness > 0.15f)
+        {
+            for (float q = std::ceil (fillStartBeat); q < phraseBeats - 0.005f; q += 1.0f)
+            {
+                const bool covered = std::any_of (raw.begin(), raw.end(), [&] (const Raw& r)
+                {
+                    return std::abs (r.beat - q) < 0.12f
+                           && (isHatLane (r.lane) || isCymbalLane (r.lane));
+                });
+                if (covered)
+                    continue;
+
+                raw.push_back (Raw { q, 0.0f, (std::uint8_t) LaneHatClosed,
+                                     (std::uint8_t) 78, true });
+            }
         }
     }
 
@@ -1674,6 +1722,86 @@ namespace hhx
                           [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
 
         collapseDoubledCymbals (out);
+
+        // Last word on how busy a bar is allowed to get. Even at the top of the
+        // pad a bar is something a drummer plays, so once the groove, its
+        // ornaments and the crashes are all in, the quietest colour strokes -
+        // pedal hats, ghosts, rim taps - are dropped until the bar is inside
+        // the pad's density. The kick, the backbeat and the cymbal keeping time
+        // are never touched, so thinning takes clutter off rather than taking
+        // the groove apart.
+        {
+            // Complexity alone decides the ceiling: Intensity is how hard the
+            // kit is played, and it must never change which strokes are there.
+            const float ceiling = std::max (24.0f,
+                                            16.0f + 10.0f * std::clamp (s.complexity, 0.0f, 1.0f));
+            const auto  ornament = [] (const Hit& h)
+            {
+                return h.lane == LaneSnareGhost || h.lane == LaneHatPedal
+                    || h.lane == LanePerc       || h.lane == LaneHatSplash;
+            };
+
+            for (int bar = 0; bar < bars; ++bar)
+            {
+                const float from = (float) bar * dstBar, to = from + dstBar;
+                std::vector<std::size_t> here;
+                for (std::size_t i = 0; i < out.size(); ++i)
+                    if (out[i].beat >= from - 0.001f && out[i].beat < to)
+                        here.push_back (i);
+
+                int over = (int) here.size() - (int) std::lround (ceiling);
+                if (over <= 0)
+                    continue;
+
+                std::stable_sort (here.begin(), here.end(),
+                                  [&] (std::size_t a, std::size_t b)
+                                  {
+                                      const bool oa = ornament (out[a]), ob = ornament (out[b]);
+                                      if (oa != ob)
+                                          return oa;
+                                      return out[a].velocity < out[b].velocity;
+                                  });
+
+                std::vector<std::size_t> drop;
+                for (std::size_t k = 0; k < here.size() && over > 0; ++k)
+                    if (ornament (out[here[k]]))
+                    {
+                        drop.push_back (here[k]);
+                        --over;
+                    }
+
+                std::sort (drop.begin(), drop.end(), std::greater<std::size_t>());
+                for (const auto i : drop)
+                    out.erase (out.begin() + (std::ptrdiff_t) i);
+            }
+        }
+        return out;
+    }
+
+    std::vector<Hit> PerformanceEngine::fillForPhrase (const PerformanceSettings& base,
+                                                       int   phraseIndex,
+                                                       float fillBeats) const
+    {
+        std::vector<Hit> out;
+        if (corpus == nullptr || fillBeats <= 0.0f)
+            return out;
+
+        const int  bars = std::max (1, base.phraseBars);
+        const auto s    = settingsForBar (base, phraseIndex * bars);
+        if (! phraseEndsWithFill (base, phraseIndex))
+            return out;
+
+        std::vector<Raw> raw;
+        appendFill (s, phraseIndex, 0.0f, fillBeats,
+                    mix (blockSeed (s) ^ (std::uint64_t) (phraseIndex + 1)), raw);
+
+        out.reserve (raw.size());
+        for (const auto& h : raw)
+            if ((s.laneMask & (1u << h.lane)) != 0)
+                out.push_back ({ h.beat, h.lane, h.velocity });
+
+        std::sort (out.begin(), out.end(),
+                   [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
         return out;
     }
 

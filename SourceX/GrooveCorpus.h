@@ -140,6 +140,11 @@ namespace hhx
         std::uint8_t  sigDen     = 4;
         bool          isFill     = false;
 
+        /** True when the bar was re-voiced from a real take to fill a corner of
+            the pad rather than being played by a person. Selection prefers a
+            recorded take wherever one covers the position. */
+        bool          derived    = false;
+
         /** The metre the take was actually played in, in quarter notes. */
         float sourceBeatsPerBar() const
         {
@@ -163,7 +168,7 @@ namespace hhx
         /** Binary layout the runtime understands. Installed content carries the
             same number in content_manifest.json so a stale install is rejected
             instead of half-loaded. */
-        static constexpr std::uint32_t kFormatVersion = 3;
+        static constexpr std::uint32_t kFormatVersion = 4;
 
         bool loadFromMemory (const void* data, std::size_t numBytes);
 
@@ -219,7 +224,8 @@ namespace hhx
                       std::uint32_t laneMask,
                       std::uint8_t  styleMask,
                       int   sigNum = 0,
-                      int   sigDen = 0) const;
+                      int   sigDen = 0,
+                      std::uint16_t charMask = 0) const;
 
         /** Learned velocity transition row for a lane: given the bucket of the
             previous stroke, the probability (0..255) of each next bucket.

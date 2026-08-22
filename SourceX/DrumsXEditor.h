@@ -129,6 +129,15 @@ namespace hhx
     public:
         explicit ManualPatternGrid (DrumsXProcessor&);
 
+        /** Quick mode is Logic's editor: six rows - kick, snare, hat, ride,
+            toms, crash - and the engine decides which piece of the group is
+            struck. Producer mode shows all thirty lanes for when the exact
+            articulation matters. */
+        void setQuickMode (bool q);
+        bool isQuickMode() const { return quick; }
+
+        static constexpr int kQuickRows = 6;
+
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
@@ -142,7 +151,15 @@ namespace hhx
     private:
         bool cellAt (juce::Point<int> p, int& lane, int& step) const;
 
+        /** Rows on screen, and the lane a row writes to. */
+        int  numRows() const { return quick ? kQuickRows : (int) NumLanes; }
+        int  rowLane (int row) const;
+        /** The loudest note any piece of this row's group holds. */
+        float rowValue (int row, int step) const;
+        void writeRow (int row, int step, float velocity01);
+
         DrumsXProcessor& proc;
+        bool  quick = true;
         int   gestureLane = -1, gestureStep = -1;
         bool  erasing = false;
         bool  adjusting = false;          // dragging one note's velocity
@@ -238,16 +255,21 @@ namespace hhx
         std::unique_ptr<LabelledKnob> sectionLevelKnob;
         std::vector<std::unique_ptr<juce::TextButton>> variationButtons;
         juce::Label       padCaption;
+        /** Which block the piece switches are editing, so the row reads as the
+            selected block's own edit space rather than a global kit mask. */
+        juce::Label       blockCaption;
         std::vector<LaneGroup> laneGroups;
 
         // DETAILS
         std::vector<std::unique_ptr<LabelledKnob>> detailKnobs;
-        juce::ComboBox    fillBarsBox, phraseBarsBox, swingGridBox, timeSigNumBox, timeSigDenBox, tempoModeBox;
+        juce::ComboBox    fillBarsBox, phraseBarsBox, swingGridBox, timeSigNumBox, timeSigDenBox, tempoModeBox,
+                          triggerModeBox;
         juce::Slider      bpmSlider;
         juce::ToggleButton rideToggle { "Ride instead of hats" };
         juce::ToggleButton halfTimeToggle { "Half time" };
         juce::ToggleButton manualToggle { "Manual pattern" };
         juce::TextButton   clearManualButton { "CLEAR" };
+        juce::TextButton   quickModeButton { "QUICK: 6 PIECES" };
         ManualPatternGrid  manualGrid;
 
         // KIT
@@ -268,9 +290,11 @@ namespace hhx
         std::unique_ptr<LabelledKnob> roomSizeKnob, roomDampKnob, roomMixKnob, roomDuckKnob;
         juce::ComboBox roomSpaceBox;
         juce::Label    roomSpaceLabel { {}, "SPACE" };
-        std::unique_ptr<LabelledKnob> punchKnob, glueKnob, driveKnob;
+        std::unique_ptr<LabelledKnob> punchKnob, glueKnob, driveKnob, squeezeKnob;
         juce::ComboBox mixVoicingBox;
         juce::Label    mixVoicingLabel { {}, "PRODUCTION" };
+        juce::ComboBox squeezeGlowBox;
+        juce::Label    squeezeGlowLabel { {}, "INDUSTRY SQUEEZE" };
 
         std::unique_ptr<juce::FileChooser> chooser;
         int startupChecks = 16;

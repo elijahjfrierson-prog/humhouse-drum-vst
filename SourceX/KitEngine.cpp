@@ -206,6 +206,8 @@ namespace hhx
 
         for (auto& l : lanes)
             l.layers.clear();
+
+        clearKitVoicing();
     }
 
     void KitEngine::place (const Placement& p, std::shared_ptr<Sample> s)
@@ -410,6 +412,16 @@ namespace hhx
        #endif
     }
 
+    void KitEngine::clearKitVoicing()
+    {
+        for (auto& v : kitVoicing)
+        {
+            v.tune.store (0.0f);
+            v.damp.store (0.0f);
+            v.gainDb.store (0.0f);
+        }
+    }
+
     int KitEngine::loadFromManifest (const juce::File& folder, const juce::var& manifest)
     {
         if (auto* obj = manifest.getDynamicObject())
@@ -428,6 +440,40 @@ namespace hhx
         kitTrimDb.store (manifest.hasProperty ("trim")
                              ? juce::jlimit (-12.0f, 12.0f, (float) (double) manifest["trim"])
                              : 0.0f);
+
+        // A kit may be a voicing of recordings that already ship: "samples"
+        // points at the folder that holds them, so a re-tuned, taped-up kit
+        // costs a manifest rather than a second copy of the audio.
+        auto sampleFolder = folder;
+        if (manifest.hasProperty ("samples"))
+        {
+            const auto rel = manifest["samples"].toString();
+            if (rel.isNotEmpty())
+            {
+                const auto resolved = folder.getChildFile (rel);
+                if (resolved.isDirectory())
+                    sampleFolder = resolved;
+            }
+        }
+
+        clearKitVoicing();
+        if (const auto* voicings = manifest["voicing"].getArray())
+        {
+            for (const auto& entry : *voicings)
+            {
+                const int lane = pieceNameToLane (entry["piece"].toString());
+                if (lane < 0 || lane >= NumLanes)
+                    continue;
+
+                auto& v = kitVoicing[(std::size_t) lane];
+                if (entry.hasProperty ("tune"))
+                    v.tune.store (juce::jlimit (-12.0f, 12.0f, (float) (double) entry["tune"]));
+                if (entry.hasProperty ("damp"))
+                    v.damp.store (juce::jlimit (0.0f, 1.0f, (float) (double) entry["damp"]));
+                if (entry.hasProperty ("gain"))
+                    v.gainDb.store (juce::jlimit (-24.0f, 12.0f, (float) (double) entry["gain"]));
+            }
+        }
 
         const auto* pieces = manifest["pieces"].getArray();
         if (pieces == nullptr)
@@ -450,7 +496,7 @@ namespace hhx
             p.mic     = micNameToIndex (entry["mic"].toString());
 
             const auto name = entry["file"].toString();
-            const auto file = folder.getChildFile (name);
+            const auto file = sampleFolder.getChildFile (name);
             if (! file.existsAsFile())
                 continue;
 
@@ -677,6 +723,14 @@ namespace hhx
     void  KitEngine::setDrive (float amount01) { drive.store (juce::jlimit (0.0f, 1.0f, amount01)); }
     float KitEngine::getDrive() const          { return drive.load(); }
 
+    void  KitEngine::setSqueeze (float amount01) { squeeze.store (juce::jlimit (0.0f, 1.0f, amount01)); }
+    float KitEngine::getSqueeze() const          { return squeeze.load(); }
+    void  KitEngine::setSqueezeGlow (int glow)
+    {
+        squeezeGlow.store (juce::jlimit (0, (int) NumSqueezeGlows - 1, glow));
+    }
+    int   KitEngine::getSqueezeGlow() const      { return squeezeGlow.load(); }
+
     KitEngine::LaneVoicing KitEngine::voicingForLane (int lane, int voicing)
     {
         if (voicing == MixRaw)
@@ -773,11 +827,145 @@ namespace hhx
         }
     }
 
+    void KitEngine::processSqueeze (float* outL, float* outR, int numSamples)
+    {
+        const float amount = squeeze.load();
+        const int   glow   = squeezeGlow.load();
+        if (amount <= 0.001f || numSamples <= 0)
+            return;
+
+        // Crossovers, and what each band is levelled towards. The band a kit
+        // most often has too much of is 180-600 Hz - the boxiness - and the one
+        // that turns harsh under compression is the stick band, so those two are
+        // held tightest. The bottom is allowed to stay big and the air band is
+        // mostly lifted rather than squeezed.
+        static constexpr float kSplitHz[3]  { 180.0f, 600.0f, 4000.0f };
+        static constexpr float kThreshDb[4] { -20.0f, -26.0f, -25.0f, -30.0f };
+        static constexpr float kRatio[4]    {   2.0f,   4.0f,   3.2f,   2.2f };
+        static constexpr float kFloorDb[4]  { -34.0f, -40.0f, -38.0f, -44.0f };
+        static constexpr float kLiftDb[4]   {   1.5f,   0.0f,   2.0f,   3.0f };
+
+        float coeff[3];
+        for (int b = 0; b < 3; ++b)
+            coeff[b] = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                        * kSplitHz[b] / (float) currentRate);
+
+        const float attack  = 1.0f - std::exp (-1.0f / (0.004f * (float) currentRate));
+        const float release = 1.0f - std::exp (-1.0f / (0.120f * (float) currentRate));
+        const float smooth  = 1.0f - std::exp (-1.0f / (0.010f * (float) currentRate));
+
+        // The glow stage: how the harmonics are made once the bands are level.
+        // Clean adds none, tube is asymmetric and mostly in the mids and top,
+        // tape rounds the bottom, and the transformer thickens the low mids.
+        const float glowAmt = glow == GlowOff ? 0.0f : amount;
+
+        const bool stereo = outR != nullptr;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float in[2] { outL[i], stereo ? outR[i] : 0.0f };
+            const int channels = stereo ? 2 : 1;
+
+            float band[4][2] {};
+            for (int ch = 0; ch < channels; ++ch)
+            {
+                float remaining = in[ch];
+                for (int b = 0; b < 3; ++b)
+                {
+                    squeezeLp[b][ch] += coeff[b] * (remaining - squeezeLp[b][ch]);
+                    band[b][ch] = squeezeLp[b][ch];
+                    remaining  -= squeezeLp[b][ch];
+                }
+                band[3][ch] = remaining;
+            }
+
+            for (int b = 0; b < kSqueezeBands; ++b)
+            {
+                // The detector is summed across the sides so the stage never
+                // moves the stereo image of the kit.
+                float peak = std::abs (band[b][0]);
+                if (stereo)
+                    peak = juce::jmax (peak, std::abs (band[b][1]));
+
+                squeezeEnv[b] += (peak > squeezeEnv[b] ? attack : release)
+                                 * (peak - squeezeEnv[b]);
+
+                const float env    = juce::jmax (1.0e-6f, squeezeEnv[b]);
+                const float envDb  = juce::Decibels::gainToDecibels (env);
+                float moveDb = 0.0f;
+                if (envDb > kThreshDb[b])
+                    moveDb = (kThreshDb[b] - envDb) * (1.0f - 1.0f / kRatio[b]);
+                else if (envDb < kFloorDb[b] && kLiftDb[b] > 0.0f)
+                    moveDb = juce::jmin (kLiftDb[b], (kFloorDb[b] - envDb) * 0.5f);
+
+                const float target = juce::Decibels::decibelsToGain (moveDb * amount);
+                squeezeGain[b] += smooth * (target - squeezeGain[b]);
+
+                for (int ch = 0; ch < channels; ++ch)
+                    band[b][ch] *= squeezeGain[b];
+            }
+
+            for (int ch = 0; ch < channels; ++ch)
+            {
+                if (glowAmt > 0.0f)
+                {
+                    switch (glow)
+                    {
+                        case GlowTube:
+                            // Asymmetric: even harmonics, and only where the
+                            // stick and the body live.
+                            for (int b = 1; b < kSqueezeBands; ++b)
+                            {
+                                const float x = band[b][ch];
+                                const float s = x - 0.22f * x * std::abs (x);
+                                band[b][ch] += (s - x) * glowAmt;
+                            }
+                            break;
+                        case GlowTape:
+                            for (int b = 0; b < 2; ++b)
+                            {
+                                const float x = band[b][ch];
+                                band[b][ch] += (std::tanh (x * 1.8f) / 1.8f - x) * glowAmt;
+                            }
+                            break;
+                        case GlowTransformer:
+                        {
+                            const float x = band[1][ch];
+                            band[1][ch] += (std::tanh (x * 2.4f) / 2.4f - x) * glowAmt;
+                            band[2][ch] *= 1.0f + 0.05f * glowAmt;
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                }
+
+                float sum = 0.0f;
+                for (int b = 0; b < kSqueezeBands; ++b)
+                    sum += band[b][ch];
+
+                // Make-up: the squeeze is a level move, and the point of it is
+                // that the kit arrives louder and denser, not thinner.
+                sum *= juce::Decibels::decibelsToGain (2.5f * amount);
+
+                if (ch == 0) outL[i] = sum;
+                else         outR[i] = sum;
+            }
+        }
+    }
+
     void KitEngine::processKitBus (float* outL, float* outR, int numSamples)
     {
         const int voicing = mixVoicing.load();
         if (voicing == MixRaw)
+        {
+            // The squeeze is a mix tool in its own right, so it still works on
+            // a raw kit - it is the one stage Raw does not bypass.
+            processSqueeze (outL, outR, numSamples);
             return;
+        }
+
+        processSqueeze (outL, outR, numSamples);
 
         const float glueAmt  = glue.load();
         const float driveAmt = drive.load();
@@ -992,8 +1180,9 @@ namespace hhx
 
         // Micro-variation: a few cents and a fraction of a dB per hit keeps
         // repeated notes from phase-cancelling into an obvious loop.
+        const auto& kv = kitVoicing[(std::size_t) lane];
         const float cents = (dither (2) - 0.5f) * (ting ? 34.0f : 22.0f)
-                          + slot.tune.load() * 100.0f;
+                          + (slot.tune.load() + kv.tune.load()) * 100.0f;
         const float trim  = juce::Decibels::decibelsToGain (
                                 (dither (3) - 0.5f) * (ting ? 2.2f : 1.3f));
 
@@ -1024,6 +1213,7 @@ namespace hhx
                                : (ting ? -3.5f : 0.0f);
         const float gain = velGain * trim
                          * juce::Decibels::decibelsToGain (slot.gainDb.load()
+                                                           + kv.gainDb.load()
                                                            + kitTrimDb.load()
                                                            + tingTrimDb);
         // Sticking: the performance alternates hands on the drums it plays with
@@ -1039,7 +1229,7 @@ namespace hhx
         const float gr   = gain * std::sqrt (0.5f * (1.0f + pan));
 
         // Damping shortens the decay, the way a drummer's tape or a felt does.
-        const float damp = slot.damp.load();
+        const float damp = juce::jlimit (0.0f, 1.0f, slot.damp.load() + kv.damp.load());
         const float decayTime = juce::jmap (damp, 0.0f, 1.0f, 8.0f, 0.09f);
         const float envDecay = damp <= 0.001f ? 1.0f
                              : (float) std::pow (0.001, 1.0 / (decayTime * currentRate));

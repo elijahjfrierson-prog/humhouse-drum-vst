@@ -149,6 +149,18 @@ namespace hhx
         void  setDrive (float amount01);
         float getDrive() const;
 
+        /** Industry Squeeze: spectral compression across four bands of the kit
+            bus. Each band is levelled against the band's own target, so the
+            boxy 200-500 Hz region and a harsh stick are pulled in while a shy
+            band is lifted, then a glow stage adds harmonics. Unlike a single
+            bus compressor this cannot let one loud band duck the whole kit. */
+        enum SqueezeGlow { GlowOff = 0, GlowClean, GlowTube, GlowTape, GlowTransformer,
+                           NumSqueezeGlows };
+        void  setSqueeze (float amount01);
+        float getSqueeze() const;
+        void  setSqueezeGlow (int glow);
+        int   getSqueezeGlow() const;
+
         /** `variant` is the round-robin slot the performance engine chose, so
             two consecutive strokes on a lane never fire the same sample. */
         void noteOn (int lane, float velocity01, int variant = 0);
@@ -226,6 +238,9 @@ namespace hhx
         /** The kit bus: glue compression, saturation, the voicing's tilt, and a
             ceiling so a hard-hit chorus cannot clip the host. */
         void processKitBus (float* outL, float* outR, int numSamples);
+
+        /** Four-band spectral compression plus the glow stage. */
+        void processSqueeze (float* outL, float* outR, int numSamples);
 
         struct Voice
         {
@@ -312,6 +327,19 @@ namespace hhx
             does not change how loud the instrument sits in a mix. */
         std::atomic<float> kitTrimDb { 0.0f };
 
+        /** How the kit itself is tuned and damped, from its manifest, applied
+            on top of the user's own lane controls. A sludge kit is the same
+            shells dropped a tone and taped up, so a voicing is what makes it a
+            different kit rather than a second copy of the recordings. */
+        struct KitVoicing
+        {
+            std::atomic<float> tune { 0.0f };     // semitones
+            std::atomic<float> damp { 0.0f };     // added to the lane's damp
+            std::atomic<float> gainDb { 0.0f };
+        };
+        std::array<KitVoicing, NumLanes> kitVoicing {};
+        void clearKitVoicing();
+
         std::atomic<float> micBlend { 0.35f };
         std::atomic<float> bleed    { 0.15f };
         std::atomic<float> crush    { 0.0f };
@@ -342,6 +370,17 @@ namespace hhx
         std::atomic<float> punch      { 0.5f };
         std::atomic<float> glue       { 0.35f };
         std::atomic<float> drive      { 0.2f };
+
+        std::atomic<float> squeeze     { 0.0f };
+        std::atomic<int>   squeezeGlow { GlowClean };
+
+        // Industry Squeeze state, audio thread only. Three complementary
+        // one-pole splits give four bands that sum back to the input, so at
+        // unity gain the stage is transparent.
+        static constexpr int kSqueezeBands = 4;
+        float squeezeLp[3][2] {};
+        float squeezeEnv[kSqueezeBands] {};
+        float squeezeGain[kSqueezeBands] { 1.0f, 1.0f, 1.0f, 1.0f };
 
         // Kit bus state, audio thread only.
         float busCompEnv = 0.0f;

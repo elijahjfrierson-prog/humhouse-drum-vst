@@ -244,6 +244,7 @@ namespace hhx
         for (std::uint32_t i = 0; i < count; ++i)
         {
             std::uint8_t  kind = 0, bars = 0, cx = 0, in = 0, section = 0, styles = 0, swing = 0;
+            std::uint8_t  derived = 0;
             std::uint8_t  sigNum = 4, sigDen = 4;
             std::uint16_t bpm = 0, charMask = 0, numHits = 0;
             if (! r.take (&kind, 1) || ! r.take (&bars, 1)
@@ -251,7 +252,8 @@ namespace hhx
                 || ! r.take (&cx, 1)
                 || ! r.take (&in, 1) || ! r.take (&bpm, 2) || ! r.take (&section, 1)
                 || ! r.take (&charMask, 2) || ! r.take (&styles, 1)
-                || ! r.take (&swing, 1) || ! r.take (&numHits, 2))
+                || ! r.take (&swing, 1) || ! r.take (&derived, 1)
+                || ! r.take (&numHits, 2))
                 return false;
 
             Phrase phrase;
@@ -266,6 +268,7 @@ namespace hhx
             phrase.section    = section;
             phrase.charMask   = charMask;
             phrase.fillStyles = styles;
+            phrase.derived    = derived != 0;
             phrase.hits.reserve (numHits);
 
             for (std::uint16_t h = 0; h < numHits; ++h)
@@ -342,6 +345,10 @@ namespace hhx
             // folded into it, but a fold still beats an empty bar.
             if (sigNum > 0 && (p.sigNum != sigNum || p.sigDen != sigDen))
                 d += 4.0f;
+            // A bar someone actually played beats one re-voiced to fill a
+            // corner of the pad, unless the recorded take is far away.
+            if (p.derived)
+                d += 0.03f;
             return d;
         };
 
@@ -402,7 +409,8 @@ namespace hhx
                                 std::uint32_t laneMask,
                                 std::uint8_t  styleMask,
                                 int   sigNum,
-                                int   sigDen) const
+                                int   sigDen,
+                                std::uint16_t charMask) const
     {
         if (fillPhrases.empty())
             return -1;
@@ -410,10 +418,11 @@ namespace hhx
         std::vector<int> candidates;
         candidates.reserve (fillPhrases.size());
 
-        // Pass 0 wants the requested style in the requested metre; the later
-        // passes relax the metre, then the style, so a narrow request still
-        // yields a fill.
-        for (int pass = 0; pass < 3 && candidates.empty(); ++pass)
+        // Pass 0 wants this character's own fills, in the requested style and
+        // metre; the later passes relax the metre, then the style, then the
+        // character, so a narrow request still yields a fill rather than a
+        // hole - but a character plays its own vocabulary wherever it has one.
+        for (int pass = 0; pass < 4 && candidates.empty(); ++pass)
         {
             for (int i = 0; i < (int) fillPhrases.size(); ++i)
             {
@@ -424,6 +433,8 @@ namespace hhx
                     && (p.sigNum != sigNum || p.sigDen != sigDen))
                     continue;
                 if (pass < 2 && styleMask != 0 && (p.fillStyles & styleMask) == 0)
+                    continue;
+                if (pass < 3 && charMask != 0 && (p.charMask & charMask) == 0)
                     continue;
 
                 int allowed = 0, total = 0;
@@ -451,7 +462,9 @@ namespace hhx
                            + (pa.intensity  - intensity)  * (pa.intensity  - intensity);
             const float db = (pb.complexity - complexity) * (pb.complexity - complexity)
                            + (pb.intensity  - intensity)  * (pb.intensity  - intensity);
-            return da != db ? da < db : a < b;
+            const float sa = da + (pa.derived ? 0.03f : 0.0f);
+            const float sb = db + (pb.derived ? 0.03f : 0.0f);
+            return sa != sb ? sa < sb : a < b;
         });
 
         const int pool = std::min<int> (16, (int) candidates.size());

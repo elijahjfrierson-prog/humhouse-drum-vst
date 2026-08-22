@@ -41,6 +41,7 @@ namespace hhx
         inline constexpr const char* variationRhythm = "varRhythm";
         inline constexpr const char* variationCymbal = "varCymbal";
         inline constexpr const char* manualMode     = "manualMode";
+        inline constexpr const char* triggerMode    = "triggerMode";
         inline constexpr const char* outputLevel    = "outputLevel";
         inline constexpr const char* micBlend       = "micBlend";
         inline constexpr const char* bleed          = "bleed";
@@ -54,6 +55,8 @@ namespace hhx
         inline constexpr const char* punch          = "punch";
         inline constexpr const char* glue           = "glue";
         inline constexpr const char* drive          = "drive";
+        inline constexpr const char* squeeze        = "squeeze";
+        inline constexpr const char* squeezeGlow    = "squeezeGlow";
 
         juce::String laneEnable (int lane);
         juce::String laneGhost (int lane);
@@ -80,6 +83,7 @@ namespace hhx
         float ghost;
         float hatOpenness;
         bool  ride;
+        bool  halfTime;
     };
 
     const std::vector<Character>& characters();
@@ -116,7 +120,7 @@ namespace hhx
         bool hasEditor() const override { return true; }
 
         const juce::String getName() const override { return JucePlugin_Name; }
-        bool   acceptsMidi()  const override { return false; }
+        bool   acceptsMidi()  const override { return true; }
         bool   producesMidi() const override { return true; }
         bool   isMidiEffect() const override { return false; }
         double getTailLengthSeconds() const override { return 2.0; }
@@ -298,6 +302,11 @@ namespace hhx
 
         std::atomic<double> playheadBeats { 0.0 };
         std::atomic<bool>   playing { false };
+
+        /** How many notes the host is holding, and whether the drummer is
+            currently allowed to play. Audio thread only. */
+        int  heldNotes = 0;
+        bool gateOpen  = false;
         std::atomic<double> lastBpm { 120.0 };
 
         std::shared_ptr<const Timeline> timeline;
