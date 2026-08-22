@@ -1389,6 +1389,14 @@ namespace hhx
                 // faded off it.
                 const int fadeFrom = len - (int) (0.004 * v.sample->sourceRate);
 
+                // The stick is the first few milliseconds of the recording, and
+                // it is left alone: darkening a stroke from its very first frame
+                // takes the attack off the drum, which is what makes a sampled
+                // kit sound soft next to a real one. The tone only closes in
+                // once the strike has spoken.
+                const int strikeTo = (int) (0.0035 * v.sample->sourceRate);
+                const int bodyFrom = strikeTo + (int) (0.012 * v.sample->sourceRate);
+
                 for (int i = 0; i < numSamples; ++i)
                 {
                     const int pos = (int) v.position;
@@ -1410,8 +1418,17 @@ namespace hhx
 
                     // Darken as the stroke rings down, over its own length.
                     const float age    = (float) pos * v.invFrames;
-                    const float coeff  = v.toneCoeff
+                    float coeff        = v.toneCoeff
                                        + (v.tailCoeff - v.toneCoeff) * age;
+
+                    if (pos < bodyFrom && bodyFrom > strikeTo)
+                    {
+                        const float open = pos <= strikeTo
+                                         ? 1.0f
+                                         : 1.0f - (float) (pos - strikeTo)
+                                                  / (float) (bodyFrom - strikeTo);
+                        coeff += (1.0f - coeff) * open;
+                    }
 
                     v.toneL += coeff * (l - v.toneL);
                     v.toneR += coeff * (r - v.toneR);

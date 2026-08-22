@@ -254,6 +254,16 @@ namespace hhx
                          std::uint64_t seed,
                          std::vector<Raw>& raw) const;
 
+        /** A plain figure into the downbeat, played dead on the grid: snare and
+            toms down the kit with the kick under the last stroke. Used when the
+            take chosen for the phrase survives the tempo, the feel and the
+            block's piece switches as one or two lonely strokes, which reads as
+            a mistake rather than as a simple fill. */
+        void appendSimpleFill (const PerformanceSettings& s,
+                               float fillStartBeat,
+                               float phraseBeats,
+                               std::vector<Raw>& raw) const;
+
         int fillIndexForPhrase (const PerformanceSettings& s, int phraseIndex) const;
 
         /** Whether a take is a fill a drummer would actually play here, at this

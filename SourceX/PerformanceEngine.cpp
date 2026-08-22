@@ -635,6 +635,25 @@ namespace hhx
         const float srcSkip  = halfFill ? kSourceBar * 0.5f : 0.0f;
         const float scale    = dstBar / kSourceBar;
 
+        // Where every stroke of the take lands once it has been stretched, so a
+        // stroke can be told whether it is part of a run or standing on its own.
+        std::vector<float> placed;
+        placed.reserve (f.hits.size());
+        for (const auto& h : f.hits)
+            if (h.gridBeat() >= srcSkip)
+                placed.push_back ((h.gridBeat() - srcSkip) * scale);
+        std::sort (placed.begin(), placed.end());
+
+        const auto inARun = [&placed] (float rel)
+        {
+            // A neighbour within a sixteenth means the stroke is one of a run,
+            // where the drummer's own push and drag is the point of the take.
+            for (const float other : placed)
+                if (std::abs (other - rel) > 0.01f && std::abs (other - rel) < 0.26f)
+                    return true;
+            return false;
+        };
+
         for (const auto& h : f.hits)
         {
             const float src = h.gridBeat();
@@ -653,9 +672,15 @@ namespace hhx
             const float q24  = std::round (rel * 6.0f) / 6.0f;
             const float snap = std::abs (rel - q32) <= std::abs (rel - q24) ? q32 : q24;
 
-            const float beat = fillStartBeat + snap
-                             + h.devBeats() * scale * 0.25f
-                               * std::clamp (s.humanize, 0.0f, 1.0f);
+            // An isolated stroke is played dead on the grid. Micro-timing is
+            // heard as feel inside a run, but a lone hit nudged off the beat is
+            // heard as a mistake - which is what a one-note fill with the
+            // drummer's deviation on it sounds like.
+            const float dev = inARun (rel)
+                            ? h.devBeats() * scale * 0.25f
+                              * std::clamp (s.humanize, 0.0f, 1.0f)
+                            : 0.0f;
+            const float beat = fillStartBeat + snap + dev;
             if (beat < fillStartBeat - 0.02f || beat >= phraseBeats - 0.005f)
                 continue;
 
@@ -716,6 +741,35 @@ namespace hhx
             raw.swap (kept);
         }
 
+        // What is left of the figure once the tempo, the feel and the block's
+        // piece switches have had their say. One or two strokes is not a simple
+        // fill, it is a hole with a hit in it, so a plain figure is played
+        // instead of the take.
+        {
+            std::vector<float> beats;
+            for (const auto& r : raw)
+                if (r.fill && (s.laneMask & (1u << r.lane)) != 0)
+                    beats.push_back (r.beat);
+            std::sort (beats.begin(), beats.end());
+
+            int strokes = 0;
+            float last = -10.0f;
+            for (const float b : beats)
+                if (b - last > 0.01f)
+                {
+                    ++strokes;
+                    last = b;
+                }
+
+            if (strokes < 3)
+            {
+                raw.erase (std::remove_if (raw.begin(), raw.end(),
+                                           [] (const Raw& r) { return r.fill; }),
+                           raw.end());
+                appendSimpleFill (s, fillStartBeat, phraseBeats, raw);
+            }
+        }
+
         // A drummer riding the hats does not take the foot off them to play a
         // fill: the hat keeps the quarter under the figure. Only the quarters
         // no cymbal already covers are added, so the fill keeps its shape and
@@ -736,6 +790,71 @@ namespace hhx
                                      (std::uint8_t) 78, true });
             }
         }
+    }
+
+    void PerformanceEngine::appendSimpleFill (const PerformanceSettings& s,
+                                              float fillStartBeat,
+                                              float phraseBeats,
+                                              std::vector<Raw>& raw) const
+    {
+        const float window = phraseBeats - fillStartBeat;
+        if (window < 0.4f)
+            return;
+
+        const auto on = [&s] (int lane) { return (s.laneMask & (1u << lane)) != 0; };
+        const auto firstOn = [&on] (std::initializer_list<int> preference)
+        {
+            for (const int lane : preference)
+                if (on (lane))
+                    return lane;
+            return -1;
+        };
+
+        // What the figure is played on: the snare and the toms down the kit if
+        // they are in front of him, otherwise whatever the block left switched
+        // in, so a toms-only intro still turns the corner.
+        const int hand = firstOn ({ LaneSnare, LaneTom1, LaneTom2, LaneSnareRim,
+                                    LaneTom3, LaneTom4, LaneKick });
+        if (hand < 0)
+            return;
+
+        std::vector<int> down;
+        for (const int lane : { LaneTom1, LaneTom2, LaneTom3, LaneTom4 })
+            if (on (lane))
+                down.push_back (lane);
+
+        // A sixteenth-note figure, unless the tempo makes sixteenths a roll: at
+        // that point the same figure is played in eighths, which is how a
+        // drummer plays it rather than doubling his hands to fit the grid.
+        const float secPerBeat = 60.0f / std::max (20.0f, s.tempoBpm);
+        const float step = (0.25f * secPerBeat >= 0.105f && ! s.halfTime) ? 0.25f : 0.5f;
+        const int   n    = (int) std::floor (window / step + 0.001f);
+        if (n < 3)
+            return;
+
+        for (int i = 0; i < n; ++i)
+        {
+            // Snare on the front of the figure, then down the toms into the
+            // downbeat, and the kick under the last stroke so the handover has
+            // weight. Plain, on the grid, and it resolves - which is all a
+            // simple fill has to do.
+            const float where = (float) i / (float) n;
+            int lane = hand;
+            if (! down.empty() && where >= 0.5f)
+            {
+                const int rung = (int) ((where - 0.5f) * 2.0f * (float) down.size());
+                lane = down[(std::size_t) std::min ((int) down.size() - 1, rung)];
+            }
+
+            const int vel = (int) std::lround (86.0f + 36.0f * where);
+            raw.push_back (Raw { fillStartBeat + step * (float) i, 0.0f,
+                                 (std::uint8_t) lane,
+                                 (std::uint8_t) std::clamp (vel, 1, 127), true });
+        }
+
+        if (on (LaneKick) && n >= 3)
+            raw.push_back (Raw { fillStartBeat + step * (float) (n - 1), 0.0f,
+                                 (std::uint8_t) LaneKick, (std::uint8_t) 116, true });
     }
 
     void PerformanceEngine::thinOrnaments (const PerformanceSettings& s,
