@@ -41,6 +41,7 @@ namespace hhx
         inline constexpr const char* variationRhythm = "varRhythm";
         inline constexpr const char* variationCymbal = "varCymbal";
         inline constexpr const char* manualMode     = "manualMode";
+        inline constexpr const char* manualBars     = "manualBars";
         inline constexpr const char* triggerMode    = "triggerMode";
         inline constexpr const char* outputLevel    = "outputLevel";
         inline constexpr const char* micBlend       = "micBlend";
@@ -204,8 +205,14 @@ namespace hhx
         double getPlayheadBeats() const { return playheadBeats.load(); }
 
         // --- manual page --------------------------------------------------
-        static constexpr int kManualBars  = 2;
+        /** The grid always holds four bars; how many of them are the pattern is
+            the player's choice, so a one-bar groove stays one bar. */
+        static constexpr int kManualBars  = 4;
         static constexpr int kManualSteps = 16 * kManualBars;
+
+        /** Bars of the grid that are the pattern: 1, 2 or 4. */
+        int manualBars() const;
+        int manualSteps() const { return 16 * manualBars(); }
 
         void  setManualStep (int lane, int step, float velocity01);
         float getManualStep (int lane, int step) const;
@@ -214,9 +221,10 @@ namespace hhx
 
         /** Drop a MIDI file on the grid: its notes land on the lanes they
             address, quantised to the grid's sixteenths and folded into the
-            grid's two bars. Returns false when the file holds no drum notes. */
+            grid's bars, widening the pattern to hold the file where it can.
+            Returns false when the file holds no drum notes. */
         bool importManualMidi (const juce::File& source);
-        /** Drag the grid out of the plugin as its own two-bar MIDI file. */
+        /** Drag the grid out of the plugin as its own MIDI file. */
         bool exportManualMidi (const juce::File& dest) const;
         /** True when any step is written, so the UI can tell an empty grid from
             an edited one. */

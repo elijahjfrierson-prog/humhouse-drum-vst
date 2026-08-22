@@ -270,6 +270,8 @@ namespace hhx
         juce::ToggleButton manualToggle { "Manual pattern" };
         juce::TextButton   clearManualButton { "CLEAR" };
         juce::TextButton   quickModeButton { "QUICK: 6 PIECES" };
+        /** How many bars of the grid are the pattern: 1, 2 or 4. */
+        juce::ComboBox     manualBarsBox;
         ManualPatternGrid  manualGrid;
 
         // KIT

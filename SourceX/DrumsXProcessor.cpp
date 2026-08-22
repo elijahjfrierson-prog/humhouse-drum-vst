@@ -187,6 +187,9 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterInt> (ParameterID { pid::variationCymbal, 1 },
                                                          "Hat / Ride Variation", 0, 7, 0));
         layout.add (std::make_unique<AudioParameterBool> (ParameterID { pid::manualMode, 1 }, "Manual Pattern", false));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::manualBars, 1 },
+                                                           "Pattern Bars",
+                                                           juce::StringArray { "1 Bar", "2 Bars", "4 Bars" }, 1));
         // How the drummer is started. "Always Play" is the old behaviour; the
         // other two put the host's MIDI in charge, so the kit can enter at bar
         // 8 of a song, or play notes drawn in the DAW's piano roll verbatim.
@@ -1145,6 +1148,17 @@ namespace hhx
         return p != nullptr && p->load() > 0.5f;
     }
 
+    int DrumsXProcessor::manualBars() const
+    {
+        const auto* p = apvts.getRawParameterValue (pid::manualBars);
+        switch (p != nullptr ? (int) p->load() : 1)
+        {
+            case 0:  return 1;
+            case 2:  return 4;
+            default: return 2;
+        }
+    }
+
     void DrumsXProcessor::setManualStep (int lane, int step, float velocity01)
     {
         if (lane < 0 || lane >= NumLanes || step < 0 || step >= kManualSteps)
@@ -1177,9 +1191,10 @@ namespace hhx
     bool DrumsXProcessor::hasManualNotes() const
     {
         const std::lock_guard<std::mutex> lock (manualMutex);
+        const int steps = manualSteps();
         for (const auto& lane : manualGrid)
-            for (const float v : lane)
-                if (v > 0.0f)
+            for (int step = 0; step < steps; ++step)
+                if (lane[(std::size_t) step] > 0.0f)
                     return true;
         return false;
     }
@@ -1201,6 +1216,7 @@ namespace hhx
 
         std::array<std::array<float, kManualSteps>, NumLanes> grid {};
         bool any = false;
+        int  lastStep = 0;
 
         for (int t = 0; t < file.getNumTracks(); ++t)
         {
@@ -1218,7 +1234,7 @@ namespace hhx
                 if (lane < 0)
                     continue;
 
-                // Sixteenths, and anything past the grid's two bars wraps onto
+                // Sixteenths, and anything past the grid's four bars wraps onto
                 // it, so dropping a longer loop still lands in time.
                 const double quarters = msg.getTimeStamp() / ticksPerQuarter;
                 int step = (int) std::llround (quarters * 4.0);
@@ -1228,6 +1244,7 @@ namespace hhx
 
                 auto& cell = grid[(std::size_t) lane][(std::size_t) step];
                 cell = std::max (cell, juce::jlimit (0.1f, 1.0f, msg.getFloatVelocity()));
+                lastStep = std::max (lastStep, step);
                 any = true;
             }
         }
@@ -1238,6 +1255,14 @@ namespace hhx
         {
             const std::lock_guard<std::mutex> lock (manualMutex);
             manualGrid = grid;
+        }
+
+        // The pattern is as long as what was dropped, rounded up to a length
+        // the grid holds, so a four-bar loop is not folded back onto bar one.
+        if (auto* p = apvts.getParameter (pid::manualBars))
+        {
+            const int index = lastStep >= 32 ? 2 : (lastStep >= 16 ? 1 : 0);
+            p->setValueNotifyingHost (p->convertTo0to1 ((float) index));
         }
 
         // A dropped pattern is meant to be played, so the page switches itself
@@ -1265,10 +1290,11 @@ namespace hhx
 
         juce::MidiMessageSequence seq;
         {
+            const int steps = manualSteps();
             const std::lock_guard<std::mutex> lock (manualMutex);
             for (int lane = 0; lane < NumLanes; ++lane)
             {
-                for (int step = 0; step < kManualSteps; ++step)
+                for (int step = 0; step < steps; ++step)
                 {
                     const float v = manualGrid[(std::size_t) lane][(std::size_t) step];
                     if (v <= 0.0f)
@@ -1313,6 +1339,7 @@ namespace hhx
         // section loudness come from the arrangement. Nothing is added inside
         // the bar, so what is written is what is heard.
         std::vector<Hit> out;
+        const int patternBars = manualBars();
         const std::lock_guard<std::mutex> lock (manualMutex);
         const int phraseBars = juce::jmax (1, s.phraseBars);
 
@@ -1320,7 +1347,7 @@ namespace hhx
         {
             const int   absBar   = startBar + bar;
             const auto  sec      = engine.settingsForBar (s, absBar);
-            const int   sourceBar = absBar % kManualBars;
+            const int   sourceBar = absBar % patternBars;
             const float barStart = (float) absBar * s.beatsPerBar;
 
             // Where this bar sits in its phrase decides whether it hands over

@@ -612,9 +612,10 @@ namespace hhx
         const auto area = getLocalBounds().reduced (76, 4);
         if (! area.contains (p))
             return false;
-        const float cellW = (float) area.getWidth() / (float) DrumsXProcessor::kManualSteps;
+        const int   steps = proc.manualSteps();
+        const float cellW = (float) area.getWidth() / (float) steps;
         const float cellH = (float) area.getHeight() / (float) numRows();
-        step = juce::jlimit (0, DrumsXProcessor::kManualSteps - 1,
+        step = juce::jlimit (0, steps - 1,
                              (int) ((float) (p.x - area.getX()) / cellW));
         lane = juce::jlimit (0, numRows() - 1, (int) ((float) (p.y - area.getY()) / cellH));
         return true;
@@ -859,7 +860,8 @@ namespace hhx
     {
         drawPanel (g, getLocalBounds());
         const auto area = getLocalBounds().reduced (76, 4);
-        const float cellW = (float) area.getWidth() / (float) DrumsXProcessor::kManualSteps;
+        const int   steps = proc.manualSteps();
+        const float cellW = (float) area.getWidth() / (float) steps;
         const float cellH = (float) area.getHeight() / (float) numRows();
         const bool  live  = proc.isManualMode();
 
@@ -873,7 +875,7 @@ namespace hhx
                                                 68.0f, cellH).toNearestInt(),
                         juce::Justification::centredLeft, false);
 
-            for (int step = 0; step < DrumsXProcessor::kManualSteps; ++step)
+            for (int step = 0; step < steps; ++step)
             {
                 const juce::Rectangle<float> cell (area.getX() + cellW * (float) step + 1.0f,
                                                    y + 1.0f, cellW - 2.0f, cellH - 2.0f);
@@ -886,10 +888,12 @@ namespace hhx
             }
         }
 
-        // Bar divider.
-        const float mid = area.getX() + area.getWidth() * 0.5f;
+        // Bar dividers, so a four-bar pattern reads as bars and not as a row of
+        // sixty-four cells.
         g.setColour (DrumsXLookAndFeel::line().brighter (0.3f));
-        g.drawVerticalLine ((int) mid, (float) area.getY(), (float) area.getBottom());
+        for (int step = 16; step < steps; step += 16)
+            g.drawVerticalLine ((int) (area.getX() + cellW * (float) step),
+                                (float) area.getY(), (float) area.getBottom());
 
         if (fileOver)
         {
@@ -1199,6 +1203,14 @@ namespace hhx
             quickModeButton.setButtonText (manualGrid.isQuickMode() ? "QUICK: 6 PIECES"
                                                                     : "PRODUCER: ALL LANES");
         };
+        // How long the written pattern is. A one-bar groove repeats every bar;
+        // four bars gives room for a figure that takes a phrase to say.
+        manualBarsBox.addItemList ({ "1 Bar", "2 Bars", "4 Bars" }, 1);
+        manualBarsBox.setTooltip ("Bars of the grid that are the pattern - the drummer plays them "
+                                  "round the song and fills at the phrase ends");
+        addCombo (manualBarsBox, pid::manualBars);
+        manualBarsBox.onChange = [this] { manualGrid.repaint(); };
+
         addAndMakeVisible (manualGrid);
 
         // ---- KIT ----------------------------------------------------------
@@ -1462,7 +1474,7 @@ namespace hhx
         for (auto& k : detailKnobs)
             k->setVisible (det);
         for (auto* c : { &fillBarsBox, &phraseBarsBox, &swingGridBox, &timeSigNumBox, &timeSigDenBox,
-                        &tempoModeBox, &triggerModeBox })
+                        &tempoModeBox, &triggerModeBox, &manualBarsBox })
             c->setVisible (det);
         bpmSlider.setVisible (det);
         rideToggle.setVisible (det);
@@ -1826,6 +1838,7 @@ namespace hhx
         triggerModeBox.setBounds (juce::Rectangle<int> (648, 296, 168, 24));
 
         quickModeButton.setBounds (juce::Rectangle<int> (16, 322, 168, 22));
+        manualBarsBox.setBounds (juce::Rectangle<int> (192, 322, 96, 22));
         manualGrid.setBounds (16, 348, getWidth() - 32, getHeight() - 364);
     }
 
