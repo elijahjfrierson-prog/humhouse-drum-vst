@@ -513,7 +513,7 @@ namespace hhx
         beats.reserve (f.hits.size());
         for (const auto& h : f.hits)
             beats.push_back (h.gridBeat() * scale);
-        if (beats.size() < 3)
+        if (beats.size() < (strict ? 4u : 3u))
             return false;
 
         std::sort (beats.begin(), beats.end());
@@ -547,6 +547,14 @@ namespace hhx
         // at half rate, so a fill of thirty-second notes over it reads as a
         // different drummer barging in.
         if (strict && s.halfTime && fastest < 0.22f)
+            return false;
+
+        // And it has to be continuous. A modern rock fill is one unbroken run
+        // into the downbeat, so a figure with a hole in the middle of it - two
+        // strokes, a rest of half a bar, two more - is not played, however well
+        // it reads on paper.
+        const float widest = *std::max_element (gaps.begin(), gaps.end());
+        if (widest > (s.halfTime ? 1.05f : 0.55f) * (strict ? 1.0f : 1.6f))
             return false;
 
         // And it has to resolve: the figure must run right up to the downbeat
@@ -676,9 +684,14 @@ namespace hhx
             // heard as feel inside a run, but a lone hit nudged off the beat is
             // heard as a mistake - which is what a one-note fill with the
             // drummer's deviation on it sounds like.
+            // Micro-timing inside a fill is a fraction of what it is under a
+            // groove: a run of sixteenths is where a shifted stroke is heard
+            // most plainly, so the deviation is scaled right down and capped at
+            // well under a thirty-second either way.
             const float dev = inARun (rel)
-                            ? h.devBeats() * scale * 0.25f
-                              * std::clamp (s.humanize, 0.0f, 1.0f)
+                            ? std::clamp (h.devBeats() * scale * 0.08f
+                                              * std::clamp (s.humanize, 0.0f, 1.0f),
+                                          -0.03f, 0.03f)
                             : 0.0f;
             const float beat = fillStartBeat + snap + dev;
             if (beat < fillStartBeat - 0.02f || beat >= phraseBeats - 0.005f)
@@ -752,16 +765,26 @@ namespace hhx
                     beats.push_back (r.beat);
             std::sort (beats.begin(), beats.end());
 
-            int strokes = 0;
-            float last = -10.0f;
+            int   strokes = 0;
+            float last    = -10.0f;
+            float widest  = 0.0f;
             for (const float b : beats)
                 if (b - last > 0.01f)
                 {
+                    if (strokes > 0)
+                        widest = std::max (widest, b - last);
                     ++strokes;
                     last = b;
                 }
 
-            if (strokes < 3)
+            // A hole inside the figure, or a figure that stops short of the
+            // downbeat, is the gap that reads as the drummer losing the thread,
+            // so the plain continuous figure is played instead.
+            const bool broken = widest > (s.halfTime ? 1.05f : 0.55f)
+                                || (strokes > 0
+                                    && last < phraseBeats - (s.halfTime ? 1.05f : 0.55f));
+
+            if (strokes < 4 || broken)
             {
                 raw.erase (std::remove_if (raw.begin(), raw.end(),
                                            [] (const Raw& r) { return r.fill; }),
@@ -832,6 +855,13 @@ namespace hhx
         if (n < 3)
             return;
 
+        // With no snare in front of him the figure is played as a tom-and-kick
+        // conversation rather than as a row of toms, which is both what a
+        // drummer does and what keeps a switched-off snare from being quietly
+        // re-voiced onto the toms.
+        const bool tomLed = ! on (LaneSnare) && ! on (LaneSnareRim)
+                            && ! down.empty() && on (LaneKick);
+
         for (int i = 0; i < n; ++i)
         {
             // Snare on the front of the figure, then down the toms into the
@@ -845,6 +875,8 @@ namespace hhx
                 const int rung = (int) ((where - 0.5f) * 2.0f * (float) down.size());
                 lane = down[(std::size_t) std::min ((int) down.size() - 1, rung)];
             }
+            if (tomLed && (i % 2) == 0 && i < n - 1)
+                lane = LaneKick;
 
             const int vel = (int) std::lround (86.0f + 36.0f * where);
             raw.push_back (Raw { fillStartBeat + step * (float) i, 0.0f,
