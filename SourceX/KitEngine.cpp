@@ -1207,7 +1207,10 @@ namespace hhx
         // with the time-keeping cymbals.
         const bool  shutHat = lane == LaneHatClosed || lane == LaneHatTight;
         const bool  openHat = lane >= LaneHatOpen1 && lane <= LaneHatOpen4;
-        const float tingTrimDb = isRideLane (lane) ? -5.5f
+        // And the kick is the floor of a rock record: it comes up so the
+        // downbeat lands under the kit rather than beside it.
+        const float tingTrimDb = lane == LaneKick ? 2.0f
+                               : isRideLane (lane) ? -5.5f
                                : shutHat           ? -3.0f
                                : openHat           ? -0.5f
                                : (ting ? -3.5f : 0.0f);
@@ -1294,19 +1297,18 @@ namespace hhx
         if (articulation == LaneHatClosed || articulation == LaneHatTight
             || articulation == LaneHatPedal)
         {
-            killIf (0.085f, [] (int a) { return a >= LaneHatOpen1 && a <= LaneHatOpen4; });
+            // The foot really has come down, so the open cymbal really does
+            // stop - but it stops the way a cymbal caught between two felts
+            // stops, not the way a gate does.
+            killIf (0.14f, [] (int a) { return a >= LaneHatOpen1 && a <= LaneHatOpen4; });
         }
         else if (articulation >= LaneHatOpen1 && articulation <= LaneHatOpen4)
         {
-            // A wider hat replaces a narrower one rather than stacking, but the
-            // foot has not come down: the cymbal it replaces washes out under
-            // the new stroke instead of being shut off.
-            killIf (0.16f, [articulation] (int a)
-                    { return a >= LaneHatOpen1 && a <= LaneHatOpen4 && a != articulation; });
-        }
-        else if (articulation == LaneChina || articulation == LaneSplash)
-        {
-            killIf (0.085f, [articulation] (int a) { return a == articulation; });
+            // Nothing here is choked. Striking a cymbal that is already ringing
+            // does not silence it, and the openness ladder is one pair of hats
+            // played at different gaps - so an open stroke over an open stroke
+            // washes rather than cutting, which is what used to make a hat or
+            // ride damp out for no reason in the middle of a groove.
         }
     }
 

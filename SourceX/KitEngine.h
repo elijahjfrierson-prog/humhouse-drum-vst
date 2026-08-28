@@ -311,7 +311,7 @@ namespace hhx
         /** Three mics per stroke and cymbals that ring for seconds mean a busy
             bar needs far more voices than it has notes; too few and the engine
             steals tails mid-ring, which reads as a one-shot cutting off. */
-        static constexpr int kMaxVoices  = 384;
+        static constexpr int kMaxVoices  = 768;
         static constexpr int kBleedDelay = 512;   // samples, ~11 ms at 48 kHz
 
         std::array<LaneSlot, NumLanes> lanes;

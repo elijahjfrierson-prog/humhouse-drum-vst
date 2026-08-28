@@ -1167,6 +1167,14 @@ namespace hhx
             const std::lock_guard<std::mutex> lock (manualMutex);
             manualGrid[(std::size_t) lane][(std::size_t) step] = juce::jlimit (0.0f, 1.0f, velocity01);
         }
+
+        // Writing a note means playing it: the first stroke put in the grid
+        // switches manual mode on, the same way a dropped file does, so one
+        // note is enough to hear the drummer build a groove around it.
+        if (velocity01 > 0.0f && ! isManualMode())
+            if (auto* p = apvts.getParameter (pid::manualMode))
+                p->setValueNotifyingHost (1.0f);
+
         triggerAsyncUpdate();
     }
 
@@ -1337,11 +1345,45 @@ namespace hhx
         // a drummer would rather than looping it: the notes are theirs, while
         // the fills at the phrase ends, the piece switches of the block and its
         // section loudness come from the arrangement. Nothing is added inside
-        // the bar, so what is written is what is heard.
+        // the bar on a piece the player has written, so what is written is
+        // what is heard - while a piece they have not written at all is played
+        // by the drummer, which is what makes one note read as a groove.
         std::vector<Hit> out;
         const int patternBars = manualBars();
         const std::lock_guard<std::mutex> lock (manualMutex);
         const int phraseBars = juce::jmax (1, s.phraseBars);
+
+        // Which part of the kit the player has actually written. A drum machine
+        // plays back what is on the grid and nothing else, which is why one
+        // written kick is one written kick; a session drummer hearing that kick
+        // plays a groove around it. So the pieces the player has said nothing
+        // about are played by the drummer, and the ones they have written are
+        // theirs alone.
+        const auto family = [] (int lane)
+        {
+            if (lane == LaneKick)        return 0;
+            if (isSnareLane (lane))      return 1;
+            if (isHatLane (lane))        return 2;
+            if (isRideLane (lane))       return 3;
+            if (isTomLane (lane))        return 4;
+            if (isCymbalLane (lane))     return 5;
+            return 6;
+        };
+
+        unsigned written = 0;
+        for (int lane = 0; lane < NumLanes; ++lane)
+            for (int step = 0; step < patternBars * 16; ++step)
+                if (manualGrid[(std::size_t) lane][(std::size_t) step] > 0.0f)
+                {
+                    written |= 1u << family (lane);
+                    break;
+                }
+
+        std::vector<Hit> band;
+        if (written != 0)
+            for (const auto& h : engine.renderBars (s, startBar, numBars))
+                if ((written & (1u << family (h.lane))) == 0)
+                    band.push_back (h);
 
         for (int bar = 0; bar < numBars; ++bar)
         {
@@ -1383,6 +1425,19 @@ namespace hhx
 
             for (const auto& h : fill)
                 out.push_back ({ barStart + fillStart + h.beat, h.lane, h.velocity });
+
+            // The rest of the kit is played around the written part, and it
+            // stays out of the handover for the same reason the written part
+            // does: the fill is the whole bar's figure, not a layer over it.
+            for (const auto& h : band)
+            {
+                const float inBar = h.beat - barStart;
+                if (inBar < -0.01f || inBar >= s.beatsPerBar)
+                    continue;
+                if (! fill.empty() && inBar >= fillStart - 0.01f)
+                    continue;
+                out.push_back (h);
+            }
         }
         std::sort (out.begin(), out.end(), [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
         return out;

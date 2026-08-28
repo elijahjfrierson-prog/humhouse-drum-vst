@@ -129,6 +129,22 @@ namespace hhx
             return size <= 0 ? 0 : ((value % size) + size) % size;
         }
 
+        /** How much of a take was played in triplets. Corpus positions are in
+            1/48 of a beat, so a straight grid - down to thirty-seconds - lands
+            on multiples of six and a triplet subdivision does not. A metal or
+            punk part with a third of its strokes off the straight grid is a
+            shuffle, however tightly it is quantised. */
+        float tripletShare (const Phrase& p)
+        {
+            if (p.hits.empty())
+                return 0.0f;
+            int off = 0;
+            for (const auto& h : p.hits)
+                if ((h.grid % 6u) != 0u)
+                    ++off;
+            return (float) off / (float) p.hits.size();
+        }
+
         /** The seed a block renders from: the song seed folded with the block's
             identity, so two blocks at the same XY position still pick their own
             takes and neither changes when the other is edited. */
@@ -354,10 +370,30 @@ namespace hhx
             return (float) p.hits.size() / (float) std::max<int> (1, p.bars);
         };
 
+        // A straight feel is played straight. A take whose own eighths were
+        // recorded shuffled reads as a swing however tight the grid is, and in
+        // metal or punk that is not a feel, it is a mistake - so those takes are
+        // not candidates unless Swing is actually asked for.
+        std::vector<int> straight;
+        if (s.swing < 0.12f)
+        {
+            for (const int i : ranked)
+            {
+                const auto& p = corpus->beat (i);
+                if (p.swing <= 0.28f && tripletShare (p) <= 0.12f)
+                    straight.push_back (i);
+            }
+        }
+        // With the Swing knob at zero the song is not "mostly straight", it is
+        // straight: one shuffled take is enough to make a metal part sound
+        // wrong, so a single straight candidate beats a wide shuffled choice.
+        const std::size_t needed = song.swing <= 0.02f ? 1u : 4u;
+        const auto& feelPool = straight.size() >= needed ? straight : ranked;
+
         std::vector<int> dense;
         {
             const float floorPerBar = 0.55f * densityCap (song);
-            for (const int i : ranked)
+            for (const int i : feelPool)
                 if (perBar (i) >= floorPerBar)
                     dense.push_back (i);
 
@@ -366,7 +402,7 @@ namespace hhx
             // shortlist has.
             if (dense.size() < 4)
             {
-                dense = ranked;
+                dense = feelPool;
                 std::stable_sort (dense.begin(), dense.end(),
                                   [&] (int a, int b)
                                   {
@@ -376,7 +412,7 @@ namespace hhx
                 dense.resize (std::min<std::size_t> (6, dense.size()));
             }
         }
-        const auto& pool = dense.empty() ? ranked : dense;
+        const auto& pool = dense.empty() ? feelPool : dense;
 
         // Seeded weighted choice over the k nearest takes: the closest are the
         // most likely, but a held XY position still breathes between real
@@ -543,6 +579,12 @@ namespace hhx
         if (strict && typical * secPerBeat > 0.46f)
             return false;
 
+        // A shuffled fill over a straight groove is the single most amateur
+        // thing a session player can do, so it is not offered when the song is
+        // straight.
+        if (strict && s.swing < 0.12f && (f.swing > 0.30f || tripletShare (f) > 0.12f))
+            return false;
+
         // Half time is played half as busy: at this feel the groove is moving
         // at half rate, so a fill of thirty-second notes over it reads as a
         // different drummer barging in.
@@ -643,25 +685,6 @@ namespace hhx
         const float srcSkip  = halfFill ? kSourceBar * 0.5f : 0.0f;
         const float scale    = dstBar / kSourceBar;
 
-        // Where every stroke of the take lands once it has been stretched, so a
-        // stroke can be told whether it is part of a run or standing on its own.
-        std::vector<float> placed;
-        placed.reserve (f.hits.size());
-        for (const auto& h : f.hits)
-            if (h.gridBeat() >= srcSkip)
-                placed.push_back ((h.gridBeat() - srcSkip) * scale);
-        std::sort (placed.begin(), placed.end());
-
-        const auto inARun = [&placed] (float rel)
-        {
-            // A neighbour within a sixteenth means the stroke is one of a run,
-            // where the drummer's own push and drag is the point of the take.
-            for (const float other : placed)
-                if (std::abs (other - rel) > 0.01f && std::abs (other - rel) < 0.26f)
-                    return true;
-            return false;
-        };
-
         for (const auto& h : f.hits)
         {
             const float src = h.gridBeat();
@@ -673,27 +696,20 @@ namespace hhx
             // lands its hits between subdivisions, and those are pulled back
             // onto the nearest subdivision the take was played at, a thirty
             // second or a triplet sixteenth, so a roll keeps all its strokes.
-            // The take's own micro-timing then rides on top, but only as far
-            // as Humanize asks.
             const float rel  = (src - srcSkip) * scale;
             const float q32  = std::round (rel * 8.0f) / 8.0f;
             const float q24  = std::round (rel * 6.0f) / 6.0f;
-            const float snap = std::abs (rel - q32) <= std::abs (rel - q24) ? q32 : q24;
+            // Triplets are only an option when the figure was played in them.
+            // Snapping a straight roll to the nearest triplet is where a metal
+            // fill picks up a shuffle it was never played with.
+            const bool  triplets = f.swing > 0.30f || s.swing > 0.12f;
+            const float snap = (! triplets || std::abs (rel - q32) <= std::abs (rel - q24))
+                             ? q32 : q24;
 
-            // An isolated stroke is played dead on the grid. Micro-timing is
-            // heard as feel inside a run, but a lone hit nudged off the beat is
-            // heard as a mistake - which is what a one-note fill with the
-            // drummer's deviation on it sounds like.
-            // Micro-timing inside a fill is a fraction of what it is under a
-            // groove: a run of sixteenths is where a shifted stroke is heard
-            // most plainly, so the deviation is scaled right down and capped at
-            // well under a thirty-second either way.
-            const float dev = inARun (rel)
-                            ? std::clamp (h.devBeats() * scale * 0.08f
-                                              * std::clamp (s.humanize, 0.0f, 1.0f),
-                                          -0.03f, 0.03f)
-                            : 0.0f;
-            const float beat = fillStartBeat + snap + dev;
+            // And it is played to that grid, full stop: a fill is the one place
+            // a listener is counting, so the drummer's own push and drag -
+            // which is feel under a groove - reads here as being out of time.
+            const float beat = fillStartBeat + snap;
             if (beat < fillStartBeat - 0.02f || beat >= phraseBeats - 0.005f)
                 continue;
 
@@ -726,6 +742,58 @@ namespace hhx
                 continue;
             }
             raw.push_back (hit);
+        }
+
+        // How busy the fill is allowed to be, measured against the groove it
+        // interrupts. In the modern rock records this is cut against, the last
+        // bar of a phrase carries between one and a half and two times the
+        // strokes of the bars around it - not four times, which is what reads
+        // as an endless roll rather than as a fill. Anything past that is
+        // thinned off the thirty-seconds first, so what is left is the same
+        // figure played in sixteenths.
+        {
+            const float window = std::max (0.25f, phraseBeats - fillStartBeat);
+            int groove = 0, strokes = 0;
+            for (const auto& r : raw)
+                (r.fill ? strokes : groove)++;
+
+            const float grooveBar = phraseBeats > window
+                                  ? (float) groove * dstBar / (phraseBeats - window)
+                                  : 12.0f;
+            const int ceiling = std::clamp ((int) std::lround (grooveBar * 2.0f * window / dstBar),
+                                            5, 24);
+
+            if (strokes > ceiling)
+            {
+                std::vector<std::size_t> fine;
+                for (std::size_t i = 0; i < raw.size(); ++i)
+                    if (raw[i].fill)
+                    {
+                        const float rel = (raw[i].beat - fillStartBeat) * 4.0f;
+                        if (std::abs (rel - std::round (rel)) > 0.05f)
+                            fine.push_back (i);
+                    }
+                std::sort (fine.begin(), fine.end(), [&] (std::size_t a, std::size_t b)
+                           { return raw[a].beat < raw[b].beat; });
+
+                // Taken at an even stride, so thinning a run leaves a slower
+                // run rather than a hole at the front of the bar.
+                const int over = std::min ((int) fine.size(), strokes - ceiling);
+                std::vector<bool> drop (raw.size(), false);
+                if (over > 0)
+                {
+                    const double stride = (double) fine.size() / (double) over;
+                    for (int k = 0; k < over; ++k)
+                        drop[fine[std::min (fine.size() - 1,
+                                            (std::size_t) ((double) k * stride))]] = true;
+                }
+
+                std::size_t write = 0;
+                for (std::size_t i = 0; i < raw.size(); ++i)
+                    if (! drop[i])
+                        raw[write++] = raw[i];
+                raw.resize (write);
+            }
         }
 
         // At half time the groove moves at half rate, so the fill is played at
@@ -1925,6 +1993,54 @@ namespace hhx
                 for (const auto i : drop)
                     out.erase (out.begin() + (std::ptrdiff_t) i);
             }
+        }
+
+        // The one is the one. A bar that starts with no kick under it has no
+        // floor when a chorus or a second verse comes in, so wherever the kick
+        // is in the kit, the downbeat gets it - unless the take deliberately
+        // marks that downbeat with the snare instead, which is a figure, not an
+        // accident - and not where a fill is already turning the corner, since
+        // there the figure is the bar.
+        if ((s.laneMask & (1u << LaneKick)) != 0)
+        {
+            const float fillFrom = includeFill
+                                 ? phraseBeats - std::min (phraseBeats,
+                                                           dstBar * std::max (0.5f, s.fillLengthBars))
+                                 : phraseBeats;
+
+            float kickVel = 0.0f;
+            int   kicks   = 0;
+            for (const auto& h : out)
+                if (h.lane == LaneKick) { kickVel += (float) h.velocity; ++kicks; }
+            const float typical = kicks > 0 ? kickVel / (float) kicks
+                                            : 96.0f * velGain;
+
+            for (int bar = 0; bar < bars; ++bar)
+            {
+                const float downbeat = (float) bar * dstBar;
+                if (downbeat >= fillFrom - 0.02f)
+                    continue;
+
+                bool marked = false, snareOn1 = false;
+                for (const auto& h : out)
+                {
+                    if (std::abs (h.beat - downbeat) > 0.06f)
+                        continue;
+                    if (h.lane == LaneKick)                   marked   = true;
+                    if (isSnareLane (h.lane) && h.velocity > 60) snareOn1 = true;
+                }
+
+                if (marked || (bar > 0 && snareOn1))
+                    continue;
+
+                out.push_back ({ downbeat, (std::uint8_t) LaneKick,
+                                 (std::uint8_t) std::clamp ((int) std::lround (typical * 1.04f),
+                                                            1, 127),
+                                 (std::uint8_t) (bar % kRoundRobins) });
+            }
+
+            std::stable_sort (out.begin(), out.end(),
+                              [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
         }
         return out;
     }

@@ -474,6 +474,40 @@ int main()
         notMidi.deleteFile();
     }
 
+    // 3c-iv. One note is a groove: what the player writes is played back
+    //        exactly, and the instruments they left alone are filled in by the
+    //        drummer, which is what makes the grid feel like Logic's rather
+    //        than like a step sequencer.
+    {
+        hhx::DrumsXProcessor proc;
+        proc.prepareToPlay (48000.0, 128);
+        proc.setManualStep (hhx::LaneKick, 0, 1.0f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        check (proc.isManualMode(), "writing a note switches manual mode on");
+
+        const auto hits = proc.renderBars (0, 4);
+        const auto has = [&hits] (const std::function<bool (int)>& want)
+        {
+            for (const auto& h : hits)
+                if (want (h.lane))
+                    return true;
+            return false;
+        };
+
+        // Only the fill at the end of a phrase may add kicks of its own, so the
+        // first bar has to hold exactly the one stroke that was written.
+        int kicks = 0;
+        for (const auto& h : hits)
+            if (h.lane == hhx::LaneKick && h.beat < 4.0f)
+                ++kicks;
+
+        check (kicks == 1,
+               "the one kick that was written is the only kick played");
+        check (has ([] (int l) { return hhx::isSnareLane (l); })
+               && has ([] (int l) { return hhx::isHatLane (l) || hhx::isRideLane (l); }),
+               "the drummer completes the bar with the parts left unwritten");
+    }
+
     // 3d. The mix chain: the production voicings change how the kit is seated
     //     without ever handing the host a clipped buffer, and the same settings
     //     always render the same audio.

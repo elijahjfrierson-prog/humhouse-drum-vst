@@ -1225,6 +1225,54 @@ int main (int argc, char** argv)
         }
     }
 
+    // 17f. Every bar that is not handing over to a fill starts on a kick: a
+    //      chorus or a verse opening without one lands with nothing under it.
+    {
+        for (const float cx : { 0.2f, 0.5f, 0.85f })
+        {
+            auto t = s;
+            t.complexity = cx;
+            t.fillAmount = 0.0f;
+            const auto hits = engine.renderBars (t, 0, 16);
+            int missing = 0;
+            for (int bar = 0; bar < 16; ++bar)
+            {
+                const float downbeat = (float) bar * t.beatsPerBar;
+                bool kick = false;
+                for (const auto& h : hits)
+                    if (h.lane == hhx::LaneKick
+                        && std::abs (h.beat - downbeat) < 0.06f)
+                        kick = true;
+                if (! kick)
+                    ++missing;
+            }
+            check (missing == 0, "a kick lands on the one of every bar (cx "
+                                 + std::to_string ((int) (cx * 100)) + ")");
+        }
+    }
+
+    // 17g. Straight is straight: with Swing at zero nothing - groove or fill -
+    //      may be played off the straight grid, which is the shuffle that used
+    //      to creep into the metal characters.
+    {
+        auto t = s;
+        t.swing = 0.0f;
+        t.fillAmount = 1.0f;
+        const auto hits = engine.renderBars (t, 0, 32);
+        // A triplet sixteenth sits a third or two thirds of the way through a
+        // sixteenth; the straight grid only reaches the halfway point, so a
+        // stroke near those thirds was played in triplets, not pushed by feel.
+        int off = 0;
+        for (const auto& h : hits)
+        {
+            const float in16 = h.beat * 4.0f - std::floor (h.beat * 4.0f);
+            if (std::min (std::abs (in16 - 1.0f / 3.0f),
+                          std::abs (in16 - 2.0f / 3.0f)) < 0.1f)
+                ++off;
+        }
+        check (off == 0, "a straight song has no triplet strokes in it");
+    }
+
     // 18. Load time: the corpus is parsed well inside the 150 ms budget.
     {
         const auto start = std::chrono::steady_clock::now();
