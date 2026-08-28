@@ -59,6 +59,10 @@ namespace hhx
         could not be written or a drag is already running. */
     bool startMidiDrag (juce::Component& source, DrumsXProcessor&, int numBars);
 
+    /** The same for the manual grid: drags the two-bar pattern out on its own,
+        so the edited pattern can be dropped straight into a track. */
+    bool startManualMidiDrag (juce::Component& source, DrumsXProcessor&);
+
     /** True while an external MIDI drag is in flight, so the component that
         started it can swallow the click that would otherwise follow. */
     bool midiDragInProgress();
@@ -114,25 +118,55 @@ namespace hhx
 
         A gesture stays on the cell it started in unless the pointer really
         travels to another one, and it never writes the same cell twice, so a
-        small hand movement no longer sprays notes across the kit. */
-    class ManualPatternGrid : public juce::Component
+        small hand movement no longer sprays notes across the kit.
+
+        A note can also be picked up and dropped on another cell, a MIDI file
+        dropped on the grid becomes the pattern, and dragging off the grid drops
+        the pattern into the host as MIDI. */
+    class ManualPatternGrid : public juce::Component,
+                              public juce::FileDragAndDropTarget
     {
     public:
         explicit ManualPatternGrid (DrumsXProcessor&);
+
+        /** Quick mode is Logic's editor: six rows - kick, snare, hat, ride,
+            toms, crash - and the engine decides which piece of the group is
+            struck. Producer mode shows all thirty lanes for when the exact
+            articulation matters. */
+        void setQuickMode (bool q);
+        bool isQuickMode() const { return quick; }
+
+        static constexpr int kQuickRows = 6;
 
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
         void mouseUp (const juce::MouseEvent&) override;
 
+        bool isInterestedInFileDrag (const juce::StringArray& files) override;
+        void fileDragEnter (const juce::StringArray&, int, int) override;
+        void fileDragExit (const juce::StringArray&) override;
+        void filesDropped (const juce::StringArray& files, int x, int y) override;
+
     private:
         bool cellAt (juce::Point<int> p, int& lane, int& step) const;
 
+        /** Rows on screen, and the lane a row writes to. */
+        int  numRows() const { return quick ? kQuickRows : (int) NumLanes; }
+        int  rowLane (int row) const;
+        /** The loudest note any piece of this row's group holds. */
+        float rowValue (int row, int step) const;
+        void writeRow (int row, int step, float velocity01);
+
         DrumsXProcessor& proc;
+        bool  quick = true;
         int   gestureLane = -1, gestureStep = -1;
         bool  erasing = false;
         bool  adjusting = false;          // dragging one note's velocity
+        bool  moving = false;             // carrying a note to another cell
+        bool  draggedOut = false;         // this gesture left as a MIDI file
         float gestureValue = 0.0f;
+        bool  fileOver = false;           // a MIDI file is hovering the grid
     };
 
     /** Drag this out of the plugin to drop the arrangement into the host as a
@@ -221,16 +255,23 @@ namespace hhx
         std::unique_ptr<LabelledKnob> sectionLevelKnob;
         std::vector<std::unique_ptr<juce::TextButton>> variationButtons;
         juce::Label       padCaption;
+        /** Which block the piece switches are editing, so the row reads as the
+            selected block's own edit space rather than a global kit mask. */
+        juce::Label       blockCaption;
         std::vector<LaneGroup> laneGroups;
 
         // DETAILS
         std::vector<std::unique_ptr<LabelledKnob>> detailKnobs;
-        juce::ComboBox    fillBarsBox, phraseBarsBox, swingGridBox, timeSigNumBox, timeSigDenBox, tempoModeBox;
+        juce::ComboBox    fillBarsBox, phraseBarsBox, swingGridBox, timeSigNumBox, timeSigDenBox, tempoModeBox,
+                          triggerModeBox;
         juce::Slider      bpmSlider;
         juce::ToggleButton rideToggle { "Ride instead of hats" };
         juce::ToggleButton halfTimeToggle { "Half time" };
         juce::ToggleButton manualToggle { "Manual pattern" };
         juce::TextButton   clearManualButton { "CLEAR" };
+        juce::TextButton   quickModeButton { "QUICK: 6 PIECES" };
+        /** How many bars of the grid are the pattern: 1, 2 or 4. */
+        juce::ComboBox     manualBarsBox;
         ManualPatternGrid  manualGrid;
 
         // KIT
@@ -251,6 +292,11 @@ namespace hhx
         std::unique_ptr<LabelledKnob> roomSizeKnob, roomDampKnob, roomMixKnob, roomDuckKnob;
         juce::ComboBox roomSpaceBox;
         juce::Label    roomSpaceLabel { {}, "SPACE" };
+        std::unique_ptr<LabelledKnob> punchKnob, glueKnob, driveKnob, squeezeKnob;
+        juce::ComboBox mixVoicingBox;
+        juce::Label    mixVoicingLabel { {}, "PRODUCTION" };
+        juce::ComboBox squeezeGlowBox;
+        juce::Label    squeezeGlowLabel { {}, "INDUSTRY SQUEEZE" };
 
         std::unique_ptr<juce::FileChooser> chooser;
         int startupChecks = 16;

@@ -40,6 +40,12 @@ namespace hhx
         bool  halfTime   = false;
         int   variationRhythm = 0;
         int   variationCymbal = 0;
+
+        /** Which kit pieces this block plays, and which of them are pushed
+            down to ghost level. A toms-only intro is a mask on that block:
+            the pieces it drops are still played by every other block. */
+        std::uint32_t laneMask  = (1u << NumLanes) - 1u;
+        std::uint32_t ghostMask = 0;
     };
 
     /** How many bars the whole arrangement covers. */
@@ -55,6 +61,13 @@ namespace hhx
         float complexity   = 0.45f;   // pad X: which take is picked
         float intensity    = 0.55f;   // pad Y: which take is picked
         float sectionVelocity = 0.55f; // Intensity knob: how hard it is played
+
+        /** The song's own pad position. The part is chosen from this, so every
+            block of the arrangement plays the same part and the block's own
+            knobs only decide how hard and how busy it is played. Negative
+            means "there is no arrangement": use complexity/intensity. */
+        float songComplexity = -1.0f;
+        float songIntensity  = -1.0f;
         int   character    = 1;        // index into the corpus character table
 
         // --- fills ------------------------------------------------------
@@ -137,6 +150,14 @@ namespace hhx
         static float densityCap (const PerformanceSettings& s);
 
         bool phraseEndsWithFill (const PerformanceSettings& s, int phraseIndex) const;
+
+        /** The fill this phrase hands over with, as beats from the start of the
+            fill. Manual mode keeps the player's own pattern as the groove and
+            asks for this, so a written pattern is still played with fills the
+            way a drummer plays it rather than looped verbatim. */
+        std::vector<Hit> fillForPhrase (const PerformanceSettings& s,
+                                        int   phraseIndex,
+                                        float fillBeats) const;
 
         /** Where the current XY position lands: the nearest real takes, for the
             landing-zone display on the performance page.
@@ -232,6 +253,16 @@ namespace hhx
                          float phraseBeats,
                          std::uint64_t seed,
                          std::vector<Raw>& raw) const;
+
+        /** A plain figure into the downbeat, played dead on the grid: snare and
+            toms down the kit with the kick under the last stroke. Used when the
+            take chosen for the phrase survives the tempo, the feel and the
+            block's piece switches as one or two lonely strokes, which reads as
+            a mistake rather than as a simple fill. */
+        void appendSimpleFill (const PerformanceSettings& s,
+                               float fillStartBeat,
+                               float phraseBeats,
+                               std::vector<Raw>& raw) const;
 
         int fillIndexForPhrase (const PerformanceSettings& s, int phraseIndex) const;
 

@@ -215,6 +215,34 @@ namespace hhx
         }
 
         bool dragRunning = false;
+
+        /** The kit as a player thinks of it: seven pieces, each standing for the
+            articulation lanes behind it. Both the piece switches and the block
+            menu work in these terms rather than in 30 lanes. */
+        struct PieceGroup { const char* name; std::vector<int> lanes; };
+
+        std::vector<int> laneRange (int first, int last)
+        {
+            std::vector<int> lanes;
+            for (int lane = first; lane <= last; ++lane)
+                lanes.push_back (lane);
+            return lanes;
+        }
+
+        const std::vector<PieceGroup>& pieceGroups()
+        {
+            static const std::vector<PieceGroup> groups
+            {
+                { "KICK",  laneRange (LaneKick,      LaneKick) },
+                { "SNARE", laneRange (LaneSnare,     LaneSnareRoll) },
+                { "HATS",  laneRange (LaneHatClosed, LaneHatBell) },
+                { "RIDE",  laneRange (LaneRideBow,   LaneRideCrash) },
+                { "CRASH", laneRange (LaneCrashL,    LaneSplash) },
+                { "TOMS",  laneRange (LaneTom1,      LaneTom4) },
+                { "PERC",  laneRange (LanePerc,      LanePerc) }
+            };
+            return groups;
+        }
     }
 
     bool midiDragInProgress()
@@ -234,6 +262,31 @@ namespace hhx
         auto& file = dragFile();
         file = folder.getChildFile ("HumHouse Drums X " + juce::String (numBars) + " bars.mid");
         if (! proc.exportArrangementMidi (file, numBars))
+            return false;
+
+        dragRunning = true;
+        const bool started = juce::DragAndDropContainer::performExternalDragDropOfFiles (
+            juce::StringArray (file.getFullPathName()), false, &source,
+            [] { dragRunning = false; });
+
+        if (! started)
+            dragRunning = false;
+
+        return started;
+    }
+
+    bool startManualMidiDrag (juce::Component& source, DrumsXProcessor& proc)
+    {
+        if (dragRunning || ! proc.hasManualNotes())
+            return false;
+
+        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("HumHouse Drums X");
+        folder.createDirectory();
+
+        auto& file = dragFile();
+        file = folder.getChildFile ("HumHouse Drums X pattern.mid");
+        if (! proc.exportManualMidi (file))
             return false;
 
         dragRunning = true;
@@ -463,7 +516,29 @@ namespace hhx
         for (const int bars : { 2, 4, 8, 16, 32 })
             lengths.addItem (200 + bars, juce::String (bars) + " bars");
 
+        // "Play as": the whole block in one click, from coming in on kick and
+        // hats to a chorus with the crashes wide open.
+        juce::PopupMenu presets;
+        for (int p = 0; p <= (int) DrumsXProcessor::BlockPreset::wholeKit; ++p)
+            presets.addItem (300 + p,
+                             DrumsXProcessor::blockPresetName ((DrumsXProcessor::BlockPreset) p));
+
+        // Which pieces this block plays, without disturbing the blocks either
+        // side of it.
+        const auto lanes = proc.getSectionLanes (index);
+        juce::PopupMenu pieces;
+        for (int gp = 0; gp < (int) pieceGroups().size(); ++gp)
+        {
+            const auto& group = pieceGroups()[(std::size_t) gp];
+            bool on = false;
+            for (const int lane : group.lanes)
+                on = on || (lanes & (1u << lane)) != 0;
+            pieces.addItem (400 + gp, group.name, true, on);
+        }
+
         juce::PopupMenu m;
+        m.addSubMenu ("Play as", presets);
+        m.addSubMenu ("Pieces", pieces);
         m.addSubMenu ("Section", types);
         m.addSubMenu ("Length", lengths);
         m.addItem (2, "Duplicate");
@@ -474,7 +549,15 @@ namespace hhx
                          {
                              if (safe == nullptr)
                                  return;
-                             if (result >= 200)      safe->proc.setSectionBars (index, result - 200);
+                             if (result >= 400)
+                             {
+                                 const int gp = result - 400;
+                                 if (gp < (int) pieceGroups().size())
+                                     safe->proc.toggleSectionPiece (index, pieceGroups()[(std::size_t) gp].lanes);
+                             }
+                             else if (result >= 300)
+                                 safe->proc.applyBlockPreset (index, (DrumsXProcessor::BlockPreset) (result - 300));
+                             else if (result >= 200) safe->proc.setSectionBars (index, result - 200);
                              else if (result >= 100) safe->proc.setSectionType (index, result - 100);
                              else if (result == 2)   safe->proc.duplicateSection (index);
                              else if (result == 3)   safe->proc.removeSection (index);
@@ -529,28 +612,110 @@ namespace hhx
         const auto area = getLocalBounds().reduced (76, 4);
         if (! area.contains (p))
             return false;
-        const float cellW = (float) area.getWidth() / (float) DrumsXProcessor::kManualSteps;
-        const float cellH = (float) area.getHeight() / (float) NumLanes;
-        step = juce::jlimit (0, DrumsXProcessor::kManualSteps - 1,
+        const int   steps = proc.manualSteps();
+        const float cellW = (float) area.getWidth() / (float) steps;
+        const float cellH = (float) area.getHeight() / (float) numRows();
+        step = juce::jlimit (0, steps - 1,
                              (int) ((float) (p.x - area.getX()) / cellW));
-        lane = juce::jlimit (0, NumLanes - 1, (int) ((float) (p.y - area.getY()) / cellH));
+        lane = juce::jlimit (0, numRows() - 1, (int) ((float) (p.y - area.getY()) / cellH));
         return true;
+    }
+
+    namespace
+    {
+        // Logic's six-row editor: a row is a group of pieces, and the engine
+        // picks which one of the group is struck. The lane a row writes to is
+        // the plainest member of its group; the openness ladder, the ride's
+        // bow or bell and which tom is played are then chosen while the part
+        // is performed rather than drawn by hand.
+        constexpr int kQuickWrite[ManualPatternGrid::kQuickRows]
+            { LaneKick, LaneSnare, LaneHatClosed, LaneRideBow, LaneTom2, LaneCrashL };
+
+        bool quickRowHolds (int row, int lane)
+        {
+            switch (row)
+            {
+                case 0: return lane == LaneKick;
+                case 1: return isSnareLane (lane);
+                case 2: return isHatLane (lane);
+                case 3: return lane >= LaneRideBow && lane <= LaneRideCrash;
+                case 4: return lane >= LaneTom1 && lane <= LaneTom4;
+                case 5: return (lane >= LaneCrashL && lane <= LaneSplash) || lane == LanePerc;
+                default: return false;
+            }
+        }
+
+        const char* kQuickRowName[ManualPatternGrid::kQuickRows]
+            { "Kick", "Snare", "Hat", "Ride", "Toms", "Crash" };
+    }
+
+    void ManualPatternGrid::setQuickMode (bool q)
+    {
+        quick = q;
+        repaint();
+    }
+
+    int ManualPatternGrid::rowLane (int row) const
+    {
+        if (! quick)
+            return juce::jlimit (0, (int) NumLanes - 1, row);
+        return kQuickWrite[juce::jlimit (0, kQuickRows - 1, row)];
+    }
+
+    float ManualPatternGrid::rowValue (int row, int step) const
+    {
+        if (! quick)
+            return proc.getManualStep (row, step);
+
+        float v = 0.0f;
+        for (int lane = 0; lane < (int) NumLanes; ++lane)
+            if (quickRowHolds (row, lane))
+                v = std::max (v, proc.getManualStep (lane, step));
+        return v;
+    }
+
+    void ManualPatternGrid::writeRow (int row, int step, float velocity01)
+    {
+        if (! quick)
+        {
+            proc.setManualStep (row, step, velocity01);
+            return;
+        }
+
+        // Writing a row clears whatever piece of the group was there, so a
+        // cell never holds two articulations of the same hand at once.
+        for (int lane = 0; lane < (int) NumLanes; ++lane)
+            if (quickRowHolds (row, lane))
+                proc.setManualStep (lane, step, 0.0f);
+        if (velocity01 > 0.0f)
+            proc.setManualStep (rowLane (row), step, velocity01);
     }
 
     void ManualPatternGrid::mouseDown (const juce::MouseEvent& e)
     {
         gestureLane = gestureStep = -1;
         adjusting = false;
+        moving = false;
+        draggedOut = false;
 
         int lane = 0, step = 0;
         if (! cellAt (e.getPosition(), lane, step))
             return;
-        erasing = e.mods.isRightButtonDown() || proc.getManualStep (lane, step) > 0.0f;
+        erasing = e.mods.isRightButtonDown() || rowValue (lane, step) > 0.0f;
         gestureLane  = lane;
         gestureStep  = step;
         gestureValue = erasing ? 0.0f : 0.8f;
 
-        proc.setManualStep (lane, step, gestureValue);
+        // A left click on a written cell picks that note up instead of wiping
+        // it: it is only erased if the gesture ends where it began.
+        if (erasing && ! e.mods.isRightButtonDown())
+        {
+            moving = true;
+            gestureValue = rowValue (lane, step);
+            return;
+        }
+
+        writeRow (lane, step, gestureValue);
         repaint();
     }
 
@@ -563,6 +728,29 @@ namespace hhx
         const bool inCell   = cellAt (e.getPosition(), lane, step);
         const bool sameCell = ! inCell || (lane == gestureLane && step == gestureStep);
 
+        // Carrying a note off the grid entirely drops the pattern into the host
+        // as MIDI, the way the arrangement blocks drag out.
+        if (! inCell && ! draggedOut && e.getDistanceFromDragStart() >= 12
+            && ! getLocalBounds().contains (e.getPosition()))
+        {
+            draggedOut = startManualMidiDrag (*this, proc);
+            if (draggedOut)
+                return;
+        }
+
+        // Picked-up note: it follows the pointer and lands where it is dropped.
+        if (moving)
+        {
+            if (sameCell)
+                return;
+            writeRow (gestureLane, gestureStep, 0.0f);
+            writeRow (lane, step, gestureValue);
+            gestureLane = lane;
+            gestureStep = step;
+            repaint();
+            return;
+        }
+
         // A vertical drag that never leaves the clicked cell sets that one
         // note's velocity, so nudging the mouse cannot place anything else.
         if (! adjusting && sameCell && ! erasing
@@ -574,7 +762,7 @@ namespace hhx
         {
             const float v = juce::jlimit (0.1f, 1.0f,
                                           0.8f - (float) e.getDistanceFromDragStartY() / 160.0f);
-            proc.setManualStep (gestureLane, gestureStep, v);
+            writeRow (gestureLane, gestureStep, v);
             repaint();
             return;
         }
@@ -584,16 +772,60 @@ namespace hhx
 
         // The pointer genuinely travelled to another cell: paint that one, in
         // the mode the gesture started in, and continue from there.
-        proc.setManualStep (lane, step, gestureValue);
+        writeRow (lane, step, gestureValue);
         gestureLane = lane;
         gestureStep = step;
         repaint();
     }
 
-    void ManualPatternGrid::mouseUp (const juce::MouseEvent&)
+    void ManualPatternGrid::mouseUp (const juce::MouseEvent& e)
     {
+        // A pick-up that never travelled is a plain click: erase the note.
+        if (moving && ! draggedOut && e.getDistanceFromDragStart() < 6)
+        {
+            writeRow (gestureLane, gestureStep, 0.0f);
+            repaint();
+        }
+
         gestureLane = gestureStep = -1;
         adjusting = false;
+        moving = false;
+        draggedOut = false;
+    }
+
+    bool ManualPatternGrid::isInterestedInFileDrag (const juce::StringArray& files)
+    {
+        for (const auto& f : files)
+            if (f.endsWithIgnoreCase (".mid") || f.endsWithIgnoreCase (".midi"))
+                return true;
+        return false;
+    }
+
+    void ManualPatternGrid::fileDragEnter (const juce::StringArray&, int, int)
+    {
+        fileOver = true;
+        repaint();
+    }
+
+    void ManualPatternGrid::fileDragExit (const juce::StringArray&)
+    {
+        fileOver = false;
+        repaint();
+    }
+
+    void ManualPatternGrid::filesDropped (const juce::StringArray& files, int, int)
+    {
+        fileOver = false;
+
+        for (const auto& path : files)
+        {
+            if (! (path.endsWithIgnoreCase (".mid") || path.endsWithIgnoreCase (".midi")))
+                continue;
+            if (proc.importManualMidi (juce::File (path)))
+                break;
+        }
+
+        repaint();
     }
 
     //==============================================================================
@@ -628,25 +860,26 @@ namespace hhx
     {
         drawPanel (g, getLocalBounds());
         const auto area = getLocalBounds().reduced (76, 4);
-        const float cellW = (float) area.getWidth() / (float) DrumsXProcessor::kManualSteps;
-        const float cellH = (float) area.getHeight() / (float) NumLanes;
+        const int   steps = proc.manualSteps();
+        const float cellW = (float) area.getWidth() / (float) steps;
+        const float cellH = (float) area.getHeight() / (float) numRows();
         const bool  live  = proc.isManualMode();
 
-        for (int lane = 0; lane < NumLanes; ++lane)
+        for (int lane = 0; lane < numRows(); ++lane)
         {
             const float y = area.getY() + cellH * (float) lane;
             g.setColour (live ? DrumsXLookAndFeel::text() : DrumsXLookAndFeel::textDim());
-            g.setFont (uiFont (10.0f));
-            g.drawText (drumsXLaneName (lane),
+            g.setFont (uiFont (quick ? 12.0f : 10.0f, quick));
+            g.drawText (quick ? kQuickRowName[lane] : drumsXLaneName (lane),
                         juce::Rectangle<float> ((float) getLocalBounds().getX() + 6.0f, y,
                                                 68.0f, cellH).toNearestInt(),
                         juce::Justification::centredLeft, false);
 
-            for (int step = 0; step < DrumsXProcessor::kManualSteps; ++step)
+            for (int step = 0; step < steps; ++step)
             {
                 const juce::Rectangle<float> cell (area.getX() + cellW * (float) step + 1.0f,
                                                    y + 1.0f, cellW - 2.0f, cellH - 2.0f);
-                const float v = proc.getManualStep (lane, step);
+                const float v = rowValue (lane, step);
                 const bool  beat = (step % 4) == 0;
                 g.setColour (v > 0.0f ? DrumsXLookAndFeel::accent().withAlpha (live ? 0.35f + 0.65f * v : 0.25f)
                                       : (beat ? DrumsXLookAndFeel::panelHi()
@@ -655,10 +888,31 @@ namespace hhx
             }
         }
 
-        // Bar divider.
-        const float mid = area.getX() + area.getWidth() * 0.5f;
+        // Bar dividers, so a four-bar pattern reads as bars and not as a row of
+        // sixty-four cells.
         g.setColour (DrumsXLookAndFeel::line().brighter (0.3f));
-        g.drawVerticalLine ((int) mid, (float) area.getY(), (float) area.getBottom());
+        for (int step = 16; step < steps; step += 16)
+            g.drawVerticalLine ((int) (area.getX() + cellW * (float) step),
+                                (float) area.getY(), (float) area.getBottom());
+
+        if (fileOver)
+        {
+            g.setColour (DrumsXLookAndFeel::accent());
+            g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 4.0f, 2.0f);
+            g.setFont (uiFont (12.0f, true));
+            g.drawText ("DROP MIDI TO PLAY IT", getLocalBounds().removeFromTop (18),
+                        juce::Justification::centred, false);
+        }
+        else
+        {
+            // The grid does three things a drum grid usually does not, and none
+            // of them are visible until they are named.
+            g.setColour (DrumsXLookAndFeel::textDim());
+            g.setFont (uiFont (9.5f));
+            g.drawText ("drag to paint  -  drag a note to move it  -  drop a .mid here  -  drag off the grid to your DAW",
+                        getLocalBounds().removeFromBottom (12).reduced (6, 0),
+                        juce::Justification::centredRight, false);
+        }
     }
 
     //==============================================================================
@@ -742,26 +996,22 @@ namespace hhx
         exportButton.onClick = [this] { exportMenu(); };
         exportButton.setTooltip ("Click to export, or drag this straight into the host");
 
+        // The selected block's own edit space: the switches below this caption
+        // take a piece out of that block only, so an intro of kick and hats
+        // leaves the chorus behind it playing the whole kit.
+        addAndMakeVisible (blockCaption);
+        blockCaption.setJustificationType (juce::Justification::centredLeft);
+        blockCaption.setFont (uiFont (10.0f, true));
+        blockCaption.setColour (juce::Label::textColourId, DrumsXLookAndFeel::textDim());
+        blockCaption.setText ("THIS BLOCK PLAYS", juce::dontSendNotification);
+
         // Kit-piece lane strip: each group can be dropped out of the performance
         // or pushed down to ghost notes without touching the mix.
         {
-            struct GroupSpec { const char* name; int first, last; };
-            const GroupSpec specs[]
-            {
-                { "KICK",   LaneKick,      LaneKick },
-                { "SNARE",  LaneSnare,     LaneSnareRoll },
-                { "HATS",   LaneHatClosed, LaneHatBell },
-                { "RIDE",   LaneRideBow,   LaneRideCrash },
-                { "CRASH",  LaneCrashL,    LaneSplash },
-                { "TOMS",   LaneTom1,      LaneTom4 },
-                { "PERC",   LanePerc,      LanePerc }
-            };
-
-            for (const auto& spec : specs)
+            for (const auto& spec : pieceGroups())
             {
                 LaneGroup group;
-                for (int lane = spec.first; lane <= spec.last; ++lane)
-                    group.lanes.push_back (lane);
+                group.lanes = spec.lanes;
 
                 const auto lanes = group.lanes;
                 const auto flip = [this, lanes] (bool ghost)
@@ -782,11 +1032,15 @@ namespace hhx
                 group.in = std::make_unique<juce::TextButton> (spec.name);
                 group.in->setClickingTogglesState (false);
                 group.in->onClick = [flip] { flip (false); };
+                group.in->setTooltip (juce::String (spec.name)
+                                      + " in or out of the selected block only");
                 addAndMakeVisible (*group.in);
 
                 group.ghost = std::make_unique<juce::TextButton> ("G");
                 group.ghost->setClickingTogglesState (false);
                 group.ghost->onClick = [flip] { flip (true); };
+                group.ghost->setTooltip (juce::String (spec.name)
+                                         + " played as ghost notes in the selected block");
                 addAndMakeVisible (*group.ghost);
 
                 laneGroups.push_back (std::move (group));
@@ -896,11 +1150,17 @@ namespace hhx
         swingGridBox.addItemList ({ "1/8", "1/16" }, 1);
         timeSigDenBox.addItemList ({ "2", "4", "8", "16" }, 1);
         tempoModeBox.addItemList ({ "Follow Host", "Manual" }, 1);
+        triggerModeBox.addItemList ({ "Always Play", "When MIDI Held", "Play My Notes" }, 1);
         addCombo (fillBarsBox,   pid::fillBars);
         addCombo (phraseBarsBox, pid::phraseBars);
         addCombo (swingGridBox,  pid::swingGrid);
         addCombo (timeSigDenBox, pid::timeSigDen);
         addCombo (tempoModeBox,  pid::tempoMode);
+        addCombo (triggerModeBox, pid::triggerMode);
+        triggerModeBox.setTooltip ("Always Play: the drummer runs with the transport.  "
+                                   "When MIDI Held: it only plays where you hold a note, so the kit can "
+                                   "come in at bar 8.  Play My Notes: it plays the notes you send instead "
+                                   "of generating a part.");
 
         timeSigNumBox.addItemList ({ "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12" }, 1);
         timeSigNumBox.setSelectedId ((int) state.getRawParameterValue (pid::timeSigNum)->load() - 1,
@@ -929,6 +1189,28 @@ namespace hhx
 
         addAndMakeVisible (clearManualButton);
         clearManualButton.onClick = [this] { proc.clearManual(); manualGrid.repaint(); };
+
+        // Quick is the six-piece editor - place a plain note and the drummer
+        // decides the articulation, the sticking and the dynamics; Producer
+        // opens all thirty lanes for exact editing.
+        addAndMakeVisible (quickModeButton);
+        quickModeButton.setTooltip (
+            "QUICK: six rows (kick, snare, hat, ride, toms, crash) and the "
+            "drummer picks the articulation. PRODUCER: every lane, edited by hand.");
+        quickModeButton.onClick = [this]
+        {
+            manualGrid.setQuickMode (! manualGrid.isQuickMode());
+            quickModeButton.setButtonText (manualGrid.isQuickMode() ? "QUICK: 6 PIECES"
+                                                                    : "PRODUCER: ALL LANES");
+        };
+        // How long the written pattern is. A one-bar groove repeats every bar;
+        // four bars gives room for a figure that takes a phrase to say.
+        manualBarsBox.addItemList ({ "1 Bar", "2 Bars", "4 Bars" }, 1);
+        manualBarsBox.setTooltip ("Bars of the grid that are the pattern - the drummer plays them "
+                                  "round the song and fills at the phrase ends");
+        addCombo (manualBarsBox, pid::manualBars);
+        manualBarsBox.onChange = [this] { manualGrid.repaint(); };
+
         addAndMakeVisible (manualGrid);
 
         // ---- KIT ----------------------------------------------------------
@@ -1002,6 +1284,9 @@ namespace hhx
                 kitBox.addItem (kits[i], i + 1);
             kitBox.setSelectedId (proc.getSelectedKit() + 1, juce::dontSendNotification);
             kitBox.setTextWhenNoChoicesAvailable ("No installed kits");
+            // Otherwise the box reads as blank until it is opened, which looks
+            // like a broken picker rather than a missing install.
+            kitBox.setTextWhenNothingSelected ("No installed kits");
             kitBox.onChange = [this] { proc.selectKit (kitBox.getSelectedId() - 1); };
             addAndMakeVisible (kitBox);
         }
@@ -1083,6 +1368,37 @@ namespace hhx
         roomSpaceLabel.setColour (juce::Label::textColourId, DrumsXLookAndFeel::textDim());
         addAndMakeVisible (roomSpaceLabel);
 
+        punchKnob   = std::make_unique<LabelledKnob> (state, pid::punch, "Punch");
+        glueKnob    = std::make_unique<LabelledKnob> (state, pid::glue,  "Glue");
+        driveKnob   = std::make_unique<LabelledKnob> (state, pid::drive, "Drive");
+        squeezeKnob = std::make_unique<LabelledKnob> (state, pid::squeeze, "Squeeze");
+        squeezeKnob->slider.setTooltip ("Spectral compression: levels the kit band by band, so the boxy "
+                                        "mids and a harsh stick are pulled in and a shy band is lifted");
+        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get() })
+            addAndMakeVisible (*k);
+
+        squeezeGlowBox.addItemList ({ "Off", "Clean", "Tube", "Tape", "Transformer" }, 1);
+        squeezeGlowBox.setTooltip ("How the squeezed kit is coloured: Clean adds nothing, Tube and "
+                                   "Transformer thicken it, Tape rounds the bottom");
+        addAndMakeVisible (squeezeGlowBox);
+        comboAttachments.push_back (
+            std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+                state, pid::squeezeGlow, squeezeGlowBox));
+
+        squeezeGlowLabel.setJustificationType (juce::Justification::centred);
+        squeezeGlowLabel.setColour (juce::Label::textColourId, DrumsXLookAndFeel::textDim());
+        addAndMakeVisible (squeezeGlowLabel);
+
+        mixVoicingBox.addItemList ({ "Raw", "Modern", "Punch", "Room", "Vintage" }, 1);
+        addAndMakeVisible (mixVoicingBox);
+        comboAttachments.push_back (
+            std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+                state, pid::mixVoicing, mixVoicingBox));
+
+        mixVoicingLabel.setJustificationType (juce::Justification::centred);
+        mixVoicingLabel.setColour (juce::Label::textColourId, DrumsXLookAndFeel::textDim());
+        addAndMakeVisible (mixVoicingLabel);
+
         setResizable (false, false);
         proc.setUiScale (proc.getUiScale());
         applyScale();
@@ -1148,6 +1464,7 @@ namespace hhx
             k->setVisible (main);
         for (auto& b : variationButtons)
             b->setVisible (main);
+        blockCaption.setVisible (main);
         for (auto& group : laneGroups)
         {
             group.in->setVisible (main);
@@ -1156,13 +1473,15 @@ namespace hhx
 
         for (auto& k : detailKnobs)
             k->setVisible (det);
-        for (auto* c : { &fillBarsBox, &phraseBarsBox, &swingGridBox, &timeSigNumBox, &timeSigDenBox, &tempoModeBox })
+        for (auto* c : { &fillBarsBox, &phraseBarsBox, &swingGridBox, &timeSigNumBox, &timeSigDenBox,
+                        &tempoModeBox, &triggerModeBox, &manualBarsBox })
             c->setVisible (det);
         bpmSlider.setVisible (det);
         rideToggle.setVisible (det);
         halfTimeToggle.setVisible (det);
         manualToggle.setVisible (det);
         clearManualButton.setVisible (det);
+        quickModeButton.setVisible (det);
         manualGrid.setVisible (det);
 
         kitViewport.setVisible (kitp);
@@ -1198,6 +1517,12 @@ namespace hhx
             k->setVisible (mixp);
         roomSpaceBox.setVisible (mixp);
         roomSpaceLabel.setVisible (mixp);
+        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get() })
+            k->setVisible (mixp);
+        mixVoicingBox.setVisible (mixp);
+        mixVoicingLabel.setVisible (mixp);
+        squeezeGlowBox.setVisible (mixp);
+        squeezeGlowLabel.setVisible (mixp);
 
         resized();
         repaint();
@@ -1216,6 +1541,22 @@ namespace hhx
 
         if (page == Page::main)
         {
+            // Name the block being edited, so the piece switches read as that
+            // block's edit space.
+            const int sel = proc.getSelectedSection();
+            const auto blocks = proc.getArrangement();
+            juce::String caption = "THIS BLOCK PLAYS";
+            if (sel >= 0 && sel < (int) blocks.size())
+            {
+                const int startBar = proc.sectionStartBar (sel) + 1;
+                const int endBar   = startBar + juce::jmax (1, blocks[(std::size_t) sel].numBars) - 1;
+                caption = juce::String (sectionName (blocks[(std::size_t) sel].section)).toUpperCase()
+                        + "  -  BARS " + juce::String (startBar) + "-" + juce::String (endBar)
+                        + "  PLAYS";
+            }
+            if (blockCaption.getText() != caption)
+                blockCaption.setText (caption, juce::dontSendNotification);
+
             for (auto& group : laneGroups)
             {
                 const auto flag = [this] (const juce::String& id)
@@ -1406,7 +1747,9 @@ namespace hhx
 
         // The kit-piece buttons live beside the arrangement, where they read as
         // what they are: the parts of the song, switched in and out live.
-        auto pieces = strip2.removeFromRight (260).withTrimmedTop (16);
+        auto piecesArea = strip2.removeFromRight (260);
+        blockCaption.setBounds (piecesArea.removeFromTop (16).reduced (2, 0));
+        auto pieces = piecesArea;
         arrangementView.setBounds (strip2.withTrimmedTop (16).withTrimmedRight (8));
         arrangement.setSize (arrangement.preferredWidth(),
                              juce::jmax (24, arrangementView.getMaximumVisibleHeight()));
@@ -1492,7 +1835,10 @@ namespace hhx
         halfTimeToggle.setBounds (juce::Rectangle<int> (232, 296, 150, 24));
         manualToggle.setBounds (juce::Rectangle<int> (392, 296, 160, 24));
         clearManualButton.setBounds (juce::Rectangle<int> (560, 296, 72, 24));
+        triggerModeBox.setBounds (juce::Rectangle<int> (648, 296, 168, 24));
 
+        quickModeButton.setBounds (juce::Rectangle<int> (16, 322, 168, 22));
+        manualBarsBox.setBounds (juce::Rectangle<int> (192, 322, 96, 22));
         manualGrid.setBounds (16, 348, getWidth() - 32, getHeight() - 364);
     }
 
@@ -1556,9 +1902,19 @@ namespace hhx
         roomSpaceLabel.setBounds (520, 108, 380, 16);
         roomSpaceBox.setBounds   (620, 126, 180, 24);
 
-        roomSizeKnob->setBounds (520, 160, 120, 120);
-        roomDampKnob->setBounds (650, 160, 120, 120);
-        roomMixKnob->setBounds  (780, 160, 120, 120);
-        roomDuckKnob->setBounds (650, 285, 120, 120);
+        roomSizeKnob->setBounds (520, 158, 112, 112);
+        roomDampKnob->setBounds (644, 158, 112, 112);
+        roomMixKnob->setBounds  (768, 158, 112, 112);
+        roomDuckKnob->setBounds (644, 274, 112, 112);
+
+        mixVoicingLabel.setBounds (500, 396, 200, 16);
+        mixVoicingBox.setBounds   (510, 414, 180, 24);
+        squeezeGlowLabel.setBounds (720, 396, 260, 16);
+        squeezeGlowBox.setBounds   (790, 414, 180, 24);
+
+        punchKnob->setBounds   (500, 444, 112, 112);
+        glueKnob->setBounds    (620, 444, 112, 112);
+        driveKnob->setBounds   (740, 444, 112, 112);
+        squeezeKnob->setBounds (860, 444, 112, 112);
     }
 }

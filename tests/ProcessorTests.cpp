@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <random>
 #include <set>
 #include <string>
@@ -37,6 +38,20 @@ namespace
                                 hhx::pid::variationRhythm, hhx::pid::variationCymbal,
                                 hhx::pid::followSections };
         return ids;
+    }
+
+    /** The processor reads its content location from the environment when it is
+        constructed, so the kit-browser test has to set it there. */
+    void setContentDirEnv (const juce::String& value)
+    {
+       #if JUCE_WINDOWS
+        _putenv_s ("HHX_CONTENT_DIR", value.toRawUTF8());
+       #else
+        if (value.isEmpty())
+            ::unsetenv ("HHX_CONTENT_DIR");
+        else
+            ::setenv ("HHX_CONTENT_DIR", value.toRawUTF8(), 1);
+       #endif
     }
 }
 
@@ -298,6 +313,243 @@ int main()
         check (song.numSections() == 40, "a section can be removed again");
     }
 
+    // 3c. Kit pieces belong to a block, not to the song: an intro of nothing
+    //     but toms must leave every other block playing the whole kit.
+    {
+        hhx::DrumsXProcessor song;
+        song.prepareToPlay (48000.0, 128);
+        for (int i = 0; i < 3; ++i)
+            song.addSection();
+        song.setSelectedSection (0);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+        for (int lane = 0; lane < hhx::NumLanes; ++lane)
+            song.getAPVTS().getParameter (hhx::pid::laneEnable (lane))
+                ->setValueNotifyingHost (hhx::isTomLane (lane) ? 1.0f : 0.0f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (30);
+
+        const auto blocks = song.getArrangement();
+        check ((blocks[0].laneMask & (1u << hhx::LaneHatClosed)) == 0
+               && (blocks[0].laneMask & (1u << hhx::LaneTom1)) != 0,
+               "switching a piece off lands in the selected block");
+
+        const std::uint32_t wholeKit = (1u << hhx::NumLanes) - 1u;
+        bool othersFull = true;
+        for (std::size_t i = 1; i < blocks.size(); ++i)
+            if (blocks[i].laneMask != wholeKit)
+                othersFull = false;
+        check (othersFull, "the blocks around it keep the whole kit");
+
+        if (const auto tl = song.getTimeline())
+        {
+            const int introBars = std::max (1, blocks[0].numBars);
+            int introToms = 0, introOther = 0, laterPieces = 0;
+            for (const auto& h : tl->hits)
+            {
+                const int bar = (int) (h.beat / tl->beatsPerBar);
+                if (bar < introBars)
+                {
+                    if (hhx::isTomLane (h.lane)) ++introToms;
+                    else                         ++introOther;
+                }
+                else if (bar < introBars + std::max (1, blocks[1].numBars)
+                         && ! hhx::isTomLane (h.lane))
+                    ++laterPieces;
+            }
+            check (introToms > 0 && introOther == 0,
+                   "a toms-only intro plays a tom part and nothing else");
+            check (laterPieces > 0, "the block after it still plays the rest of the kit");
+        }
+        else
+        {
+            check (false, "the timeline is rendered");
+        }
+
+        juce::MemoryBlock state;
+        song.getStateInformation (state);
+        hhx::DrumsXProcessor reloaded;
+        reloaded.setStateInformation (state.getData(), (int) state.getSize());
+        const auto restored = reloaded.getArrangement();
+        check (! restored.empty() && restored[0].laneMask == blocks[0].laneMask
+               && restored.back().laneMask == wholeKit,
+               "each block's pieces are saved with the project");
+    }
+
+    // 3c-ii. Block presets and the block's piece menu: one click writes an
+    //        intro that comes in on kick and hats, or a chorus with the crashes
+    //        wide open, and only that block moves.
+    {
+        hhx::DrumsXProcessor song;
+        song.prepareToPlay (48000.0, 128);
+        for (int i = 0; i < 2; ++i)
+            song.addSection();
+        song.setSelectedSection (1);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+        const auto before = song.getArrangement();
+        song.applyBlockPreset (0, hhx::DrumsXProcessor::BlockPreset::kickHatsIntro);
+        song.applyBlockPreset (2, hhx::DrumsXProcessor::BlockPreset::crashChorus);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+        auto blocks = song.getArrangement();
+        const auto plays = [] (const hhx::ArrangementSection& sec, int lane)
+        { return (sec.laneMask & (1u << lane)) != 0; };
+
+        check (blocks[0].section == hhx::SectionIntro
+               && plays (blocks[0], hhx::LaneKick)
+               && plays (blocks[0], hhx::LaneHatClosed)
+               && ! plays (blocks[0], hhx::LaneSnare)
+               && ! plays (blocks[0], hhx::LaneCrashL),
+               "the kick-and-hats intro preset plays those pieces and no others");
+        check (blocks[2].section == hhx::SectionChorus
+               && plays (blocks[2], hhx::LaneCrashL)
+               && blocks[2].velocity > blocks[0].velocity + 0.3f
+               && blocks[2].fillAmount > blocks[0].fillAmount,
+               "the crash chorus preset opens the whole kit up and plays it harder");
+        check (std::abs (blocks[1].velocity - before[1].velocity) < 0.001f
+               && blocks[1].laneMask == before[1].laneMask,
+               "a preset leaves the block next to it alone");
+
+        // The same piece groups the menu offers, toggled on one block only.
+        const std::vector<int> hats { hhx::LaneHatClosed, hhx::LaneHatTight, hhx::LaneHatOpen1,
+                                      hhx::LaneHatOpen2, hhx::LaneHatOpen3, hhx::LaneHatOpen4,
+                                      hhx::LaneHatPedal, hhx::LaneHatSplash, hhx::LaneHatBell };
+        song.toggleSectionPiece (0, hats);
+        blocks = song.getArrangement();
+        check (! plays (blocks[0], hhx::LaneHatClosed) && plays (blocks[0], hhx::LaneKick),
+               "toggling a piece off a block takes all of its articulations out");
+        song.toggleSectionPiece (0, hats);
+        blocks = song.getArrangement();
+        check (plays (blocks[0], hhx::LaneHatOpen2),
+               "toggling it back on returns the whole group");
+
+        // A preset on the selected block also has to reach the knobs, or the UI
+        // would keep showing the old dynamics.
+        song.applyBlockPreset (1, hhx::DrumsXProcessor::BlockPreset::tomsIntro);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+        const auto* tomOn = song.getAPVTS().getRawParameterValue (hhx::pid::laneEnable (hhx::LaneTom1));
+        const auto* hatOn = song.getAPVTS().getRawParameterValue (hhx::pid::laneEnable (hhx::LaneHatClosed));
+        check (tomOn != nullptr && hatOn != nullptr
+               && tomOn->load() > 0.5f && hatOn->load() < 0.5f,
+               "a preset on the selected block moves its piece switches too");
+    }
+
+    // 3c-iii. The manual grid takes a MIDI file dropped on it and drags its own
+    //         pattern back out, so a pattern can be moved between the plugin
+    //         and the host without the arrangement coming with it.
+    {
+        hhx::DrumsXProcessor proc;
+        proc.prepareToPlay (48000.0, 128);
+        check (! proc.hasManualNotes(), "an untouched grid holds no notes");
+
+        proc.setManualStep (hhx::LaneKick, 0, 1.0f);
+        proc.setManualStep (hhx::LaneSnare, 8, 0.75f);
+        proc.setManualStep (hhx::LaneHatClosed, 30, 0.5f);
+        check (proc.hasManualNotes(), "the grid knows it has been written");
+
+        const auto dest = juce::File::createTempFile ("hhx_pattern.mid");
+        check (proc.exportManualMidi (dest) && dest.getSize() > 0,
+               "the grid drags out as a MIDI file");
+
+        hhx::DrumsXProcessor dropped;
+        dropped.prepareToPlay (48000.0, 128);
+        check (dropped.importManualMidi (dest), "that file drops back onto a grid");
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+        check (dropped.getManualStep (hhx::LaneKick, 0) > 0.9f
+               && dropped.getManualStep (hhx::LaneSnare, 8) > 0.6f
+               && dropped.getManualStep (hhx::LaneHatClosed, 30) > 0.35f,
+               "every note lands on the lane and step it was written on");
+        check (dropped.getManualStep (hhx::LaneKick, 1) == 0.0f,
+               "nothing else is written");
+        check (dropped.isManualMode(), "a dropped pattern is switched on to play");
+
+        const auto notMidi = juce::File::createTempFile ("hhx_not.mid");
+        notMidi.replaceWithText ("this is not a MIDI file");
+        check (! dropped.importManualMidi (notMidi)
+               && dropped.getManualStep (hhx::LaneKick, 0) > 0.9f,
+               "a file that holds no drum notes is refused and changes nothing");
+
+        dest.deleteFile();
+        notMidi.deleteFile();
+    }
+
+    // 3d. The mix chain: the production voicings change how the kit is seated
+    //     without ever handing the host a clipped buffer, and the same settings
+    //     always render the same audio.
+    {
+        hhx::DrumsXProcessor mixed;
+        mixed.prepareToPlay (48000.0, 128);
+        mixed.getAPVTS().getParameter (hhx::pid::complexity)->setValueNotifyingHost (0.9f);
+        mixed.getAPVTS().getParameter (hhx::pid::intensity)->setValueNotifyingHost (0.9f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+        const auto* voicingParam = mixed.getAPVTS().getParameter (hhx::pid::mixVoicing);
+        check (voicingParam != nullptr
+               && voicingParam->getNumSteps() == (int) hhx::KitEngine::NumMixVoicings,
+               "the mix page offers every production voicing");
+
+        const auto render = [&mixed] (int voicing, float punch)
+        {
+            mixed.getAPVTS().getParameter (hhx::pid::mixVoicing)
+                ->setValueNotifyingHost ((float) voicing
+                                         / (float) (hhx::KitEngine::NumMixVoicings - 1));
+            mixed.getAPVTS().getParameter (hhx::pid::punch)->setValueNotifyingHost (punch);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+            // A fresh prepare, so each pass starts from the same room tails and
+            // envelopes: the comparison is of the mix, not of what was ringing.
+            mixed.stop();
+            mixed.prepareToPlay (48000.0, 128);
+            mixed.play();
+
+            juce::AudioBuffer<float> buffer (2, 128);
+            juce::MidiBuffer midi;
+            std::vector<float> audio;
+            double peak = 0.0;
+            for (int i = 0; i < 48000 * 4 / 128; ++i)
+            {
+                buffer.clear();
+                midi.clear();
+                mixed.processBlock (buffer, midi);
+                peak = std::max (peak, (double) buffer.getMagnitude (0, buffer.getNumSamples()));
+                for (int n = 0; n < buffer.getNumSamples(); ++n)
+                    audio.push_back (buffer.getSample (0, n));
+            }
+            return std::make_pair (audio, peak);
+        };
+
+        const auto raw     = render (hhx::KitEngine::MixRaw,    0.5f);
+        const auto modern  = render (hhx::KitEngine::MixModern, 0.5f);
+        const auto again   = render (hhx::KitEngine::MixModern, 0.5f);
+        const auto punched = render (hhx::KitEngine::MixPunch,  1.0f);
+
+        check (raw.second > 0.001 && modern.second > 0.001,
+               "the kit still plays through the mix chain");
+        check (raw.first != modern.first, "the production voicing changes the sound");
+        check (punched.second <= 1.0 && modern.second <= 1.0 && raw.second <= 1.0,
+               "no voicing pushes the output past full scale");
+
+        const auto rms = [] (const std::vector<float>& audio)
+        {
+            double sum = 0.0;
+            for (const float v : audio)
+                sum += (double) v * (double) v;
+            return audio.empty() ? 0.0 : std::sqrt (sum / (double) audio.size());
+        };
+        check (rms (modern.first) > rms (raw.first) * 1.02,
+               "the produced kit sits louder than the raw close mics");
+
+        // The seat a voicing gives the kit is a property of the mix, not of
+        // which round robin happened to be next, so two passes of the same
+        // settings have to land at the same level.
+        const double drift = std::abs (rms (modern.first) - rms (again.first))
+                           / std::max (1.0e-9, rms (modern.first));
+        std::printf ("note  mix seat repeats within %.2f %%\n", 100.0 * drift);
+        check (drift < 0.05, "the same mix settings seat the kit at the same level");
+        mixed.stop();
+    }
+
     // 4. Kit format: a folder of 8 velocity layers x 4 round robins x 3 mics
     //    loads at full depth, through kit.json and through the filenames alone.
     {
@@ -469,13 +721,115 @@ int main()
         bool hats = true;
         for (const int lane : { hhx::LaneHatTight, hhx::LaneHatClosed, hhx::LaneHatOpen1,
                                 hhx::LaneHatOpen3, hhx::LaneHatPedal })
-            if (rock.numLayersForLane (lane) == 0)
+            if (rock.resolveLane (lane) < 0)
                 hats = false;
-        check (hats, "tight, closed, open and pedal hats are separate recordings");
+        check (hats, "every rung of the openness ladder plays something");
+
+        check (rock.numLayersForLane (hhx::LaneHatClosed) > 0
+               && rock.numLayersForLane (hhx::LaneHatOpen1) > 0
+               && rock.numLayersForLane (hhx::LaneHatOpen3) > 0,
+               "shut and open hats are separate recordings");
+
+        // A hat that keeps time has to ring: a stroke that is all attack and
+        // no tail is heard as a click in the middle of the part, which is
+        // what a damped "tight" recording plays back as.
+        const auto ringOf = [&rock] (int lane)
+        {
+            const int n = 24000;
+            juce::AudioBuffer<float> buf (2, n);
+            buf.clear();
+            rock.noteOn (lane, 0.8f);
+            rock.renderNextBlock (buf, 0, n);
+
+            double attack = 0.0, tail = 0.0;
+            for (int i = 0; i < n; ++i)
+            {
+                const double s = 0.5 * (buf.getSample (0, i) + buf.getSample (1, i));
+                if (i < 960)        attack += s * s;   // first 20 ms
+                else if (i > 2880)  tail   += s * s;   // after 60 ms
+            }
+            rock.allNotesOff();
+            return attack > 0.0 ? tail / attack : 0.0;
+        };
+
+        for (const int lane : { hhx::LaneHatClosed, hhx::LaneHatTight })
+            check (ringOf (lane) > 0.15,
+                   juce::String ("the shut hat rings instead of clicking, lane ")
+                       + juce::String (lane));
+        check (ringOf (hhx::LaneHatOpen3) > 4.0 * ringOf (hhx::LaneHatClosed),
+               "the open hat washes far longer than the shut one");
 
         check (rock.laneHasMic (hhx::LaneSnare, hhx::MicOverhead)
                && rock.laneHasMic (hhx::LaneSnare, hhx::MicRoom),
                "the shipped kit has overhead and room mics");
+    }
+
+    // 6. The kit browser: every kit the installed manifest declares must reach
+    //    the picker and must actually load. A kit that is staged but silently
+    //    dropped here is a kit the user cannot find.
+    {
+        const juce::File content = juce::File (HHX_SHIPPED_KIT_DIR).getParentDirectory()
+                                                                   .getParentDirectory();
+        const auto manifest = juce::JSON::parse (content.getChildFile ("content_manifest.json"));
+
+        juce::StringArray declared;
+        if (const auto* kits = manifest["kits"].getArray())
+            for (const auto& entry : *kits)
+                if (content.getChildFile (entry["folder"].toString())
+                           .getChildFile ("kit.json").existsAsFile())
+                    declared.add (entry["name"].toString());
+
+        check (declared.size() >= 3, "the content tree declares its kits");
+
+        setContentDirEnv (content.getFullPathName());
+        hhx::DrumsXProcessor installed;
+        installed.prepareToPlay (48000.0, 128);
+        setContentDirEnv ({});
+
+        const auto offered = installed.getAvailableKits();
+        bool all = offered.size() == declared.size();
+        for (const auto& name : declared)
+            if (! offered.contains (name))
+                all = false;
+        check (all, "the kit picker offers every installed kit");
+
+        bool loads = true;
+        for (int i = 0; i < offered.size(); ++i)
+        {
+            installed.selectKit (i);
+            if (installed.getSelectedKit() != i
+                || installed.getKit().numLoadedSamples() <= 0)
+                loads = false;
+        }
+        check (loads, "switching to each installed kit loads its samples");
+    }
+
+    // 7. Where the installers actually write: a macOS package lands the tree in
+    //    <root>/Application Support/HumHouse/Drums X/Content while JUCE's data
+    //    root is only /Library, so both layouts have to resolve or the plug-in
+    //    silently plays the compiled-in fallback kit.
+    {
+        const auto root = juce::File::createTempFile ("hhx_root");
+        root.deleteFile();
+
+        check (hhx::DrumsXProcessor::contentFolderUnder (root) == juce::File(),
+               "an empty data root offers no content");
+
+        for (const auto* layout : { "HumHouse/Drums X/Content",
+                                    "Application Support/HumHouse/Drums X/Content" })
+        {
+            const auto tree = root.getChildFile (layout);
+            tree.createDirectory();
+            tree.getChildFile ("content_manifest.json").replaceWithText ("{}");
+
+            check (hhx::DrumsXProcessor::contentFolderUnder (root) == tree,
+                   juce::String ("installed content is found at ") + layout);
+
+            tree.getParentDirectory().getParentDirectory().getParentDirectory()
+                .deleteRecursively();
+        }
+
+        root.deleteRecursively();
     }
    #endif
 

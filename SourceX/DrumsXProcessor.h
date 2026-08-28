@@ -41,6 +41,8 @@ namespace hhx
         inline constexpr const char* variationRhythm = "varRhythm";
         inline constexpr const char* variationCymbal = "varCymbal";
         inline constexpr const char* manualMode     = "manualMode";
+        inline constexpr const char* manualBars     = "manualBars";
+        inline constexpr const char* triggerMode    = "triggerMode";
         inline constexpr const char* outputLevel    = "outputLevel";
         inline constexpr const char* micBlend       = "micBlend";
         inline constexpr const char* bleed          = "bleed";
@@ -50,6 +52,12 @@ namespace hhx
         inline constexpr const char* roomMix        = "roomMix";
         inline constexpr const char* roomSpace      = "roomSpace";
         inline constexpr const char* roomDuck       = "roomDuck";
+        inline constexpr const char* mixVoicing     = "mixVoicing";
+        inline constexpr const char* punch          = "punch";
+        inline constexpr const char* glue           = "glue";
+        inline constexpr const char* drive          = "drive";
+        inline constexpr const char* squeeze        = "squeeze";
+        inline constexpr const char* squeezeGlow    = "squeezeGlow";
 
         juce::String laneEnable (int lane);
         juce::String laneGhost (int lane);
@@ -76,6 +84,7 @@ namespace hhx
         float ghost;
         float hatOpenness;
         bool  ride;
+        bool  halfTime;
     };
 
     const std::vector<Character>& characters();
@@ -112,7 +121,7 @@ namespace hhx
         bool hasEditor() const override { return true; }
 
         const juce::String getName() const override { return JucePlugin_Name; }
-        bool   acceptsMidi()  const override { return false; }
+        bool   acceptsMidi()  const override { return true; }
         bool   producesMidi() const override { return true; }
         bool   isMidiEffect() const override { return false; }
         double getTailLengthSeconds() const override { return 2.0; }
@@ -173,6 +182,20 @@ namespace hhx
         void setSectionBars (int index, int bars);
         void setSectionType (int index, int section);
 
+        /** Which kit pieces the block plays. The strip's piece switches write
+            this for the selected block; the menu writes it for any block. */
+        std::uint32_t getSectionLanes (int index) const;
+        void setSectionLanes (int index, std::uint32_t laneMask);
+        /** Flip one kit-piece group (its lanes) in or out of one block. */
+        void toggleSectionPiece (int index, const std::vector<int>& lanes);
+
+        /** One click from "come in on kick and hats" to "chorus with the crashes
+            wide open": the block's pieces, dynamics and fills at once. */
+        enum class BlockPreset { kickHatsIntro, kickSnareIntro, tomsIntro, verse,
+                                 build, chorus, crashChorus, wholeKit };
+        void applyBlockPreset (int index, BlockPreset preset);
+        static const char* blockPresetName (BlockPreset preset);
+
         std::shared_ptr<const Timeline> getTimeline() const;
 
         // --- transport (standalone) --------------------------------------
@@ -182,13 +205,30 @@ namespace hhx
         double getPlayheadBeats() const { return playheadBeats.load(); }
 
         // --- manual page --------------------------------------------------
-        static constexpr int kManualBars  = 2;
+        /** The grid always holds four bars; how many of them are the pattern is
+            the player's choice, so a one-bar groove stays one bar. */
+        static constexpr int kManualBars  = 4;
         static constexpr int kManualSteps = 16 * kManualBars;
+
+        /** Bars of the grid that are the pattern: 1, 2 or 4. */
+        int manualBars() const;
+        int manualSteps() const { return 16 * manualBars(); }
 
         void  setManualStep (int lane, int step, float velocity01);
         float getManualStep (int lane, int step) const;
         void  clearManual();
         bool  isManualMode() const;
+
+        /** Drop a MIDI file on the grid: its notes land on the lanes they
+            address, quantised to the grid's sixteenths and folded into the
+            grid's bars, widening the pattern to hold the file where it can.
+            Returns false when the file holds no drum notes. */
+        bool importManualMidi (const juce::File& source);
+        /** Drag the grid out of the plugin as its own MIDI file. */
+        bool exportManualMidi (const juce::File& dest) const;
+        /** True when any step is written, so the UI can tell an empty grid from
+            an edited one. */
+        bool hasManualNotes() const;
 
         // --- export ---------------------------------------------------------
         bool exportArrangementMidi (const juce::File& dest, int numBars) const;
@@ -197,6 +237,11 @@ namespace hhx
         /** Where installed content lives, or an invalid file when only the
             bundled fallback content is present. */
         static juce::File findSharedContentFolder();
+
+        /** The content tree under one data root, in either the plain layout
+            (Windows, Linux) or the Application Support layout macOS installers
+            use. Invalid when the root holds no content. */
+        static juce::File contentFolderUnder (const juce::File& root);
 
         /** Human-readable description of what the instrument is playing from,
             e.g. "installed content 3" or "bundled content". */
@@ -228,6 +273,7 @@ namespace hhx
         void rebuildTimeline();
         void loadContent();
         void pushRoomParameters();
+        void pushMixParameters();
         std::uint64_t settingsHash() const;
 
         juce::MidiMessageSequence buildSequence (int numBars, int laneFilter) const;
@@ -264,6 +310,11 @@ namespace hhx
 
         std::atomic<double> playheadBeats { 0.0 };
         std::atomic<bool>   playing { false };
+
+        /** How many notes the host is holding, and whether the drummer is
+            currently allowed to play. Audio thread only. */
+        int  heldNotes = 0;
+        bool gateOpen  = false;
         std::atomic<double> lastBpm { 120.0 };
 
         std::shared_ptr<const Timeline> timeline;

@@ -47,15 +47,17 @@ namespace hhx
         // a feel bias - not a different note generator. That is exactly how
         // Logic's drummers differ from one another.
         static const std::vector<Character> c {
-            { "Ethan  -  Pop Rock",    0, 0.35f, 0.45f, 0.06f, 0.55f, 0.10f, false },
-            { "Nikki  -  Retro Rock",  1, 0.45f, 0.50f, 0.18f, 0.70f, 0.05f, false },
-            { "Jesse  -  Hard Rock",   2, 0.55f, 0.78f, 0.00f, 0.35f, 0.20f, false },
-            { "Max    -  Punk Rock",   3, 0.72f, 0.90f, 0.00f, 0.20f, 0.35f, false },
-            { "Kane   -  Metal",       4, 0.80f, 0.95f, 0.00f, 0.15f, 0.20f, false },
-            { "Ruby   -  Shuffle",     5, 0.50f, 0.55f, 0.55f, 0.75f, 0.05f, false },
-            { "Cole   -  Half Time",   6, 0.40f, 0.70f, 0.08f, 0.45f, 0.10f, false },
-            { "Logan  -  Roots Rock",  7, 0.45f, 0.58f, 0.14f, 0.62f, 0.10f, false },
-            { "Darcy  -  Prog",        8, 0.72f, 0.66f, 0.05f, 0.55f, 0.15f, true  },
+            { "Ethan  -  Pop Rock",    0, 0.35f, 0.45f, 0.06f, 0.55f, 0.10f, false, false },
+            { "Nikki  -  Retro Rock",  1, 0.45f, 0.50f, 0.18f, 0.70f, 0.05f, false, false },
+            { "Jesse  -  Hard Rock",   2, 0.55f, 0.78f, 0.00f, 0.35f, 0.20f, false, false },
+            { "Max    -  Punk Rock",   3, 0.72f, 0.90f, 0.00f, 0.20f, 0.35f, false, false },
+            { "Kane   -  Metal",       4, 0.80f, 0.95f, 0.00f, 0.15f, 0.20f, false, false },
+            { "Ruby   -  Shuffle",     5, 0.50f, 0.55f, 0.55f, 0.75f, 0.05f, false, false },
+            // Cole is the half-time drummer: picking him plays half time, it is
+            // not a bias the groove search can talk him out of.
+            { "Cole   -  Half Time",   6, 0.40f, 0.70f, 0.08f, 0.45f, 0.10f, false, true  },
+            { "Logan  -  Roots Rock",  7, 0.45f, 0.58f, 0.14f, 0.62f, 0.10f, false, false },
+            { "Darcy  -  Prog",        8, 0.72f, 0.66f, 0.05f, 0.55f, 0.15f, true,  false },
         };
         return c;
     }
@@ -74,6 +76,16 @@ namespace hhx
                 || id == pid::fillAmount || id == pid::swing
                 || id == pid::halfTime
                 || id == pid::variationRhythm || id == pid::variationCymbal;
+        }
+
+        /** The kit-piece switches belong to a block too: a toms-only intro is a
+            property of the intro, not of the song. */
+        bool isSectionLaneParameter (const juce::String& id)
+        {
+            for (int lane = 0; lane < NumLanes; ++lane)
+                if (id == pid::laneEnable (lane) || id == pid::laneGhost (lane))
+                    return true;
+            return false;
         }
 
         int laneToMidiNote (int lane) { return laneToNote (lane); }
@@ -103,10 +115,13 @@ namespace hhx
         const auto semiStr = [] (float v, int) { return String (v, 2) + " st"; };
 
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::complexity, 1 },
-                                                           "Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.45f,
+                                                           // Opens on the simple side, a little above the middle for
+                                                           // loudness: a plain groove played with weight, which is
+                                                           // where a session starts rather than in the busy corner.
+                                                           "Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.28f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::intensity, 1 },
-                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
+                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.62f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::sectionLevel, 1 },
                                                            "Section Intensity", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
@@ -172,6 +187,14 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterInt> (ParameterID { pid::variationCymbal, 1 },
                                                          "Hat / Ride Variation", 0, 7, 0));
         layout.add (std::make_unique<AudioParameterBool> (ParameterID { pid::manualMode, 1 }, "Manual Pattern", false));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::manualBars, 1 },
+                                                           "Pattern Bars",
+                                                           juce::StringArray { "1 Bar", "2 Bars", "4 Bars" }, 1));
+        // How the drummer is started. "Always Play" is the old behaviour; the
+        // other two put the host's MIDI in charge, so the kit can enter at bar
+        // 8 of a song, or play notes drawn in the DAW's piano roll verbatim.
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::triggerMode, 1 }, "Trigger",
+                                                            StringArray { "Always Play", "When MIDI Held", "Play My Notes" }, 0));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::outputLevel, 1 },
                                                            "Output", NormalisableRange<float> (-24.0f, 12.0f, 0.1f), 0.0f));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::micBlend, 1 }, "Mic Blend",
@@ -198,6 +221,25 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::roomDuck, 1 }, "Room Duck",
                                                            NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::mixVoicing, 1 }, "Mix",
+                                                           StringArray { "Raw", "Modern", "Punch", "Room", "Vintage" },
+                                                           KitEngine::MixModern));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::punch, 1 }, "Punch",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::glue, 1 }, "Glue",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::drive, 1 }, "Drive",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.2f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::squeeze, 1 }, "Squeeze",
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::squeezeGlow, 1 }, "Glow",
+                                                           StringArray { "Off", "Clean", "Tube", "Tape", "Transformer" },
+                                                           KitEngine::GlowClean));
 
         for (int lane = 0; lane < NumLanes; ++lane)
         {
@@ -247,6 +289,7 @@ namespace hhx
         kit.setMicBlend (apvts.getRawParameterValue (pid::micBlend)->load());
         kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
         kit.setCrush (apvts.getRawParameterValue (pid::crush)->load());
+        pushMixParameters();
 
         // A conventional rock song form. Hosts that expose markers can replace
         // it through setSections(); the performance only follows it when
@@ -295,10 +338,14 @@ namespace hhx
         else if (id == pid::roomSize || id == pid::roomDamping || id == pid::roomMix
                  || id == pid::roomSpace || id == pid::roomDuck)
             pushRoomParameters();
+        else if (id == pid::mixVoicing || id == pid::punch || id == pid::glue
+                 || id == pid::drive || id == pid::squeeze || id == pid::squeezeGlow)
+            pushMixParameters();
 
         // A performance knob edits the block that is selected, and only that
         // block; the rest of the arrangement re-renders to exactly what it was.
-        if (! syncingSection.load() && isSectionParameter (id))
+        if (! syncingSection.load()
+            && (isSectionParameter (id) || isSectionLaneParameter (id)))
             captureParamsIntoSelectedSection();
 
         // Re-render off the audio thread. Nothing the user typed into the
@@ -341,6 +388,8 @@ namespace hhx
                 feed (sec.halfTime ? 1.0 : 0.0);
                 feed ((double) sec.variationRhythm);
                 feed ((double) sec.variationCymbal);
+                feed ((double) sec.laneMask);
+                feed ((double) sec.ghostMask);
             }
         }
 
@@ -354,10 +403,26 @@ namespace hhx
         return h;
     }
 
+    juce::File DrumsXProcessor::contentFolderUnder (const juce::File& root)
+    {
+        // On macOS JUCE's "application data" locations are /Library and
+        // ~/Library, while an installer package writes to their Application
+        // Support subfolder; on Windows and Linux the root is already the data
+        // folder. Both spellings are searched so the installed tree is found
+        // wherever the platform's installer put it.
+        for (const auto& base : { root, root.getChildFile ("Application Support") })
+        {
+            const auto folder = base.getChildFile ("HumHouse/Drums X/Content");
+            if (folder.getChildFile ("content_manifest.json").existsAsFile())
+                return folder;
+        }
+
+        return {};
+    }
+
     juce::File DrumsXProcessor::findSharedContentFolder()
     {
         using SL = juce::File;
-        const juce::String leaf ("HumHouse/Drums X/Content");
 
         // Development and CI runs point at a content tree that was never
         // installed, so an override wins over the installed locations.
@@ -371,11 +436,8 @@ namespace hhx
 
         for (const auto& root : { SL::getSpecialLocation (SL::commonApplicationDataDirectory),
                                   SL::getSpecialLocation (SL::userApplicationDataDirectory) })
-        {
-            const auto folder = root.getChildFile (leaf);
-            if (folder.getChildFile ("content_manifest.json").existsAsFile())
+            if (const auto folder = contentFolderUnder (root); folder != juce::File())
                 return folder;
-        }
 
         return {};
     }
@@ -436,6 +498,10 @@ namespace hhx
                 }
             }
         }
+        else
+        {
+            contentDescription = "no installed content found";
+        }
 
        #if HHX_HAS_CORPUS
         if (! corpus.isLoaded())
@@ -456,6 +522,7 @@ namespace hhx
         kit.setBleed (apvts.getRawParameterValue (pid::bleed)->load());
         kit.setCrush (apvts.getRawParameterValue (pid::crush)->load());
         pushRoomParameters();
+        pushMixParameters();
     }
 
     void DrumsXProcessor::selectKit (int index)
@@ -498,6 +565,22 @@ namespace hhx
         kit.setRoom (load (pid::roomSize), load (pid::roomDamping), load (pid::roomMix));
         kit.setRoomSpace ((int) std::lround (load (pid::roomSpace)));
         kit.setRoomDuck (load (pid::roomDuck));
+    }
+
+    void DrumsXProcessor::pushMixParameters()
+    {
+        const auto load = [this] (const juce::String& id)
+        {
+            const auto* p = apvts.getRawParameterValue (id);
+            return p != nullptr ? p->load() : 0.0f;
+        };
+
+        kit.setMixVoicing ((int) std::lround (load (pid::mixVoicing)));
+        kit.setPunch (load (pid::punch));
+        kit.setGlue (load (pid::glue));
+        kit.setDrive (load (pid::drive));
+        kit.setSqueeze (load (pid::squeeze));
+        kit.setSqueezeGlow ((int) std::lround (load (pid::squeezeGlow)));
     }
 
     void DrumsXProcessor::rebuildTimeline()
@@ -548,6 +631,7 @@ namespace hhx
         set (pid::ghost,       c.ghost);
         set (pid::hatOpenness, c.hatOpenness);
         set (pid::rideMode,    c.ride ? 1.0f : 0.0f);
+        set (pid::halfTime,    c.halfTime ? 1.0f : 0.0f);
     }
 
     PerformanceSettings DrumsXProcessor::buildSettings() const
@@ -585,7 +669,8 @@ namespace hhx
         s.ghostAmount    = get (pid::ghost);
         s.hatOpenness    = get (pid::hatOpenness);
         s.rideInsteadOfHat = get (pid::rideMode) > 0.5f;
-        s.halfTime       = get (pid::halfTime) > 0.5f;
+        s.halfTime       = get (pid::halfTime) > 0.5f
+                        || characters()[(std::size_t) charIdx].halfTime;
 
         const int phraseChoice = (int) get (pid::phraseBars);
         s.phraseBars     = phraseChoice == 0 ? 1 : (phraseChoice == 1 ? 2 : 4);
@@ -615,6 +700,16 @@ namespace hhx
             const juce::SpinLock::ScopedLockType sl (sectionLock);
             s.sections    = hostSections;
             s.arrangement = arrangement;
+        }
+
+        // With blocks on the strip the piece switches belong to the selected
+        // block, so the song-wide mask has to stay open: an intro of nothing
+        // but toms must not take the hats out of the chorus behind it.
+        if (! s.arrangement.empty())
+        {
+            s.laneMask     = 0xFFFFFFFFu;
+            s.fillLaneMask = 0xFFFFFFFFu;
+            s.ghostMask    = 0;
         }
 
         // Rounded to whole beats per minute: the fill rules only care which
@@ -649,6 +744,17 @@ namespace hhx
         sec.halfTime        = get (pid::halfTime) > 0.5f;
         sec.variationRhythm = (int) get (pid::variationRhythm);
         sec.variationCymbal = (int) get (pid::variationCymbal);
+
+        std::uint32_t blockMask = 0, blockGhost = 0;
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            if (get (pid::laneEnable (lane)) > 0.5f)
+                blockMask |= (1u << lane);
+            if (get (pid::laneGhost (lane)) > 0.5f)
+                blockGhost |= (1u << lane);
+        }
+        sec.laneMask  = blockMask;
+        sec.ghostMask = blockGhost;
     }
 
     void DrumsXProcessor::pushSectionToParams (int index)
@@ -676,6 +782,14 @@ namespace hhx
         set (pid::halfTime,   sec.halfTime ? 1.0f : 0.0f);
         set (pid::variationRhythm, (float) sec.variationRhythm);
         set (pid::variationCymbal, (float) sec.variationCymbal);
+
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            set (pid::laneEnable (lane).toRawUTF8(),
+                 (sec.laneMask  & (1u << lane)) != 0 ? 1.0f : 0.0f);
+            set (pid::laneGhost (lane).toRawUTF8(),
+                 (sec.ghostMask & (1u << lane)) != 0 ? 1.0f : 0.0f);
+        }
         syncingSection.store (false);
     }
 
@@ -832,6 +946,174 @@ namespace hhx
         updateHostDisplay();
     }
 
+    namespace
+    {
+        std::uint32_t lanesMask (std::initializer_list<int> lanes)
+        {
+            std::uint32_t m = 0;
+            for (const int lane : lanes)
+                m |= (1u << lane);
+            return m;
+        }
+
+        std::uint32_t rangeMask (int first, int last)
+        {
+            std::uint32_t m = 0;
+            for (int lane = first; lane <= last; ++lane)
+                m |= (1u << lane);
+            return m;
+        }
+
+        std::uint32_t kickMask()  { return lanesMask ({ LaneKick }); }
+        std::uint32_t snareMask() { return rangeMask (LaneSnare, LaneSnareRoll); }
+        std::uint32_t hatMask()   { return rangeMask (LaneHatClosed, LaneHatBell); }
+        std::uint32_t rideMask()  { return rangeMask (LaneRideBow, LaneRideCrash); }
+        std::uint32_t crashMask() { return rangeMask (LaneCrashL, LaneSplash); }
+        std::uint32_t tomMask()   { return rangeMask (LaneTom1, LaneTom4); }
+    }
+
+    const char* DrumsXProcessor::blockPresetName (BlockPreset preset)
+    {
+        switch (preset)
+        {
+            case BlockPreset::kickHatsIntro:  return "Intro: kick and hats";
+            case BlockPreset::kickSnareIntro: return "Intro: kick and snare";
+            case BlockPreset::tomsIntro:      return "Intro: toms";
+            case BlockPreset::verse:          return "Verse: full kit, held back";
+            case BlockPreset::build:          return "Build: ride, rising";
+            case BlockPreset::chorus:         return "Chorus: full kit";
+            case BlockPreset::crashChorus:    return "Chorus: crashes wide open";
+            case BlockPreset::wholeKit:       return "Whole kit";
+        }
+        return "Whole kit";
+    }
+
+    void DrumsXProcessor::applyBlockPreset (int index, BlockPreset preset)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            if (index < 0 || index >= (int) arrangement.size())
+                return;
+
+            auto& sec = arrangement[(std::size_t) index];
+            const auto everything = 0xFFFFFFFFu;
+
+            switch (preset)
+            {
+                case BlockPreset::kickHatsIntro:
+                    sec.section    = SectionIntro;
+                    sec.laneMask   = kickMask() | hatMask();
+                    sec.velocity   = 0.45f;
+                    sec.intensity  = 0.25f;
+                    sec.complexity = 0.25f;
+                    sec.fillAmount = 0.15f;
+                    break;
+                case BlockPreset::kickSnareIntro:
+                    sec.section    = SectionIntro;
+                    sec.laneMask   = kickMask() | snareMask();
+                    sec.velocity   = 0.5f;
+                    sec.intensity  = 0.3f;
+                    sec.complexity = 0.25f;
+                    sec.fillAmount = 0.2f;
+                    break;
+                case BlockPreset::tomsIntro:
+                    sec.section    = SectionIntro;
+                    sec.laneMask   = kickMask() | tomMask();
+                    sec.velocity   = 0.55f;
+                    sec.intensity  = 0.35f;
+                    sec.complexity = 0.4f;
+                    sec.fillAmount = 0.25f;
+                    break;
+                case BlockPreset::verse:
+                    sec.section    = SectionVerse;
+                    sec.laneMask   = everything & ~crashMask();
+                    sec.velocity   = 0.6f;
+                    sec.intensity  = 0.45f;
+                    sec.complexity = 0.4f;
+                    sec.fillAmount = 0.3f;
+                    break;
+                case BlockPreset::build:
+                    sec.section    = SectionBridge;
+                    sec.laneMask   = kickMask() | snareMask() | rideMask() | tomMask();
+                    sec.velocity   = 0.7f;
+                    sec.intensity  = 0.6f;
+                    sec.complexity = 0.55f;
+                    sec.fillAmount = 0.5f;
+                    break;
+                case BlockPreset::chorus:
+                    sec.section    = SectionChorus;
+                    sec.laneMask   = everything;
+                    sec.velocity   = 0.85f;
+                    sec.intensity  = 0.8f;
+                    sec.complexity = 0.6f;
+                    sec.fillAmount = 0.55f;
+                    break;
+                case BlockPreset::crashChorus:
+                    sec.section    = SectionChorus;
+                    sec.laneMask   = everything;
+                    sec.velocity   = 1.0f;
+                    sec.intensity  = 1.0f;
+                    sec.complexity = 0.75f;
+                    sec.fillAmount = 0.8f;
+                    break;
+                case BlockPreset::wholeKit:
+                    sec.laneMask   = everything;
+                    break;
+            }
+
+            // A preset says which pieces play, never which are demoted to
+            // ghost strokes: that stays the player's choice.
+            sec.ghostMask &= sec.laneMask;
+        }
+
+        if (index == selectedSection.load())
+            pushSectionToParams (index);
+
+        rebuildTimeline();
+        updateHostDisplay();
+    }
+
+    std::uint32_t DrumsXProcessor::getSectionLanes (int index) const
+    {
+        const juce::SpinLock::ScopedLockType sl (sectionLock);
+        if (index < 0 || index >= (int) arrangement.size())
+            return 0xFFFFFFFFu;
+        return arrangement[(std::size_t) index].laneMask;
+    }
+
+    void DrumsXProcessor::setSectionLanes (int index, std::uint32_t laneMask)
+    {
+        {
+            const juce::SpinLock::ScopedLockType sl (sectionLock);
+            if (index < 0 || index >= (int) arrangement.size())
+                return;
+            auto& sec = arrangement[(std::size_t) index];
+            sec.laneMask  = laneMask;
+            sec.ghostMask &= laneMask;
+        }
+
+        if (index == selectedSection.load())
+            pushSectionToParams (index);
+
+        rebuildTimeline();
+        updateHostDisplay();
+    }
+
+    void DrumsXProcessor::toggleSectionPiece (int index, const std::vector<int>& lanes)
+    {
+        if (lanes.empty())
+            return;
+
+        std::uint32_t group = 0;
+        for (const int lane : lanes)
+            if (lane >= 0 && lane < NumLanes)
+                group |= (1u << lane);
+
+        const auto current = getSectionLanes (index);
+        const bool on = (current & group) != 0;
+        setSectionLanes (index, on ? (current & ~group) : (current | group));
+    }
+
     void DrumsXProcessor::setSections (std::vector<SectionSpan> spans)
     {
         {
@@ -866,6 +1148,17 @@ namespace hhx
         return p != nullptr && p->load() > 0.5f;
     }
 
+    int DrumsXProcessor::manualBars() const
+    {
+        const auto* p = apvts.getRawParameterValue (pid::manualBars);
+        switch (p != nullptr ? (int) p->load() : 1)
+        {
+            case 0:  return 1;
+            case 2:  return 4;
+            default: return 2;
+        }
+    }
+
     void DrumsXProcessor::setManualStep (int lane, int step, float velocity01)
     {
         if (lane < 0 || lane >= NumLanes || step < 0 || step >= kManualSteps)
@@ -895,6 +1188,143 @@ namespace hhx
         triggerAsyncUpdate();
     }
 
+    bool DrumsXProcessor::hasManualNotes() const
+    {
+        const std::lock_guard<std::mutex> lock (manualMutex);
+        const int steps = manualSteps();
+        for (const auto& lane : manualGrid)
+            for (int step = 0; step < steps; ++step)
+                if (lane[(std::size_t) step] > 0.0f)
+                    return true;
+        return false;
+    }
+
+    bool DrumsXProcessor::importManualMidi (const juce::File& source)
+    {
+        auto stream = source.createInputStream();
+        if (stream == nullptr)
+            return false;
+
+        juce::MidiFile file;
+        if (! file.readFrom (*stream))
+            return false;
+
+        const int format = file.getTimeFormat();
+        if (format <= 0)                       // SMPTE files carry no musical grid
+            return false;
+        const double ticksPerQuarter = (double) format;
+
+        std::array<std::array<float, kManualSteps>, NumLanes> grid {};
+        bool any = false;
+        int  lastStep = 0;
+
+        for (int t = 0; t < file.getNumTracks(); ++t)
+        {
+            const auto* track = file.getTrack (t);
+            if (track == nullptr)
+                continue;
+
+            for (int e = 0; e < track->getNumEvents(); ++e)
+            {
+                const auto& msg = track->getEventPointer (e)->message;
+                if (! msg.isNoteOn())
+                    continue;
+
+                const int lane = noteToLane (msg.getNoteNumber());
+                if (lane < 0)
+                    continue;
+
+                // Sixteenths, and anything past the grid's four bars wraps onto
+                // it, so dropping a longer loop still lands in time.
+                const double quarters = msg.getTimeStamp() / ticksPerQuarter;
+                int step = (int) std::llround (quarters * 4.0);
+                if (step < 0)
+                    continue;
+                step %= kManualSteps;
+
+                auto& cell = grid[(std::size_t) lane][(std::size_t) step];
+                cell = std::max (cell, juce::jlimit (0.1f, 1.0f, msg.getFloatVelocity()));
+                lastStep = std::max (lastStep, step);
+                any = true;
+            }
+        }
+
+        if (! any)
+            return false;
+
+        {
+            const std::lock_guard<std::mutex> lock (manualMutex);
+            manualGrid = grid;
+        }
+
+        // The pattern is as long as what was dropped, rounded up to a length
+        // the grid holds, so a four-bar loop is not folded back onto bar one.
+        if (auto* p = apvts.getParameter (pid::manualBars))
+        {
+            const int index = lastStep >= 32 ? 2 : (lastStep >= 16 ? 1 : 0);
+            p->setValueNotifyingHost (p->convertTo0to1 ((float) index));
+        }
+
+        // A dropped pattern is meant to be played, so the page switches itself
+        // into manual mode rather than silently holding the notes.
+        if (auto* p = apvts.getParameter (pid::manualMode))
+            p->setValueNotifyingHost (1.0f);
+
+        rebuildTimeline();
+        updateHostDisplay();
+        return true;
+    }
+
+    bool DrumsXProcessor::exportManualMidi (const juce::File& dest) const
+    {
+        juce::MidiFile file;
+        file.setTicksPerQuarterNote (kTicksPerQuarter);
+
+        const auto s = buildSettings();
+        juce::MidiMessageSequence meta;
+        meta.addEvent (juce::MidiMessage::timeSignatureMetaEvent (s.timeSigNum, s.timeSigDen), 0.0);
+        meta.addEvent (juce::MidiMessage::tempoMetaEvent (
+            (int) std::llround (60'000'000.0 / lastBpm.load())), 0.0);
+        meta.addEvent (juce::MidiMessage::textMetaEvent (3, "HumHouse Drums X pattern"), 0.0);
+        file.addTrack (meta);
+
+        juce::MidiMessageSequence seq;
+        {
+            const int steps = manualSteps();
+            const std::lock_guard<std::mutex> lock (manualMutex);
+            for (int lane = 0; lane < NumLanes; ++lane)
+            {
+                for (int step = 0; step < steps; ++step)
+                {
+                    const float v = manualGrid[(std::size_t) lane][(std::size_t) step];
+                    if (v <= 0.0f)
+                        continue;
+
+                    const int    note = laneToMidiNote (lane);
+                    const double tick = (double) step * 0.25 * kTicksPerQuarter;
+                    const auto   vel  = (juce::uint8) juce::jlimit (1, 127, (int) std::lround (v * 127.0f));
+                    seq.addEvent (juce::MidiMessage::noteOn (10, note, vel), tick);
+                    seq.addEvent (juce::MidiMessage::noteOff (10, note), tick + kNoteTicks);
+                }
+            }
+        }
+        if (seq.getNumEvents() == 0)
+            return false;
+
+        seq.updateMatchedPairs();
+        seq.addEvent (juce::MidiMessage::textMetaEvent (3, "Drums"), 0.0);
+        file.addTrack (seq);
+
+        dest.getParentDirectory().createDirectory();
+        if (auto stream = dest.createOutputStream())
+        {
+            stream->setPosition (0);
+            stream->truncate();
+            return file.writeTo (*stream);
+        }
+        return false;
+    }
+
     //==============================================================================
     std::vector<Hit> DrumsXProcessor::renderBars (int startBar, int numBars) const
     {
@@ -903,28 +1333,56 @@ namespace hhx
         if (! isManualMode())
             return engine.renderBars (s, startBar, numBars);
 
-        // Manual mode plays the user's grid verbatim, looping every two bars.
-        // Nothing the generator does can touch it.
+        // Manual mode plays the pattern the player wrote, but plays it the way
+        // a drummer would rather than looping it: the notes are theirs, while
+        // the fills at the phrase ends, the piece switches of the block and its
+        // section loudness come from the arrangement. Nothing is added inside
+        // the bar, so what is written is what is heard.
         std::vector<Hit> out;
+        const int patternBars = manualBars();
         const std::lock_guard<std::mutex> lock (manualMutex);
+        const int phraseBars = juce::jmax (1, s.phraseBars);
+
         for (int bar = 0; bar < numBars; ++bar)
         {
-            const int  sourceBar = (startBar + bar) % kManualBars;
-            const float barStart = (float) (startBar + bar) * s.beatsPerBar;
+            const int   absBar   = startBar + bar;
+            const auto  sec      = engine.settingsForBar (s, absBar);
+            const int   sourceBar = absBar % patternBars;
+            const float barStart = (float) absBar * s.beatsPerBar;
+
+            // Where this bar sits in its phrase decides whether it hands over
+            // with a fill, and the block's own loudness scales the strokes.
+            const int   phrase   = absBar / phraseBars;
+            const bool  lastBar  = ((absBar + 1) % phraseBars) == 0;
+            const float fillBeats = lastBar
+                                  ? std::min (s.beatsPerBar,
+                                              s.beatsPerBar * juce::jmax (0.5f, s.fillLengthBars))
+                                  : 0.0f;
+            const auto  fill = fillBeats > 0.0f ? engine.fillForPhrase (s, phrase, fillBeats)
+                                                : std::vector<Hit> {};
+            const float fillStart = s.beatsPerBar - fillBeats;
+            const float level = 0.72f + 0.5f * juce::jlimit (0.0f, 1.0f, sec.sectionVelocity);
+
             for (int lane = 0; lane < NumLanes; ++lane)
             {
-                if ((s.laneMask & (1u << lane)) == 0)
+                if ((sec.laneMask & (1u << lane)) == 0)
                     continue;
                 for (int step = 0; step < 16; ++step)
                 {
                     const float v = manualGrid[(std::size_t) lane][(std::size_t) (sourceBar * 16 + step)];
                     if (v <= 0.0f)
                         continue;
-                    const float beat = barStart + s.beatsPerBar * ((float) step / 16.0f);
-                    out.push_back ({ beat, (std::uint8_t) lane,
-                                     (std::uint8_t) juce::jlimit (1, 127, juce::roundToInt (v * 127.0f)) });
+                    const float inBar = s.beatsPerBar * ((float) step / 16.0f);
+                    if (! fill.empty() && inBar >= fillStart - 0.01f)
+                        continue;               // the fill takes over the bar here
+                    out.push_back ({ barStart + inBar, (std::uint8_t) lane,
+                                     (std::uint8_t) juce::jlimit (1, 127,
+                                         juce::roundToInt (v * 127.0f * level)) });
                 }
             }
+
+            for (const auto& h : fill)
+                out.push_back ({ barStart + fillStart + h.beat, h.lane, h.velocity });
         }
         std::sort (out.begin(), out.end(), [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
         return out;
@@ -964,10 +1422,113 @@ namespace hhx
     {
         juce::ScopedNoDenormals noDenormals;
         buffer.clear();
-        midi.clear();
 
         const double sampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
         const int    numSamples = buffer.getNumSamples();
+
+        const auto* triggerParam = apvts.getRawParameterValue (pid::triggerMode);
+        const int   trigger = triggerParam != nullptr ? (int) std::lround (triggerParam->load()) : 0;
+
+        // What the host is sending us decides whether the drummer plays at all,
+        // so the incoming notes are read before the buffer is reused for our
+        // own output. In "Play My Notes" they are the performance.
+        struct GateEdge { int offset; bool open; };
+        std::array<GateEdge, 32> edges {};
+        int numEdges = 0;
+
+        for (const auto meta : midi)
+        {
+            const auto msg = meta.getMessage();
+            const int  at  = juce::jlimit (0, juce::jmax (0, numSamples - 1), meta.samplePosition);
+
+            if (msg.isNoteOn())
+            {
+                ++heldNotes;
+            }
+            else if (msg.isNoteOff())
+            {
+                heldNotes = juce::jmax (0, heldNotes - 1);
+            }
+            else if (msg.isAllNotesOff() || msg.isAllSoundOff())
+            {
+                heldNotes = 0;
+            }
+            else
+            {
+                continue;
+            }
+
+            const bool wantOpen = heldNotes > 0;
+            if (wantOpen != gateOpen && numEdges < (int) edges.size())
+            {
+                gateOpen = wantOpen;
+                edges[(std::size_t) numEdges++] = { at, wantOpen };
+            }
+        }
+
+        // The kit's own strokes are played from the host's notes in "Play My
+        // Notes": the drawn part is the truth, we only voice it.
+        int numHostHits = 0;
+        std::array<PendingHit, 64> hostHits {};
+        if (trigger == 2)
+        {
+            for (const auto meta : midi)
+            {
+                const auto msg = meta.getMessage();
+                if (! msg.isNoteOn())
+                    continue;
+                const int lane = noteToLane (msg.getNoteNumber());
+                if (lane < 0 || numHostHits >= (int) hostHits.size())
+                    continue;
+                hostHits[(std::size_t) numHostHits++] =
+                    { juce::jlimit (0, juce::jmax (0, numSamples - 1), meta.samplePosition),
+                      (std::uint8_t) lane,
+                      (std::uint8_t) juce::jlimit (1, 127, (int) msg.getVelocity()),
+                      (std::uint8_t) 0 };
+            }
+        }
+
+        const bool gateAtBlockStart = numEdges > 0 ? ! edges[0].open : gateOpen;
+
+        /** Whether the drummer is allowed to strike at this point in the block. */
+        const auto gatedAt = [&] (int offset)
+        {
+            if (trigger == 0)
+                return true;
+            if (trigger == 2)
+                return false;
+            bool open = gateAtBlockStart;
+            for (int i = 0; i < numEdges; ++i)
+                if (edges[(std::size_t) i].offset <= offset)
+                    open = edges[(std::size_t) i].open;
+            return open;
+        };
+
+        midi.clear();
+
+        if (trigger == 2)
+        {
+            int cursor = 0;
+            for (int i = 0; i < numHostHits; ++i)
+            {
+                const auto& h = hostHits[(std::size_t) i];
+                if (h.offset > cursor)
+                {
+                    kit.renderNextBlock (buffer, cursor, h.offset - cursor);
+                    cursor = h.offset;
+                }
+                kit.noteOn (h.lane, (float) h.velocity / 127.0f, h.variant);
+                midi.addEvent (juce::MidiMessage::noteOn (10, laneToMidiNote (h.lane),
+                                                          (juce::uint8) h.velocity), h.offset);
+                midi.addEvent (juce::MidiMessage::noteOff (10, laneToMidiNote (h.lane)),
+                               juce::jmin (numSamples - 1, h.offset + 8));
+            }
+            if (cursor < numSamples)
+                kit.renderNextBlock (buffer, cursor, numSamples - cursor);
+
+            applyOutputStage (buffer);
+            return;
+        }
 
         const auto* tempoModeParam = apvts.getRawParameterValue (pid::tempoMode);
         const bool  manualTempo = tempoModeParam != nullptr && tempoModeParam->load() > 0.5f;
@@ -1050,6 +1611,12 @@ namespace hhx
 
                 const int offset = juce::jlimit (0, numSamples - 1,
                                                  (int) std::llround (((double) h.beat - timeOrigin) / beatsPerSample));
+                // Held-note trigger: strokes outside the held span are never
+                // struck, so the kit can enter at bar 8 of a song. Whatever is
+                // already ringing is left to ring out.
+                if (! gatedAt (offset))
+                    continue;
+
                 const int note = laneToMidiNote (h.lane);
                 midi.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), offset);
                 midi.addEvent (juce::MidiMessage::noteOff (10, note), juce::jmin (numSamples - 1, offset + 8));
@@ -1236,6 +1803,8 @@ namespace hhx
             block.setProperty ("halfTime", sec.halfTime, nullptr);
             block.setProperty ("varRhythm", sec.variationRhythm, nullptr);
             block.setProperty ("varCymbal", sec.variationCymbal, nullptr);
+            block.setProperty ("lanes", (juce::int64) sec.laneMask, nullptr);
+            block.setProperty ("ghosts", (juce::int64) sec.ghostMask, nullptr);
             blocks.appendChild (block, nullptr);
         }
         state.appendChild (blocks, nullptr);
@@ -1296,6 +1865,11 @@ namespace hhx
                 sec.halfTime        = (bool)  block.getProperty ("halfTime", false);
                 sec.variationRhythm = (int)   block.getProperty ("varRhythm", 0);
                 sec.variationCymbal = (int)   block.getProperty ("varCymbal", 0);
+                // Sessions saved before the switches were per block played the
+                // whole kit in every block, which is what the default is.
+                sec.laneMask  = (std::uint32_t) (juce::int64) block.getProperty (
+                                    "lanes", (juce::int64) ((1u << NumLanes) - 1u));
+                sec.ghostMask = (std::uint32_t) (juce::int64) block.getProperty ("ghosts", (juce::int64) 0);
                 restored.push_back (sec);
             }
 

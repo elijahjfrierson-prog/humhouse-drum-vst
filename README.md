@@ -91,6 +91,12 @@ For a fully trusted install, add an `APPLE_DEVELOPER_ID` repo secret (e.g.
 already picks it up. Notarization via `notarytool` is a natural next
 step — see the TODO comment in `scripts/package_macos_dmg.sh`.
 
+### About OBS
+
+OBS hosts VST **2** plugins only, so a VST3 never appears in its filter list.
+Record the standalone app instead and route it through a virtual audio device —
+see [docs/OBS.md](docs/OBS.md).
+
 ### About AAX (Pro Tools)
 
 AAX is intentionally **not** built. Producing a loadable AAX plugin requires:

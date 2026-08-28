@@ -40,7 +40,7 @@ import mido
 import lanes as L
 
 MAGIC = b"HHCX"
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 
 BEATS_PER_BAR = 4.0
 GRID = 48                      # grid units per beat (holds 16ths and triplets)
@@ -340,6 +340,38 @@ def score_musicality(notes: list[Note], bars: int, beats_per_bar: float) -> floa
 MIN_MUSICALITY_BEAT = 0.80
 MIN_MUSICALITY_FILL = 0.42
 
+# A groove the pad can hold: no more strokes a bar than a drummer plays as a
+# part, time that never stops, and a backbeat that answers. Past this it is a
+# fill, and the busy corner of the pad reading as one long fill is exactly
+# what it must not do.
+MAX_GROOVE_HITS_PER_BAR = 26
+
+
+def plays_as_groove(notes: list[Note], bars: int, beats_per_bar: float) -> bool:
+    if not notes or bars < 1:
+        return False
+    if len(notes) > MAX_GROOVE_HITS_PER_BAR * bars:
+        return False
+
+    span = bars * beats_per_bar
+    time_lanes = L.HAT_FAMILY | {L.RIDE_BOW, L.RIDE_BELL, L.RIDE_EDGE} \
+                 | L.CYMBAL_FAMILY
+    edges = [0.0] + sorted(n.beat for n in notes
+                           if n.lane in time_lanes) + [span]
+    if max(b - a for a, b in zip(edges, edges[1:])) > beats_per_bar:
+        return False
+
+    # Somewhere in every bar a snare has to answer - on 2 or 4 straight, on 3
+    # in a half-time feel - otherwise the bar has no shape to play against.
+    for b in range(bars):
+        answers = [n for n in notes
+                   if n.lane in L.SNARE_FAMILY
+                   and b * beats_per_bar <= n.beat < (b + 1) * beats_per_bar]
+        if not any(abs((n.beat % beats_per_bar) - want) < 0.3
+                   for n in answers for want in (1.0, 2.0, 3.0)):
+            return False
+    return True
+
 
 def score_intensity(notes: list[Note]) -> float:
     """0..1 - how hard the phrase is hit, weighted toward backbeat lanes."""
@@ -419,14 +451,40 @@ def classify_fill_style(p: Phrase) -> int:
     return mask
 
 
+# How many characters one take may belong to, and how much further than the
+# nearest accepting character a rival may sit and still claim it. Generic
+# "rock" is accepted by six characters whose radii overlap, so without this a
+# single bar joins most of the roster and Pop Rock plays Hard Rock's grooves.
+MAX_CHARACTERS_PER_TAKE = 2
+CHARACTER_MARGIN = 1.18
+
+# Half Time is a feel rather than a region of the plane: the engine plays its
+# takes at half rate, so it claims every take it accepts instead of competing
+# with the straight-time characters for them.
+OPEN_CHARACTERS = ("Half Time",)
+
+
 def assign_characters(p: Phrase) -> int:
-    mask = 0
+    near: list[tuple[float, int]] = []
     for bit, (_, styles, cx, inten, radius) in enumerate(CHARACTERS):
         if not any(p.style == s or p.style.startswith(s + "/") for s in styles):
             continue
         d = ((p.complexity - cx) ** 2 + (p.intensity - inten) ** 2) ** 0.5
         if d <= radius:
-            mask |= 1 << bit
+            near.append((d, bit))
+
+    # A take belongs to the character it actually sounds like, plus at most one
+    # neighbour close behind it, so each character keeps its own vocabulary of
+    # grooves and fills instead of the whole roster sharing one pool.
+    mask = sum(1 << bit for _d, bit in near
+               if CHARACTERS[bit][0] in OPEN_CHARACTERS)
+    if near:
+        near.sort()
+        limit = near[0][0] * CHARACTER_MARGIN + 0.02
+        for d, bit in near[:MAX_CHARACTERS_PER_TAKE]:
+            if d <= limit:
+                mask |= 1 << bit
+
     if mask == 0:
         # Never orphan a real take: give it to the nearest character that
         # accepts its style, else to the nearest character outright.
@@ -465,6 +523,13 @@ def slice_phrases(notes: list[Note], bars: int, bpm: int, style: str,
             continue
         if min(n.beat for n in window) - idx * span > 0.75:
             continue          # a tail, not a phrase
+        # And the other end: a window whose last strokes fall short of the bar
+        # is a take cut off mid-phrase, so it loops with a hole where the turn
+        # around should be. Fills are allowed to stop early - they hand over to
+        # the downbeat that follows them.
+        if kind == KIND_BEAT \
+                and (idx + 1) * span - max(n.beat for n in window) > 0.75:
+            continue
         rel = [Note(n.lane, n.beat - idx * span, n.velocity) for n in window]
         rel = [n for n in rel if -0.05 <= n.beat < span]
         floor = MIN_MUSICALITY_FILL if kind == KIND_FILL else MIN_MUSICALITY_BEAT
@@ -723,6 +788,187 @@ def double_kick(phrases: list[Phrase]) -> list[Phrase]:
     return phrases + added
 
 
+LOUD_BITS = [bit for bit, (name, *_r) in enumerate(CHARACTERS)
+             if name in ("Hard Rock", "Punk", "Metal", "Rock")]
+LOUD_MASK = sum(1 << bit for bit in LOUD_BITS)
+
+# Riding the crash on every quarter is a punk/metal chorus sound; plain Rock
+# keeps its hats.
+CRASH_MASK = sum(1 << bit for bit, (name, *_r) in enumerate(CHARACTERS)
+                 if name in ("Hard Rock", "Punk", "Metal", "Metal 2x Kick"))
+
+
+def crash_time(phrases: list[Phrase]) -> list[Phrase]:
+    """Crash-ridden takes: the loud chorus where the cymbal time is crashes.
+
+    Punk, alternative and metal choruses do not keep time on a hat - the
+    drummer rides a crash on every quarter (every eighth when the tempo is
+    slow enough to carry it). Everything the drummer played below the cymbals
+    is untouched; only the timekeeping lane is re-voiced, hand alternating so
+    the ride reads as two arms rather than one retriggered sample.
+    """
+    added: list[Phrase] = []
+    sources = [p for p in phrases
+               if p.kind == KIND_BEAT and not p.derived
+               and p.intensity >= 0.58 and p.sig_den == 4
+               and any(p.style.startswith(s) for s in ("rock", "punk"))]
+    sources.sort(key=lambda p: (-p.intensity, -p.complexity))
+    sources = sources[:260]
+
+    for base in sources:
+        keep = [n for n in base.notes
+                if n.lane not in L.HAT_FAMILY and n.lane not in L.RIDE_FAMILY
+                and n.lane not in L.CYMBAL_FAMILY]
+        cymbals = [n for n in base.notes
+                   if n.lane in L.HAT_FAMILY or n.lane in L.RIDE_FAMILY]
+        if len(keep) < 4 or not cymbals:
+            continue
+
+        span = base.bars * base.beats_per_bar
+        kicks = sorted(n.beat for n in keep if n.lane == L.KICK)
+
+        # A crash needs time to open: eighths only where the tempo leaves room.
+        steps = [1.0] if base.bpm > 150 else [1.0, 0.5]
+        for step in steps:
+            ride: list[Note] = []
+            i = 0
+            beat = 0.0
+            while beat < span:
+                lead = (i % 2) == 0
+                # A crash is the loudest thing in the bar, the off hand lands a
+                # touch lighter, and a crash landing with a kick digs in. The
+                # beat is exact: a crash off the grid is the thing that reads as
+                # a mistake rather than as a player.
+                v = 116 if lead else 106
+                if any(abs(k - beat) < 0.02 for k in kicks):
+                    v += 6
+                ride.append(Note(L.CRASH_L if lead else L.CRASH_R,
+                                 beat, max(1, min(127, v))))
+                beat += step
+                i += 1
+
+            notes = sorted(keep + ride, key=lambda n: n.beat)
+            for row in (0.82, 0.92, 1.0):
+                p = derive(base, notes, row)
+                # Crash time is a chorus device for the loud characters, and
+                # it stays with the characters the source take belongs to so
+                # each drummer keeps its own vocabulary.
+                p.char_mask = (base.char_mask & CRASH_MASK) or CRASH_MASK
+                added.append(p)
+    return phrases + added
+
+
+def double_snare(phrases: list[Phrase]) -> list[Phrase]:
+    """Two-snare backbeats: the driving figure the corpus is thin on.
+
+    The extra stroke is the drummer's own snare - its velocity and its
+    distance from the grid are borrowed from the strokes either side of it -
+    placed either as a double on the backbeat or as the pickup into the next
+    one, which is what makes punk and alternative choruses drive.
+    """
+    added: list[Phrase] = []
+    sources = [p for p in phrases
+               if p.kind == KIND_BEAT and not p.derived
+               and p.intensity >= 0.48 and p.sig_den == 4
+               and any(p.style.startswith(s) for s in ("rock", "punk", "pop"))]
+    sources.sort(key=lambda p: (-p.intensity, -p.complexity))
+    sources = sources[:300]
+
+    for base in sources:
+        snares = [n for n in base.notes if n.lane == L.SNARE]
+        if len(snares) < 2:
+            continue
+
+        occupied = {round(n.beat * 4.0) / 4.0 for n in base.notes
+                    if n.lane in (L.SNARE, L.SNARE_GHOST, L.SNARE_RIM)}
+
+        for offset in (0.25, 0.5):
+            extra: list[Note] = []
+            for i, n in enumerate(snares):
+                at = round((n.beat + offset) * 4.0) / 4.0
+                if at in occupied:
+                    continue
+                dev = n.beat - round(n.beat * 4.0) / 4.0
+                # The second stroke of a double is played by the off hand, so
+                # it is lighter and sits marginally later.
+                v = int(round(n.velocity * 0.86))
+                extra.append(Note(L.SNARE, at + dev * 1.25, max(1, min(127, v))))
+                if i >= 7:
+                    break
+            if not extra:
+                continue
+
+            notes = sorted(base.notes + extra, key=lambda n: n.beat)
+            for row in (0.62, 0.78, 0.9):
+                p = derive(base, notes, row)
+                p.char_mask = (base.char_mask & LOUD_MASK) or LOUD_MASK
+                added.append(p)
+    return phrases + added
+
+
+HALF_TIME_BIT = next(bit for bit, (name, *_r) in enumerate(CHARACTERS)
+                     if name == "Half Time")
+
+
+def half_time_recast(phrases: list[Phrase]) -> list[Phrase]:
+    """Half-time versions of straight-time takes.
+
+    A half-time feel is how a drummer plays an existing groove, not a separate
+    library: the backbeat moves to 3, the cymbal drops to the half-rate pulse
+    and the kick keeps only the strokes that carry the bar. Recasting real
+    takes this way gives the feel a pool of its own instead of leaving it with
+    whatever the straight-time characters did not claim - which is why it was
+    the one character with holes in the pad.
+    """
+    added: list[Phrase] = []
+    sources = [p for p in phrases
+               if p.kind == KIND_BEAT and not p.derived
+               and p.sig_den == 4 and p.sig_num == 4]
+    sources.sort(key=lambda p: -score_musicality(p.notes, p.bars,
+                                                 p.beats_per_bar))
+    sources = sources[:420]
+
+    for base in sources:
+        bar = base.beats_per_bar
+        notes: list[Note] = []
+        for n in base.notes:
+            in_bar = n.beat - (n.beat // bar) * bar
+            near = round(in_bar * 2.0) / 2.0
+
+            if n.lane in L.SNARE_FAMILY:
+                # One backbeat a bar, on 3, and the ghost strokes stay.
+                if n.lane == L.SNARE and abs(near - 2.0) > 0.26:
+                    continue
+            elif n.lane in L.HAT_FAMILY or n.lane in (L.RIDE_BOW, L.RIDE_BELL,
+                                                      L.RIDE_EDGE):
+                # Time is kept on the quarter, not the eighth.
+                if abs(in_bar - round(in_bar)) > 0.12:
+                    continue
+            elif n.lane == L.KICK:
+                if abs(near - 1.5) < 0.26 or abs(near - 3.5) < 0.26:
+                    continue
+            notes.append(Note(n.lane, n.beat, n.velocity))
+
+        snares = [n for n in notes if n.lane == L.SNARE]
+        if len(notes) < 6 or not snares:
+            continue
+
+        # The bar has to answer on 3: if the source's backbeat did not land
+        # there, the closest snare stroke is moved onto it.
+        for b in range(int(base.bars)):
+            at = b * bar + 2.0
+            if not any(abs(n.beat - at) < 0.26 for n in snares):
+                donor = min(snares, key=lambda n: abs((n.beat % bar) - 2.0))
+                notes.append(Note(L.SNARE, at, donor.velocity))
+        notes.sort(key=lambda n: n.beat)
+
+        for row in (0.2, 0.35, 0.5, 0.65, 0.8, 0.95):
+            p = derive(base, notes, row)
+            p.char_mask = 1 << HALF_TIME_BIT
+            added.append(p)
+    return phrases + added
+
+
 def densify(phrases: list[Phrase]) -> list[Phrase]:
     """Fills every empty complexity x loudness cell, per character.
 
@@ -746,14 +992,21 @@ def densify(phrases: list[Phrase]) -> list[Phrase]:
         best = sorted(mine, key=lambda p: -score_musicality(
             p.notes, p.bars, p.beats_per_bar))[:max(24, len(mine) * 3 // 4)]
         ranked = sorted(best, key=lambda p: p.complexity)
-        donors = ranked[-6:]
+
+        # Ornaments are borrowed from the busiest bars in the library, not only
+        # from this character's own, or a sparse character - a half-time feel
+        # especially - has nothing to reach the busy side of the pad with.
+        donors = ranked[-6:] + sorted(beats, key=lambda p: -p.complexity)[:6]
         step = max(1, len(ranked) // 48)
         bases = ranked[::step]
 
         # Two passes: hold derived bars to the same standard as recorded ones,
         # then let anything fill whatever cells are still empty, since an empty
         # cell means the pad has nothing to play there at all.
-        for floor in (MIN_MUSICALITY_BEAT - 0.06, 0.0):
+        # The first pass only accepts bars that play as a part; the second
+        # keeps the density ceiling but drops the rest, since a cell with
+        # nothing in it makes the pad reach across the plane instead.
+        for floor, strict in ((MIN_MUSICALITY_BEAT - 0.06, True), (0.0, False)):
             for base in bases:
                 if not empty:
                     break
@@ -767,6 +1020,11 @@ def densify(phrases: list[Phrase]) -> list[Phrase]:
                             continue
                         if score_musicality(p.notes, p.bars,
                                             p.beats_per_bar) < floor:
+                            continue
+                        if strict and not plays_as_groove(p.notes, p.bars,
+                                                          p.beats_per_bar):
+                            continue
+                        if len(p.notes) > MAX_GROOVE_HITS_PER_BAR * p.bars:
                             continue
                         empty.discard(cell_of(p))
                         added.append(p)
@@ -840,7 +1098,7 @@ def write_corpus(phrases: list[Phrase], out: Path) -> None:
             f.write(bytes(row))
         for p in phrases:
             f.write(struct.pack(
-                "<BBBBBBHBHBBH",
+                "<BBBBBBHBHBBBH",
                 p.kind,
                 p.bars,
                 p.sig_num,
@@ -852,6 +1110,7 @@ def write_corpus(phrases: list[Phrase], out: Path) -> None:
                 p.char_mask,
                 p.fill_styles,
                 int(round(p.swing * 255)),
+                1 if p.derived else 0,
                 len(p.notes)))
             for n in p.notes:
                 grid, dev = quantise(n.beat)
@@ -923,6 +1182,9 @@ def main() -> None:
     phrases = build(args.gmd)
     calibrate(phrases)
     phrases = double_kick(phrases)
+    phrases = crash_time(phrases)
+    phrases = double_snare(phrases)
+    phrases = half_time_recast(phrases)
     phrases = densify(phrases)
     write_corpus(phrases, args.out)
     if args.manifest:
