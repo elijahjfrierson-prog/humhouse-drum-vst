@@ -151,8 +151,10 @@ jobs:
           foreach ($p in @("$stale\stale.flac", $staleVst3)) {
             if (Test-Path -LiteralPath $p) { throw "upgrade left the old version behind: $p" }
           }
-          $kit = "$env:ProgramData\HumHouse\Drums X\Content\Kits\NakedRock\kit.json"
-          if (-not (Test-Path -LiteralPath $kit)) { throw 'the shipped kit was not installed' }
+          foreach ($kit in @('NakedRock', 'DRSRock', 'MuldjordMetal', 'SludgeNuMetal')) {
+            $path = "$env:ProgramData\HumHouse\Drums X\Content\Kits\$kit\kit.json"
+            if (-not (Test-Path -LiteralPath $path)) { throw "$kit was not installed" }
+          }
           $expected = @(
             "$env:CommonProgramFiles\VST3\HumHouse Drums X.vst3",
             "$env:ProgramFiles\HumHouse\HumHouse Drums X\HumHouse Drums X.exe",
@@ -186,8 +188,10 @@ jobs:
           if [ -e "/Library/Application Support/HumHouse/Drums X/Content/Kits/OldKit/stale.flac" ]; then
             echo "upgrade left the old content behind"; exit 1
           fi
-          test -f "/Library/Application Support/HumHouse/Drums X/Content/Kits/NakedRock/kit.json" \
-            || { echo "the shipped kit was not installed"; exit 1; }
+          for kit in NakedRock DRSRock MuldjordMetal SludgeNuMetal; do
+            test -f "/Library/Application Support/HumHouse/Drums X/Content/Kits/$kit/kit.json" \
+              || { echo "$kit was not installed"; exit 1; }
+          done
           for p in "/Library/Audio/Plug-Ins/VST3/HumHouse Drums X.vst3" \
                    "/Library/Application Support/HumHouse/Drums X/Content/content_manifest.json"; do
             test -e "$p" || { echo "installer did not create $p"; exit 1; }
