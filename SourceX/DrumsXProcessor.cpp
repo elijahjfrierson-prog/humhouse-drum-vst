@@ -94,6 +94,43 @@ namespace hhx
         int laneToMidiNote (int lane) { return laneToNote (lane); }
 
         const char* prettyLaneName (int lane) { return laneName (lane); }
+
+        /** Where a piece sits when you are sat behind the kit: kick and snare
+            under you, hats out to the left hand, ride and china over the right,
+            and the toms travelling across the front from rack to floor.
+        */
+        float seatPan (int lane)
+        {
+            switch (lane)
+            {
+                case LaneKick:                                          return  0.00f;
+                case LaneSnare: case LaneSnareRim: case LaneSideStick:
+                case LaneSnareGhost: case LaneSnareFlam:
+                case LaneSnareRoll:                                     return -0.08f;
+
+                case LaneHatClosed: case LaneHatTight:  case LaneHatOpen1:
+                case LaneHatOpen2:  case LaneHatOpen3:  case LaneHatOpen4:
+                case LaneHatPedal:  case LaneHatSplash: case LaneHatBell:
+                                                                        return -0.38f;
+
+                case LaneRideBow: case LaneRideBell:
+                case LaneRideEdge: case LaneRideCrash:                  return  0.42f;
+
+                case LaneCrashL:                                        return -0.62f;
+                case LaneCrashR:                                        return  0.62f;
+                case LaneCrash3:                                        return  0.30f;
+                case LaneChina:                                         return  0.70f;
+                case LaneSplash:                                        return -0.30f;
+
+                case LaneTom1:                                          return -0.22f;
+                case LaneTom2:                                          return  0.02f;
+                case LaneTom3:                                          return  0.30f;
+                case LaneTom4:                                          return  0.52f;
+
+                case LanePerc:                                          return  0.45f;
+                default:                                                return  0.0f;
+            }
+        }
     }
 
     const char* drumsXLaneName (int lane) { return prettyLaneName (lane); }
@@ -270,7 +307,7 @@ namespace hhx
                 AudioParameterFloatAttributes().withStringFromValueFunction (dbStr)));
             layout.add (std::make_unique<AudioParameterFloat> (
                 ParameterID { pid::lanePan (lane), 1 }, n + " Pan",
-                NormalisableRange<float> (-1.0f, 1.0f, 0.01f), 0.0f));
+                NormalisableRange<float> (-1.0f, 1.0f, 0.01f), seatPan (lane)));
             layout.add (std::make_unique<AudioParameterFloat> (
                 ParameterID { pid::laneTune (lane), 1 }, n + " Tune",
                 NormalisableRange<float> (-6.0f, 6.0f, 0.01f), 0.0f,

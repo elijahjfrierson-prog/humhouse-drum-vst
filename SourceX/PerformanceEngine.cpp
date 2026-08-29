@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace hhx
 {
@@ -400,7 +401,7 @@ namespace hhx
             for (const int i : ranked)
             {
                 const auto& p = corpus->beat (i);
-                if (p.swing <= 0.28f && tripletShare (p) <= 0.12f)
+                if (p.swing <= 0.18f && tripletShare (p) <= 0.08f)
                     straight.push_back (i);
             }
         }
@@ -1378,36 +1379,35 @@ namespace hhx
         if (! haveRight && ! haveLeft)
             return;
 
-        const float energy  = std::clamp (sec.sectionVelocity, 0.0f, 1.0f);
-        const int   section = sectionAtBar (base, phraseIndex * bars);
-        const bool  blockTop = phraseIndex == 0
-                             || blockIndexForBar (base, phraseIndex * bars)
-                                    != blockIndexForBar (base, (phraseIndex - 1) * bars);
-        const bool  afterFill = phraseIndex > 0 && phraseEndsWithFill (base, phraseIndex - 1);
+        const float energy = std::clamp (sec.sectionVelocity, 0.0f, 1.0f);
+
+        // The fill owns the end of the phrase: a crash dropped into it is a
+        // stroke the drummer's hands are not free to play.
+        const float fillFrom = phraseEndsWithFill (base, phraseIndex)
+                             ? ((float) bars - std::max (0.5f, sec.fillLengthBars)) * dstBar - 0.01f
+                             : std::numeric_limits<float>::max();
 
         std::vector<float> beats;
 
-        // The top of the phrase: always after a fill, always at the top of a
-        // section, and from moderate energy up, every phrase. A drummer marks
-        // the downbeat he has just filled into whatever the genre is, so this
-        // is deliberately easy to reach rather than a metal-only behaviour.
-        if (afterFill || blockTop || energy > 0.42f || section == SectionChorus)
-            beats.push_back (0.0f);
+        // Every phrase gets its downbeat marked. A crash is how a drummer says
+        // "here": played only when the section is loud, sections drift into each
+        // other instead of starting.
+        beats.push_back (0.0f);
 
         // Sections played up mark the half-way bar as well, which is what makes
         // a chorus sound like a chorus instead of a louder verse.
-        if (energy > 0.55f && bars >= 2)
+        if (energy > 0.45f && bars >= 2)
             beats.push_back ((float) (bars / 2) * dstBar);
 
         // A big chorus: every bar gets marked.
-        if (energy > 0.7f)
+        if (energy > 0.62f)
             for (int bar = 0; bar < bars; ++bar)
                 beats.push_back ((float) bar * dstBar);
 
         // Flat out, the halves of every bar are marked too - the wall of
         // crashes a heavy chorus is actually played with, alternating left and
         // right so it stays playable.
-        if (energy > 0.84f)
+        if (energy > 0.78f)
             for (int bar = 0; bar < bars; ++bar)
                 beats.push_back (((float) bar + 0.5f) * dstBar);
 
@@ -1425,7 +1425,7 @@ namespace hhx
                                                     && ! isHatLane (h.lane)
                                                     && std::abs (h.beat - beat) < 0.12f;
                                             });
-            if (taken)
+            if (taken || (beat > 0.01f && beat >= fillFrom))
             {
                 ++index;
                 continue;
@@ -1441,6 +1441,23 @@ namespace hhx
                              (std::uint8_t) (index % kRoundRobins) });
             struck.push_back (std::max (0.0f, beat));
             ++index;
+
+            // A crash is kicked, not floated: the foot goes down with the hand
+            // on the downbeat the phrase turns over on. Only there, because how
+            // hard a section is played must not rewrite which strokes it has.
+            if (beat < 0.01f && (sec.laneMask & (1u << LaneKick)) != 0)
+            {
+                const float at = std::max (0.0f, beat);
+                const bool kicked = std::any_of (out.begin(), out.end(), [at] (const Hit& h)
+                {
+                    return h.lane == LaneKick && std::abs (h.beat - at) < 0.06f;
+                });
+                if (! kicked)
+                    out.push_back ({ at, (std::uint8_t) LaneKick,
+                                     (std::uint8_t) std::clamp ((int) std::lround (
+                                         (0.70f + 0.25f * energy) * 127.0f), 1, 127),
+                                     (std::uint8_t) (index % kRoundRobins) });
+            }
         }
 
         // The crash is played with the hand that was keeping time, so the hat
@@ -1877,7 +1894,7 @@ namespace hhx
         // top of the pad is the same part hit flat out, so a chorus is loud
         // rather than busy.
         const float energy  = std::clamp (sec.sectionVelocity, 0.0f, 1.0f);
-        const float velGain = 0.62f + 0.78f * energy;
+        const float velGain = 0.55f + 1.00f * energy;
 
         // Slow phrase breathing over eight bars, so bar 3 does not sit exactly
         // where bar 1 sat.
