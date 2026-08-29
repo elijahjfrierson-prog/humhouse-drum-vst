@@ -9,6 +9,8 @@
 #endif
 
 #include <cmath>
+#include <map>
+#include <utility>
 
 namespace hhx
 {
@@ -1819,14 +1821,26 @@ namespace hhx
         const auto s = buildSettings();
         const auto hits = renderBars (0, numBars);
 
+        // Two lanes can share a note number - the rim and the stick land on 40 -
+        // and a second note-on at the same tick leaves the first one hanging for
+        // whatever imports the file, so only the loudest of them is written.
+        std::map<std::pair<long long, int>, int> struck;
+
         for (const auto& h : hits)
         {
             if (laneFilter >= 0 && h.lane != laneFilter)
                 continue;
-            const int note = laneToMidiNote (h.lane);
-            const double tick = (double) h.beat * kTicksPerQuarter;
-            seq.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), tick);
-            seq.addEvent (juce::MidiMessage::noteOff (10, note), tick + kNoteTicks);
+            const auto key = std::pair { (long long) std::llround ((double) h.beat * kTicksPerQuarter),
+                                         laneToMidiNote (h.lane) };
+            auto& loudest = struck[key];
+            loudest = std::max (loudest, (int) h.velocity);
+        }
+
+        for (const auto& [key, velocity] : struck)
+        {
+            const auto tick = (double) key.first;
+            seq.addEvent (juce::MidiMessage::noteOn (10, key.second, (juce::uint8) velocity), tick);
+            seq.addEvent (juce::MidiMessage::noteOff (10, key.second), tick + kNoteTicks);
         }
         seq.updateMatchedPairs();
         juce::ignoreUnused (s);
