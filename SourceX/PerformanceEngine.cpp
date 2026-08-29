@@ -745,7 +745,15 @@ namespace hhx
             const float through = std::clamp ((beat - fillStartBeat)
                                                   / std::max (0.25f, phraseBeats - fillStartBeat),
                                               0.0f, 1.0f);
-            vel *= 0.86f + 0.26f * through;
+            // How much of a gesture it is follows the Fills knob. Turned down,
+            // the drummer eases out of the bar and hands it over quietly;
+            // turned up, the fill swells the whole way and arrives on top of
+            // the downbeat. The same figure either builds or cools off, which
+            // is what makes the knob felt rather than just counted.
+            const float drive = std::clamp (s.fillAmount, 0.0f, 1.0f);
+            const float start = 1.02f - 0.30f * drive;
+            const float end   = 0.88f + 0.32f * drive;
+            vel *= start + (end - start) * through;
             const Raw hit { beat, 0.0f, h.lane,
                             (std::uint8_t) std::clamp ((int) std::lround (vel), 1, 127),
                             true };
@@ -970,7 +978,12 @@ namespace hhx
             if (tomLed && (i % 2) == 0 && i < n - 1)
                 lane = LaneKick;
 
-            const int vel = (int) std::lround (86.0f + 36.0f * where);
+            // Same gesture as a played fill: the Fills knob decides whether it
+            // builds into the downbeat or eases out of the bar.
+            const float drive = std::clamp (s.fillAmount, 0.0f, 1.0f);
+            const float head  = 96.0f - 22.0f * drive;
+            const float tail  = 96.0f + 26.0f * drive;
+            const int vel = (int) std::lround (head + (tail - head) * where);
             raw.push_back (Raw { fillStartBeat + step * (float) i, 0.0f,
                                  (std::uint8_t) lane,
                                  (std::uint8_t) std::clamp (vel, 1, 127), true });

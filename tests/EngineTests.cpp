@@ -957,6 +957,47 @@ int main (int argc, char** argv)
         check (stillFilled == 0, "Fills at zero really means no fills");
     }
 
+    // 15f-1. The Fills knob is a gesture, not a count: turned up a fill swells
+    // into the downbeat, turned down the drummer eases out of the bar. Measured
+    // as how the second half of a fill is played against its first half.
+    {
+        const auto shape = [&] (float amount)
+        {
+            auto t = s;
+            t.phraseBars = 2;
+            t.fillAmount = amount;
+            t.humanize   = 0.0f;
+            t.swing      = 0.0f;
+
+            double head = 0.0, tail = 0.0;
+            int    nHead = 0, nTail = 0;
+            for (int phrase = 0; phrase < 16; ++phrase)
+            {
+                if (! engine.phraseEndsWithFill (t, phrase))
+                    continue;
+
+                const int  bar   = phrase * t.phraseBars + t.phraseBars - 1;
+                const auto hits  = engine.renderBars (t, bar, 1);
+                const float base = (float) bar * 4.0f;
+                for (const auto& h : hits)
+                {
+                    const float in = h.beat - base;
+                    if (in < 2.0f)      { head += h.velocity; ++nHead; }
+                    else if (in < 4.0f) { tail += h.velocity; ++nTail; }
+                }
+            }
+            return (nHead > 0 && nTail > 0)
+                 ? (tail / (double) nTail) / (head / (double) nHead)
+                 : 1.0;
+        };
+
+        const double hot  = shape (0.95f);
+        const double cool = shape (0.12f);
+        check (hot > cool + 0.03,
+               "a fill played at full swells harder into the downbeat than a quiet one");
+        check (hot > 1.0, "at full the fill arrives above the groove it came out of");
+    }
+
     // 15f-2. A fill glues the arrangement together, so it is played to the
     // grid: with Humanize off every hit of it lands on a thirty second or a
     // triplet sixteenth, in 4/4 and in a stretched metre alike.

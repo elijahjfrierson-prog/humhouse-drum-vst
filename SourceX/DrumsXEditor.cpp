@@ -1385,7 +1385,12 @@ namespace hhx
         squeezeKnob = std::make_unique<LabelledKnob> (state, pid::squeeze, "Squeeze");
         squeezeKnob->slider.setTooltip ("Spectral compression: levels the kit band by band, so the boxy "
                                         "mids and a harsh stick are pulled in and a shy band is lifted");
-        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get() })
+        masterKnob = std::make_unique<LabelledKnob> (state, pid::master, "Master");
+        masterKnob->slider.setTooltip ("The master stage the kit leaves through: three bands of "
+                                       "compression into a limiter, so the kit is glued and loud "
+                                       "before it reaches the host. Turn it down to hear the kit flat");
+        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get(),
+                         masterKnob.get() })
             addAndMakeVisible (*k);
 
         squeezeGlowBox.addItemList ({ "Off", "Clean", "Tube", "Tape", "Transformer" }, 1);
@@ -1531,7 +1536,8 @@ namespace hhx
             k->setVisible (mixp);
         roomSpaceBox.setVisible (mixp);
         roomSpaceLabel.setVisible (mixp);
-        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get() })
+        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get(),
+                         masterKnob.get() })
             k->setVisible (mixp);
         mixVoicingBox.setVisible (mixp);
         mixVoicingLabel.setVisible (mixp);
@@ -1936,5 +1942,6 @@ namespace hhx
         glueKnob->setBounds    (620, 444, 112, 112);
         driveKnob->setBounds   (740, 444, 112, 112);
         squeezeKnob->setBounds (860, 444, 112, 112);
+        masterKnob->setBounds  (768, 274, 112, 112);
     }
 }

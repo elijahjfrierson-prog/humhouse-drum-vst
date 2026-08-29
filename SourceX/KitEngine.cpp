@@ -1067,6 +1067,7 @@ namespace hhx
             // The squeeze is a mix tool in its own right, so it still works on
             // a raw kit - it is the one stage Raw does not bypass.
             processSqueeze (outL, outR, numSamples);
+            processMaster (outL, outR, numSamples);
             return;
         }
 
@@ -1156,6 +1157,94 @@ namespace hhx
             outL[i] *= busCeiling;
             if (outR != nullptr)
                 outR[i] *= busCeiling;
+        }
+
+        processMaster (outL, outR, numSamples);
+    }
+
+    void KitEngine::setMaster (float amount01) { master.store (juce::jlimit (0.0f, 1.0f, amount01)); }
+    float KitEngine::getMaster() const         { return master.load(); }
+
+    void KitEngine::processMaster (float* outL, float* outR, int numSamples)
+    {
+        // A mastering maximiser on a drum bus: the kit is split in three, each
+        // band is compressed towards the same level, the whole thing is driven
+        // into a limiter and the loss is given back as make-up. That is what
+        // makes a kit sound finished the moment it is loaded rather than after
+        // an hour on the master chain.
+        const float amount = master.load();
+        if (amount <= 0.001f || numSamples <= 0)
+            return;
+
+        static constexpr float kSplitHz[2]  { 140.0f, 2500.0f };
+        static constexpr float kThreshDb[3] { -18.0f, -22.0f, -24.0f };
+        static constexpr float kRatio[3]    {   3.0f,   4.0f,   3.0f };
+
+        float coeff[2];
+        for (int b = 0; b < 2; ++b)
+            coeff[b] = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                        * kSplitHz[b] / (float) currentRate);
+
+        const float attack  = 1.0f - std::exp (-1.0f / (0.003f * (float) currentRate));
+        const float release = 1.0f - std::exp (-1.0f / (0.180f * (float) currentRate));
+        const float smooth  = 1.0f - std::exp (-1.0f / (0.008f * (float) currentRate));
+        const float recover = 1.0f - std::exp (-1.0f / (0.060f * (float) currentRate));
+
+        const float ceiling = juce::Decibels::decibelsToGain (-0.3f);
+        const float makeUp  = juce::Decibels::decibelsToGain (5.0f * amount);
+        const bool  stereo  = outR != nullptr;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float in[2] { outL[i], stereo ? outR[i] : 0.0f };
+            const int channels = stereo ? 2 : 1;
+
+            float band[kMasterBands][2] {};
+            for (int ch = 0; ch < channels; ++ch)
+            {
+                float remaining = in[ch];
+                for (int b = 0; b < 2; ++b)
+                {
+                    masterLp[b][ch] += coeff[b] * (remaining - masterLp[b][ch]);
+                    band[b][ch] = masterLp[b][ch];
+                    remaining  -= masterLp[b][ch];
+                }
+                band[2][ch] = remaining;
+            }
+
+            float sum[2] { 0.0f, 0.0f };
+            for (int b = 0; b < kMasterBands; ++b)
+            {
+                float peak = std::abs (band[b][0]);
+                if (stereo)
+                    peak = juce::jmax (peak, std::abs (band[b][1]));
+
+                masterEnv[b] += (peak > masterEnv[b] ? attack : release) * (peak - masterEnv[b]);
+
+                const float envDb = juce::Decibels::gainToDecibels (
+                                        juce::jmax (1.0e-6f, masterEnv[b]));
+                const float moveDb = envDb > kThreshDb[b]
+                                   ? (kThreshDb[b] - envDb) * (1.0f - 1.0f / kRatio[b])
+                                   : 0.0f;
+                const float target = juce::Decibels::decibelsToGain (moveDb * amount);
+                masterGain[b] += smooth * (target - masterGain[b]);
+
+                for (int ch = 0; ch < channels; ++ch)
+                    sum[ch] += band[b][ch] * masterGain[b];
+            }
+
+            for (int ch = 0; ch < channels; ++ch)
+                sum[ch] *= makeUp;
+
+            const float peak = juce::jmax (std::abs (sum[0]), stereo ? std::abs (sum[1]) : 0.0f);
+            const float needed = peak > ceiling ? ceiling / peak : 1.0f;
+            masterCeiling = needed < masterCeiling
+                          ? needed
+                          : masterCeiling + recover * (needed - masterCeiling);
+
+            outL[i] = sum[0] * masterCeiling;
+            if (stereo)
+                outR[i] = sum[1] * masterCeiling;
         }
     }
 

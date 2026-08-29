@@ -294,7 +294,7 @@ namespace hhx
         std::unique_ptr<LabelledKnob> roomSizeKnob, roomDampKnob, roomMixKnob, roomDuckKnob;
         juce::ComboBox roomSpaceBox;
         juce::Label    roomSpaceLabel { {}, "SPACE" };
-        std::unique_ptr<LabelledKnob> punchKnob, glueKnob, driveKnob, squeezeKnob;
+        std::unique_ptr<LabelledKnob> punchKnob, glueKnob, driveKnob, squeezeKnob, masterKnob;
         juce::ComboBox mixVoicingBox;
         juce::Label    mixVoicingLabel { {}, "PRODUCTION" };
         juce::ComboBox squeezeGlowBox;

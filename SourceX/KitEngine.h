@@ -171,6 +171,13 @@ namespace hhx
         void  setSqueezeGlow (int glow);
         int   getSqueezeGlow() const;
 
+        /** The master stage the kit leaves through: three bands of compression
+            into a limiter, the way a mastering maximiser is used on a drum bus.
+            It is on by default, because a kit that arrives already glued and
+            loud is what makes the plugin sound finished in the host. */
+        void  setMaster (float amount01);
+        float getMaster() const;
+
         /** `variant` is the round-robin slot the performance engine chose, so
             two consecutive strokes on a lane never fire the same sample. */
         void noteOn (int lane, float velocity01, int variant = 0);
@@ -262,6 +269,7 @@ namespace hhx
 
         /** Four-band spectral compression plus the glow stage. */
         void processSqueeze (float* outL, float* outR, int numSamples);
+        void processMaster (float* outL, float* outR, int numSamples);
 
         struct Voice
         {
@@ -409,6 +417,14 @@ namespace hhx
         float squeezeLp[3][2] {};
         float squeezeEnv[kSqueezeBands] {};
         float squeezeGain[kSqueezeBands] { 1.0f, 1.0f, 1.0f, 1.0f };
+
+        // Master stage state, audio thread only.
+        static constexpr int kMasterBands = 3;
+        std::atomic<float> master { 0.6f };
+        float masterLp[2][2] {};
+        float masterEnv[kMasterBands] {};
+        float masterGain[kMasterBands] { 1.0f, 1.0f, 1.0f };
+        float masterCeiling { 1.0f };
 
         // Kit bus state, audio thread only.
         float busCompEnv = 0.0f;

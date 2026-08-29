@@ -243,6 +243,14 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::squeeze, 1 }, "Squeeze",
                                                            NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::master, 1 }, "Master",
+                                                           // On by default, and far enough up to be
+                                                           // heard: the kit should arrive glued and
+                                                           // loud rather than needing a master chain
+                                                           // built around it before it sounds like a
+                                                           // record.
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.6f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::squeezeGlow, 1 }, "Glow",
                                                            StringArray { "Off", "Clean", "Tube", "Tape", "Transformer" },
                                                            KitEngine::GlowClean));
@@ -360,7 +368,8 @@ namespace hhx
                  || id == pid::roomSpace || id == pid::roomDuck)
             pushRoomParameters();
         else if (id == pid::mixVoicing || id == pid::punch || id == pid::glue
-                 || id == pid::drive || id == pid::squeeze || id == pid::squeezeGlow)
+                 || id == pid::drive || id == pid::squeeze || id == pid::squeezeGlow
+                 || id == pid::master)
             pushMixParameters();
 
         // A performance knob edits the block that is selected, and only that
@@ -605,6 +614,7 @@ namespace hhx
         kit.setDrive (load (pid::drive));
         kit.setSqueeze (load (pid::squeeze));
         kit.setSqueezeGlow ((int) std::lround (load (pid::squeezeGlow)));
+        kit.setMaster (load (pid::master));
     }
 
     void DrumsXProcessor::rebuildTimeline()
@@ -1061,24 +1071,28 @@ namespace hhx
                     sec.laneMask   = kickMask() | snareMask() | rideMask() | tomMask();
                     sec.velocity   = 0.7f;
                     sec.intensity  = 0.6f;
-                    sec.complexity = 0.55f;
-                    sec.fillAmount = 0.5f;
+                    sec.complexity = 0.45f;
+                    sec.fillAmount = 0.35f;
                     break;
                 case BlockPreset::chorus:
                     sec.section    = SectionChorus;
                     sec.laneMask   = everything;
+                    // A chorus is the verse hit harder with the kit wide
+                    // open, not a busier part and not a bar of fills: the
+                    // density stays where the song's is and the loudness is
+                    // what moves.
                     sec.velocity   = 0.85f;
                     sec.intensity  = 0.8f;
-                    sec.complexity = 0.6f;
-                    sec.fillAmount = 0.55f;
+                    sec.complexity = 0.45f;
+                    sec.fillAmount = 0.3f;
                     break;
                 case BlockPreset::crashChorus:
                     sec.section    = SectionChorus;
                     sec.laneMask   = everything;
                     sec.velocity   = 1.0f;
                     sec.intensity  = 1.0f;
-                    sec.complexity = 0.75f;
-                    sec.fillAmount = 0.8f;
+                    sec.complexity = 0.5f;
+                    sec.fillAmount = 0.4f;
                     break;
                 case BlockPreset::wholeKit:
                     sec.laneMask   = everything;
