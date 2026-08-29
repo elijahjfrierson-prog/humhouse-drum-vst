@@ -104,6 +104,19 @@ namespace hhx
             return 3;                               // quarters
         }
 
+        /** What a fill is allowed to be played on. Switching the toms or the
+            crash out of a block is about what the groove sits on; a drummer
+            still comes off the hats and down the toms to turn the corner, and
+            a fill left with only a kick and a snare is the same figure every
+            time. So the pieces a fill is made of are back in for the fill bar
+            and nowhere else. */
+        std::uint32_t fillLanes (std::uint32_t laneMask)
+        {
+            return laneMask | (1u << LaneTom1)   | (1u << LaneTom2)
+                            | (1u << LaneTom3)   | (1u << LaneTom4)
+                            | (1u << LaneCrashL) | (1u << LaneCrashR);
+        }
+
         /** Lanes struck by hand and so played with alternating sticking: the
             snare family and the toms. The feet and the time-keeping cymbal
             stay on their own limb. */
@@ -208,7 +221,14 @@ namespace hhx
         }
 
         PerformanceSettings out = base;
-        out.complexity      = found->complexity;
+        // How busy a block is may only step a few percent away from the song's
+        // own setting. A chorus is the verse played harder and wider open, not
+        // a different part: letting each block address its own density is what
+        // made an intro, a verse and a chorus sound like three songs. Loudness
+        // is left free, because that is the thing a section really does change.
+        out.complexity      = std::clamp (found->complexity,
+                                          base.complexity - 0.05f,
+                                          base.complexity + 0.05f);
         out.intensity       = found->intensity;
         out.sectionVelocity = found->velocity;
         out.fillAmount      = found->fillAmount;
@@ -614,7 +634,8 @@ namespace hhx
             const std::uint64_t seed = mix (blockSeed (s) ^ mix ((std::uint64_t) idx + 1));
             return corpus->pickFill (s.fillComplexity, s.intensity, bars,
                                      (int) (mix (seed ^ 0xF111ull) % 16u), avoid,
-                                     s.fillLaneMask & s.laneMask, s.fillStyleMask,
+                                     s.fillLaneMask & fillLanes (s.laneMask),
+                                     s.fillStyleMask,
                                      s.timeSigNum, s.timeSigDen,
                                      characterMask (s));
         };
@@ -829,7 +850,7 @@ namespace hhx
         {
             std::vector<float> beats;
             for (const auto& r : raw)
-                if (r.fill && (s.laneMask & (1u << r.lane)) != 0)
+                if (r.fill && (fillLanes (s.laneMask) & (1u << r.lane)) != 0)
                     beats.push_back (r.beat);
             std::sort (beats.begin(), beats.end());
 
@@ -892,7 +913,10 @@ namespace hhx
         if (window < 0.4f)
             return;
 
-        const auto on = [&s] (int lane) { return (s.laneMask & (1u << lane)) != 0; };
+        const auto on = [&s] (int lane)
+        {
+            return (fillLanes (s.laneMask) & (1u << lane)) != 0;
+        };
         const auto firstOn = [&on] (std::initializer_list<int> preference)
         {
             for (const int lane : preference)
@@ -1442,16 +1466,24 @@ namespace hhx
             const bool  onBeat = onGrid && (eighth % 2) == 0;
             const bool  offBeat = onGrid && (eighth % 2) != 0;
 
-            // The snare. Played light it is the rim - the tap a drummer keeps a
-            // quiet verse on - and driven flat out it is a rimshot, which is the
-            // crack a chorus backbeat is actually played with, not the same
-            // stroke turned up.
+            // The snare. This is a rock kit, so even the quiet end of it is a
+            // stick on the head, played softer - the cross-stick is the one
+            // stroke on the kit that stops sounding like the snare at all, so
+            // it is kept for the backbeats of a genuinely held-back part and
+            // never reached for by default. Driven flat out the backbeat is a
+            // rimshot, which is the crack a chorus is played with rather than
+            // the same stroke turned up.
             if (lane == LaneSnare)
             {
-                if (energy < 0.20f && on (LaneSideStick))
+                if (energy < 0.10f && onBeat && on (LaneSideStick)
+                    && sec.ghostAmount > 0.6f)
                 {
                     h.lane = (std::uint8_t) LaneSideStick;
-                    louder (h, 0.82f);
+                    louder (h, 0.9f);
+                }
+                else if (energy < 0.30f)
+                {
+                    louder (h, 0.80f + 0.60f * energy);
                 }
                 else if (energy > 0.80f && onBeat && on (LaneSnareRim))
                 {
@@ -1807,7 +1839,11 @@ namespace hhx
         }
 
         raw.erase (std::remove_if (raw.begin(), raw.end(), [&] (const Raw& h)
-                   { return (s.laneMask & (1u << h.lane)) == 0; }), raw.end());
+                   {
+                       const std::uint32_t mask = h.fill ? fillLanes (s.laneMask)
+                                                         : s.laneMask;
+                       return (mask & (1u << h.lane)) == 0;
+                   }), raw.end());
 
         std::sort (raw.begin(), raw.end(),
                    [] (const Raw& a, const Raw& b)
@@ -1982,8 +2018,12 @@ namespace hhx
             if (isHandLane (lane))
             {
                 hand ^= 1;
+                // The off hand is genuinely weaker than the lead one - that
+                // difference is the whole reason a roll sounds like a person
+                // playing rather than one sample retriggered - so it is worth
+                // a couple of dB, not a percent nobody can hear.
                 if (hand != 0)
-                    vel *= 0.94f;
+                    vel *= 0.84f;
 
                 const int pairs = std::max (1, slots / 2);
                 const int pair  = std::min (pairs - 1,

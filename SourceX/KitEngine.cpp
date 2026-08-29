@@ -1286,7 +1286,12 @@ namespace hhx
         // Micro-variation: a few cents and a fraction of a dB per hit keeps
         // repeated notes from phase-cancelling into an obvious loop.
         const auto& kv = kitVoicing[(std::size_t) lane];
+        // The two hands do not land in the same place on the head either, so
+        // the off hand speaks a little darker and a shade flatter: that, more
+        // than the level, is what tells a listener a roll has two hands in it.
+        const float handCents = stickLane ? ((variant & 1) != 0 ? -11.0f : 7.0f) : 0.0f;
         const float cents = (dither (2) - 0.5f) * (ting ? 34.0f : 22.0f)
+                          + handCents
                           + (slot.tune.load() + kv.tune.load()) * 100.0f;
         const float trim  = juce::Decibels::decibelsToGain (
                                 (dither (3) - 0.5f) * (ting ? 2.2f : 1.3f));
@@ -1319,7 +1324,7 @@ namespace hhx
         const float tingTrimDb = lane == LaneKick ? 2.0f
                                : isSnareLane (lane) ? 2.0f
                                : isRideLane (lane) ? -5.5f
-                               : shutHat           ? -3.0f
+                               : shutHat           ? -1.5f
                                : openHat           ? -0.5f
                                : (ting ? -3.5f : 0.0f);
         const float gain = velGain * trim
@@ -1331,7 +1336,7 @@ namespace hhx
         // sticks, odd round-robin slots being the off hand. The two hands do not
         // strike from the same place, so they do not sit in quite the same spot
         // in the image either - which is what makes a roll travel.
-        const float handPan = stickLane ? ((variant & 1) != 0 ? -0.05f : 0.05f)
+        const float handPan = stickLane ? ((variant & 1) != 0 ? -0.14f : 0.14f)
                                         : 0.0f;
         const float pan  = juce::jlimit (-1.0f, 1.0f,
                                          slot.pan.load() + handPan
@@ -1355,7 +1360,7 @@ namespace hhx
         // Rolling that octave off leaves the stick and the body of the cymbal.
         const float dark  = (1.0f - std::pow (vel, 0.8f)) * reach
                           + (ting ? 0.16f : 0.0f)     // takes the wire off the top
-                          + (shutHat ? 0.24f : 0.0f); // and the click off a shut hat
+                          + (shutHat ? 0.14f : 0.0f); // and the click off a shut hat
         const float cutoff = 20000.0f * std::exp (-3.1f * dark);
         const float tone = dark < 0.02f
                          ? 1.0f
@@ -1385,7 +1390,46 @@ namespace hhx
                         envDecay, tone);
         }
 
+        // A closed hat is a stick on two heavy cymbals, not a tick: it rings
+        // for a fraction of a second under the next stroke, and a close mic on
+        // a tightly shut hat records almost none of that. What is missing is
+        // taken from the open hat of the same kit, laid under the stroke well
+        // below it and damped out inside a quarter of a second, so the part
+        // reads as a hat being ridden rather than as a sample being retriggered.
+        if (shutHat)
+            addShutHatRing (gl, gr, cents, vel);
+
         slot.activity.store (1.0f);
+    }
+
+    void KitEngine::addShutHatRing (float gainL, float gainR, float cents, float velocity01)
+    {
+        // The ring comes from the openest hat the kit actually shipped: that
+        // recording is the same two cymbals, so it rings in the same metal.
+        for (const int source : { LaneHatOpen1, LaneHatOpen2, LaneHatOpen3, LaneHatOpen4 })
+        {
+            const auto& open = lanes[(std::size_t) source];
+            if (open.layers.empty() || open.layers.front().variants.empty())
+                continue;
+
+            const auto& sample = open.layers.front().variants.front().mics[MicClose];
+            if (sample == nullptr)
+                continue;
+
+            // Under the stroke, never beside it: the stick is the closed hat's
+            // and only the tail of the cymbal is borrowed. Harder strokes ring
+            // longer, the way a cymbal does.
+            const float ring = juce::Decibels::decibelsToGain (-15.0f)
+                             * (0.5f + 0.5f * velocity01);
+            const float decay = (float) std::pow (0.001,
+                                                  1.0 / (juce::jmap (velocity01, 0.11f, 0.26f)
+                                                         * currentRate));
+            const double increment = (sample->sourceRate / currentRate)
+                                   * std::pow (2.0, cents / 1200.0);
+            startVoice (sample, LaneHatClosed, LaneHatClosed, MicClose,
+                        gainL * ring, gainR * ring, increment, decay, 1.0f);
+            return;
+        }
     }
 
     void KitEngine::chokeArticulations (int articulation)

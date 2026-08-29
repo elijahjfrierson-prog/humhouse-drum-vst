@@ -302,6 +302,7 @@ namespace hhx
         /** Lets ringing voices go over a few milliseconds instead of cutting them
             dead, which is what made chokes and stolen voices sound gated. */
         void chokeArticulations (int articulation);
+        void addShutHatRing (float gainL, float gainR, float cents, float velocity01);
         float releaseCoefficient (float seconds) const;
         void place (const Placement& p, std::shared_ptr<Sample> s);
 

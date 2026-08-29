@@ -124,7 +124,10 @@ namespace hhx
                                                            "Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.28f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::intensity, 1 },
-                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.62f,
+                                                           // Which take gets played, not a level: it opens low, on
+                                                           // the plain readings of a groove, so a song starts on
+                                                           // the part a drummer would play it with.
+                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.25f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::sectionLevel, 1 },
                                                            "Section Intensity", NormalisableRange<float> (0.0f, 1.0f), 0.55f,

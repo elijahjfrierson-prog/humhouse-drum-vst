@@ -648,9 +648,12 @@ int main (int argc, char** argv)
             return std::count_if (hits.begin(), hits.end(),
                                   [lane] (const hhx::Hit& h) { return h.lane == lane; });
         };
-        check (countLane (quietHits, hhx::LaneSideStick)
-               > countLane (quietHits, hhx::LaneSnareRim),
-               "played soft, the snare is a rim tap");
+        // A quiet part is still played on the head, only softer: the
+        // cross-stick is a click rather than a snare and is not what a rock
+        // drummer reaches for by default.
+        check (countLane (quietHits, hhx::LaneSnare) > 0
+               && countLane (quietHits, hhx::LaneSideStick) == 0,
+               "played soft, the snare is still a snare");
         check (countLane (loudHits, hhx::LaneSnareRim) > 0
                && countLane (loudHits, hhx::LaneSideStick) == 0,
                "played flat out, the backbeat is a rimshot");
