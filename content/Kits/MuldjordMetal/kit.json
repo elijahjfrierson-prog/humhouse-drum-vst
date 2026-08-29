@@ -6023,5 +6023,12 @@
    "mic": "room",
    "file": "tom_4_v6_rr2_room.flac"
   }
+ ],
+ "voicing": [
+  {
+   "piece": "snare",
+   "ringHz": 694.2,
+   "ringCut": -9.4
+  }
  ]
 }

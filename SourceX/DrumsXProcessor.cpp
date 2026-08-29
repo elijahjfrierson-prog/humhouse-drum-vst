@@ -20,6 +20,9 @@ namespace hhx
     juce::String pid::laneTune (int lane)   { return "lane" + juce::String (lane) + "Tune"; }
     juce::String pid::laneDamp (int lane)   { return "lane" + juce::String (lane) + "Damp"; }
     juce::String pid::laneComp (int lane)   { return "lane" + juce::String (lane) + "Comp"; }
+    juce::String pid::laneEqLow (int lane)  { return "lane" + juce::String (lane) + "EqLo"; }
+    juce::String pid::laneEqMid (int lane)  { return "lane" + juce::String (lane) + "EqMd"; }
+    juce::String pid::laneEqHigh (int lane) { return "lane" + juce::String (lane) + "EqHi"; }
     juce::String pid::laneSend (int lane)   { return "lane" + juce::String (lane) + "Send"; }
 
     /** How much of each piece the room hears by default. A kit in a room is not
@@ -270,6 +273,18 @@ namespace hhx
                 NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
                 AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
             layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneEqLow (lane), 1 }, n + " Low",
+                NormalisableRange<float> (-18.0f, 18.0f, 0.1f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (dbStr)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneEqMid (lane), 1 }, n + " Mid",
+                NormalisableRange<float> (-18.0f, 18.0f, 0.1f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (dbStr)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneEqHigh (lane), 1 }, n + " High",
+                NormalisableRange<float> (-18.0f, 18.0f, 0.1f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (dbStr)));
+            layout.add (std::make_unique<AudioParameterFloat> (
                 ParameterID { pid::laneSend (lane), 1 }, n + " Room Send",
                 NormalisableRange<float> (0.0f, 1.0f, 0.01f), defaultRoomSend (lane),
                 AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
@@ -329,6 +344,9 @@ namespace hhx
             else if (id == pid::laneTune (lane)) kit.setLaneTune (lane, value);
             else if (id == pid::laneDamp (lane)) kit.setLaneDamp (lane, value);
             else if (id == pid::laneComp (lane)) kit.setLaneCompression (lane, value);
+            else if (id == pid::laneEqLow (lane)) kit.setLaneEqLowDb (lane, value);
+            else if (id == pid::laneEqMid (lane)) kit.setLaneEqMidDb (lane, value);
+            else if (id == pid::laneEqHigh (lane)) kit.setLaneEqHighDb (lane, value);
             else if (id == pid::laneSend (lane)) kit.setLaneReverbSend (lane, value);
         }
 
@@ -550,6 +568,9 @@ namespace hhx
             kit.setLaneTune (lane, load (pid::laneTune (lane)));
             kit.setLaneDamp (lane, load (pid::laneDamp (lane)));
             kit.setLaneCompression (lane, load (pid::laneComp (lane)));
+            kit.setLaneEqLowDb (lane, load (pid::laneEqLow (lane)));
+            kit.setLaneEqMidDb (lane, load (pid::laneEqMid (lane)));
+            kit.setLaneEqHighDb (lane, load (pid::laneEqHigh (lane)));
             kit.setLaneReverbSend (lane, load (pid::laneSend (lane)));
         }
     }
@@ -1956,6 +1977,9 @@ namespace hhx
             kit.setLaneTune (lane, load (pid::laneTune (lane)));
             kit.setLaneDamp (lane, load (pid::laneDamp (lane)));
             kit.setLaneCompression (lane, load (pid::laneComp (lane)));
+            kit.setLaneEqLowDb (lane, load (pid::laneEqLow (lane)));
+            kit.setLaneEqMidDb (lane, load (pid::laneEqMid (lane)));
+            kit.setLaneEqHighDb (lane, load (pid::laneEqHigh (lane)));
             kit.setLaneReverbSend (lane, load (pid::laneSend (lane)));
         }
 

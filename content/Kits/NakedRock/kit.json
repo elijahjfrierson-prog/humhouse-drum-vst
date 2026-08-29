@@ -6304,5 +6304,17 @@
    "file": "tom_4_v3_rr4_room.flac"
   }
  ],
- "trim": 0.0
+ "trim": 0.0,
+ "voicing": [
+  {
+   "piece": "snare",
+   "ringHz": 265.4,
+   "ringCut": -5.1
+  },
+  {
+   "piece": "snare_rim",
+   "ringHz": 328.8,
+   "ringCut": -4.1
+  }
+ ]
 }

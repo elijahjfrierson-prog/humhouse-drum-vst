@@ -1,7 +1,7 @@
 {
  "name": "Sludge Nu Metal",
  "version": "1",
- "source": "MuldjordKit by Lars Muldjord, CC-BY 4.0 - re-voiced: shells dropped, heads taped",
+ "source": "MuldjordKit by Lars Muldjord, CC-BY 4.0 - re-voiced: shells dropped, heads taped - snare: CrocellKit by the DrumGizmo team, sampled by Lars Muldjord, CC-BY 4.0",
  "samples": "../MuldjordMetal",
  "trim": -0.5,
  "voicing": [
@@ -13,19 +13,23 @@
   },
   {
    "piece": "snare",
-   "tune": -2.0,
-   "damp": 0.35,
-   "gain": 0.5
+   "tune": -0.5,
+   "damp": 0.12,
+   "gain": 1.0,
+   "ringHz": 263.5,
+   "ringCut": -5.8
   },
   {
    "piece": "snare_rim",
-   "tune": -2.0,
-   "damp": 0.35
+   "tune": -0.5,
+   "damp": 0.12,
+   "ringHz": 267.3,
+   "ringCut": -5.3
   },
   {
    "piece": "sidestick",
-   "tune": -1.5,
-   "damp": 0.3
+   "tune": -0.5,
+   "damp": 0.1
   },
   {
    "piece": "tom_1",
@@ -490,909 +494,6 @@
    "variant": 3,
    "mic": "room",
    "file": "kick_v6_rr3_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 1,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v1_rr1_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 1,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v1_rr1_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 1,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v1_rr1_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 1,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v1_rr2_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 1,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v1_rr2_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 1,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v1_rr2_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 1,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v1_rr3_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 1,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v1_rr3_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 1,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v1_rr3_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 2,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v2_rr1_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 2,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v2_rr1_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 2,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v2_rr1_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 2,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v2_rr2_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 2,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v2_rr2_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 2,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v2_rr2_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 2,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v2_rr3_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 2,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v2_rr3_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 2,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v2_rr3_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 3,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v3_rr1_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 3,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v3_rr1_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 3,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v3_rr1_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 3,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v3_rr2_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 3,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v3_rr2_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 3,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v3_rr2_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 3,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v3_rr3_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 3,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v3_rr3_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 3,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v3_rr3_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 4,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v4_rr1_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 4,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v4_rr1_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 4,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v4_rr1_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 4,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v4_rr2_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 4,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v4_rr2_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 4,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v4_rr2_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 4,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v4_rr3_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 4,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v4_rr3_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 4,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v4_rr3_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 5,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v5_rr1_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 5,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v5_rr1_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 5,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v5_rr1_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 5,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v5_rr2_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 5,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v5_rr2_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 5,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v5_rr2_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 5,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v5_rr3_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 5,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v5_rr3_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 5,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v5_rr3_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 6,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v6_rr1_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 6,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v6_rr1_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 6,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v6_rr1_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 6,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v6_rr2_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 6,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v6_rr2_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 6,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v6_rr2_room.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 6,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v6_rr3_close.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 6,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v6_rr3_oh.flac"
-  },
-  {
-   "piece": "snare",
-   "layer": 6,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v6_rr3_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 1,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v1_rr1_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 1,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v1_rr1_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 1,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v1_rr1_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 1,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v1_rr2_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 1,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v1_rr2_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 1,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v1_rr2_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 1,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v1_rr3_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 1,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v1_rr3_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 1,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v1_rr3_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 2,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v2_rr1_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 2,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v2_rr1_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 2,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v2_rr1_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 2,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v2_rr2_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 2,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v2_rr2_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 2,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v2_rr2_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 2,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v2_rr3_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 2,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v2_rr3_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 2,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v2_rr3_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 3,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v3_rr1_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 3,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v3_rr1_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 3,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v3_rr1_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 3,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v3_rr2_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 3,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v3_rr2_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 3,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v3_rr2_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 3,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v3_rr3_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 3,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v3_rr3_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 3,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v3_rr3_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 4,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v4_rr1_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 4,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v4_rr1_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 4,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v4_rr1_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 4,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v4_rr2_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 4,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v4_rr2_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 4,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v4_rr2_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 4,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v4_rr3_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 4,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v4_rr3_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 4,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v4_rr3_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 5,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v5_rr1_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 5,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v5_rr1_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 5,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v5_rr1_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 5,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v5_rr2_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 5,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v5_rr2_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 5,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v5_rr2_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 5,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v5_rr3_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 5,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v5_rr3_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 5,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v5_rr3_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 6,
-   "variant": 1,
-   "mic": "close",
-   "file": "snare_v6_rr1_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 6,
-   "variant": 1,
-   "mic": "oh",
-   "file": "snare_v6_rr1_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 6,
-   "variant": 1,
-   "mic": "room",
-   "file": "snare_v6_rr1_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 6,
-   "variant": 2,
-   "mic": "close",
-   "file": "snare_v6_rr2_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 6,
-   "variant": 2,
-   "mic": "oh",
-   "file": "snare_v6_rr2_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 6,
-   "variant": 2,
-   "mic": "room",
-   "file": "snare_v6_rr2_room.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 6,
-   "variant": 3,
-   "mic": "close",
-   "file": "snare_v6_rr3_close.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 6,
-   "variant": 3,
-   "mic": "oh",
-   "file": "snare_v6_rr3_oh.flac"
-  },
-  {
-   "piece": "snare_rim",
-   "layer": 6,
-   "variant": 3,
-   "mic": "room",
-   "file": "snare_v6_rr3_room.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 1,
-   "variant": 1,
-   "mic": "close",
-   "file": "sidestick_v1_rr1_close.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 1,
-   "variant": 1,
-   "mic": "oh",
-   "file": "sidestick_v1_rr1_oh.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 1,
-   "variant": 1,
-   "mic": "room",
-   "file": "sidestick_v1_rr1_room.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 2,
-   "variant": 1,
-   "mic": "close",
-   "file": "sidestick_v2_rr1_close.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 2,
-   "variant": 1,
-   "mic": "oh",
-   "file": "sidestick_v2_rr1_oh.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 2,
-   "variant": 1,
-   "mic": "room",
-   "file": "sidestick_v2_rr1_room.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 3,
-   "variant": 1,
-   "mic": "close",
-   "file": "sidestick_v3_rr1_close.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 3,
-   "variant": 1,
-   "mic": "oh",
-   "file": "sidestick_v3_rr1_oh.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 3,
-   "variant": 1,
-   "mic": "room",
-   "file": "sidestick_v3_rr1_room.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 3,
-   "variant": 2,
-   "mic": "close",
-   "file": "sidestick_v3_rr2_close.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 3,
-   "variant": 2,
-   "mic": "oh",
-   "file": "sidestick_v3_rr2_oh.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 3,
-   "variant": 2,
-   "mic": "room",
-   "file": "sidestick_v3_rr2_room.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 4,
-   "variant": 1,
-   "mic": "close",
-   "file": "sidestick_v4_rr1_close.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 4,
-   "variant": 1,
-   "mic": "oh",
-   "file": "sidestick_v4_rr1_oh.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 4,
-   "variant": 1,
-   "mic": "room",
-   "file": "sidestick_v4_rr1_room.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 5,
-   "variant": 1,
-   "mic": "close",
-   "file": "sidestick_v5_rr1_close.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 5,
-   "variant": 1,
-   "mic": "oh",
-   "file": "sidestick_v5_rr1_oh.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 5,
-   "variant": 1,
-   "mic": "room",
-   "file": "sidestick_v5_rr1_room.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 6,
-   "variant": 1,
-   "mic": "close",
-   "file": "sidestick_v6_rr1_close.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 6,
-   "variant": 1,
-   "mic": "oh",
-   "file": "sidestick_v6_rr1_oh.flac"
-  },
-  {
-   "piece": "sidestick",
-   "layer": 6,
-   "variant": 1,
-   "mic": "room",
-   "file": "sidestick_v6_rr1_room.flac"
   },
   {
    "piece": "hat_tight",
@@ -6132,6 +5233,867 @@
    "variant": 2,
    "mic": "room",
    "file": "tom_4_v6_rr2_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 1,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_v1_rr1_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 1,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_v1_rr1_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 1,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_v1_rr1_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 1,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_v1_rr2_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 1,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_v1_rr2_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 1,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_v1_rr2_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 1,
+   "variant": 3,
+   "mic": "close",
+   "file": "graft_snare_v1_rr3_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 1,
+   "variant": 3,
+   "mic": "oh",
+   "file": "graft_snare_v1_rr3_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 1,
+   "variant": 3,
+   "mic": "room",
+   "file": "graft_snare_v1_rr3_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 2,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_v2_rr1_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 2,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_v2_rr1_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 2,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_v2_rr1_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 2,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_v2_rr2_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 2,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_v2_rr2_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 2,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_v2_rr2_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 2,
+   "variant": 3,
+   "mic": "close",
+   "file": "graft_snare_v2_rr3_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 2,
+   "variant": 3,
+   "mic": "oh",
+   "file": "graft_snare_v2_rr3_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 2,
+   "variant": 3,
+   "mic": "room",
+   "file": "graft_snare_v2_rr3_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 3,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_v3_rr1_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 3,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_v3_rr1_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 3,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_v3_rr1_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 3,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_v3_rr2_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 3,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_v3_rr2_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 3,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_v3_rr2_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 3,
+   "variant": 3,
+   "mic": "close",
+   "file": "graft_snare_v3_rr3_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 3,
+   "variant": 3,
+   "mic": "oh",
+   "file": "graft_snare_v3_rr3_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 3,
+   "variant": 3,
+   "mic": "room",
+   "file": "graft_snare_v3_rr3_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 4,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_v4_rr1_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 4,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_v4_rr1_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 4,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_v4_rr1_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 4,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_v4_rr2_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 4,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_v4_rr2_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 4,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_v4_rr2_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 4,
+   "variant": 3,
+   "mic": "close",
+   "file": "graft_snare_v4_rr3_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 4,
+   "variant": 3,
+   "mic": "oh",
+   "file": "graft_snare_v4_rr3_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 4,
+   "variant": 3,
+   "mic": "room",
+   "file": "graft_snare_v4_rr3_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 5,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_v5_rr1_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 5,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_v5_rr1_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 5,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_v5_rr1_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 5,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_v5_rr2_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 5,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_v5_rr2_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 5,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_v5_rr2_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 5,
+   "variant": 3,
+   "mic": "close",
+   "file": "graft_snare_v5_rr3_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 5,
+   "variant": 3,
+   "mic": "oh",
+   "file": "graft_snare_v5_rr3_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 5,
+   "variant": 3,
+   "mic": "room",
+   "file": "graft_snare_v5_rr3_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 6,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_v6_rr1_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 6,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_v6_rr1_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 6,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_v6_rr1_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 6,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_v6_rr2_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 6,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_v6_rr2_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 6,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_v6_rr2_room.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 6,
+   "variant": 3,
+   "mic": "close",
+   "file": "graft_snare_v6_rr3_close.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 6,
+   "variant": 3,
+   "mic": "oh",
+   "file": "graft_snare_v6_rr3_oh.flac"
+  },
+  {
+   "piece": "snare",
+   "layer": 6,
+   "variant": 3,
+   "mic": "room",
+   "file": "graft_snare_v6_rr3_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 1,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_rim_v1_rr1_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 1,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_rim_v1_rr1_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 1,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_rim_v1_rr1_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 1,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_rim_v1_rr2_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 1,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_rim_v1_rr2_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 1,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_rim_v1_rr2_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 2,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_rim_v2_rr1_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 2,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_rim_v2_rr1_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 2,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_rim_v2_rr1_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 2,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_rim_v2_rr2_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 2,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_rim_v2_rr2_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 2,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_rim_v2_rr2_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 3,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_rim_v3_rr1_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 3,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_rim_v3_rr1_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 3,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_rim_v3_rr1_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 3,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_rim_v3_rr2_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 3,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_rim_v3_rr2_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 3,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_rim_v3_rr2_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 4,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_rim_v4_rr1_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 4,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_rim_v4_rr1_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 4,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_rim_v4_rr1_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 4,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_rim_v4_rr2_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 4,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_rim_v4_rr2_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 4,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_rim_v4_rr2_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 5,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_rim_v5_rr1_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 5,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_rim_v5_rr1_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 5,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_rim_v5_rr1_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 5,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_rim_v5_rr2_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 5,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_rim_v5_rr2_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 5,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_rim_v5_rr2_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 6,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_snare_rim_v6_rr1_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 6,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_snare_rim_v6_rr1_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 6,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_snare_rim_v6_rr1_room.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 6,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_snare_rim_v6_rr2_close.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 6,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_snare_rim_v6_rr2_oh.flac"
+  },
+  {
+   "piece": "snare_rim",
+   "layer": 6,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_snare_rim_v6_rr2_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 1,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_sidestick_v1_rr1_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 1,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_sidestick_v1_rr1_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 1,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_sidestick_v1_rr1_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 1,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_sidestick_v1_rr2_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 1,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_sidestick_v1_rr2_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 1,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_sidestick_v1_rr2_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 2,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_sidestick_v2_rr1_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 2,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_sidestick_v2_rr1_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 2,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_sidestick_v2_rr1_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 2,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_sidestick_v2_rr2_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 2,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_sidestick_v2_rr2_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 2,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_sidestick_v2_rr2_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 3,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_sidestick_v3_rr1_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 3,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_sidestick_v3_rr1_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 3,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_sidestick_v3_rr1_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 3,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_sidestick_v3_rr2_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 3,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_sidestick_v3_rr2_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 3,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_sidestick_v3_rr2_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 4,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_sidestick_v4_rr1_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 4,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_sidestick_v4_rr1_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 4,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_sidestick_v4_rr1_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 5,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_sidestick_v5_rr1_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 5,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_sidestick_v5_rr1_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 5,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_sidestick_v5_rr1_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 5,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_sidestick_v5_rr2_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 5,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_sidestick_v5_rr2_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 5,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_sidestick_v5_rr2_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 6,
+   "variant": 1,
+   "mic": "close",
+   "file": "graft_sidestick_v6_rr1_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 6,
+   "variant": 1,
+   "mic": "oh",
+   "file": "graft_sidestick_v6_rr1_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 6,
+   "variant": 1,
+   "mic": "room",
+   "file": "graft_sidestick_v6_rr1_room.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 6,
+   "variant": 2,
+   "mic": "close",
+   "file": "graft_sidestick_v6_rr2_close.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 6,
+   "variant": 2,
+   "mic": "oh",
+   "file": "graft_sidestick_v6_rr2_oh.flac"
+  },
+  {
+   "piece": "sidestick",
+   "layer": 6,
+   "variant": 2,
+   "mic": "room",
+   "file": "graft_sidestick_v6_rr2_room.flac"
   }
  ]
 }

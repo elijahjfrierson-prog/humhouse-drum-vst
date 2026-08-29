@@ -83,6 +83,16 @@ namespace hhx
         void  setLaneCompression (int lane, float amount01);
         float getLaneCompression (int lane) const;
 
+        /** The instrument's own low / mid / high EQ in dB, on its lane bus, so a
+            snare can lose its ring or a kick gain its knock without the rest of
+            the kit moving with it. */
+        void  setLaneEqLowDb (int lane, float db);
+        void  setLaneEqMidDb (int lane, float db);
+        void  setLaneEqHighDb (int lane, float db);
+        float getLaneEqLowDb (int lane) const;
+        float getLaneEqMidDb (int lane) const;
+        float getLaneEqHighDb (int lane) const;
+
         /** How much of the lane goes to the shared room reverb. */
         void  setLaneReverbSend (int lane, float amount01);
         float getLaneReverbSend (int lane) const;
@@ -213,8 +223,19 @@ namespace hhx
             std::atomic<int>   roundRobin { 0 };
             float              compEnv { 0.0f };   // audio thread only
 
+            // The instrument's own three-band EQ, in dB: the low is the body,
+            // the mid the tone the shell rings at, the high the stick.
+            std::atomic<float> eqLowDb  { 0.0f };
+            std::atomic<float> eqMidDb  { 0.0f };
+            std::atomic<float> eqHighDb { 0.0f };
+
             // Mix state, audio thread only.
             float hpState[2] { 0.0f, 0.0f };   // high-pass integrator per side
+            float eqLowState[2] { 0.0f, 0.0f };   // three-band splitter
+            float eqLowState2[2] { 0.0f, 0.0f };  // second pole on the body band
+            float eqMidState[2] { 0.0f, 0.0f };
+            float ringLp[2] { 0.0f, 0.0f };       // the notch's bandpass
+            float ringBp[2] { 0.0f, 0.0f };
             float fastEnv { 0.0f };            // transient design: stick
             float slowEnv { 0.0f };            //                   shell
         };
@@ -336,6 +357,12 @@ namespace hhx
             std::atomic<float> tune { 0.0f };     // semitones
             std::atomic<float> damp { 0.0f };     // added to the lane's damp
             std::atomic<float> gainDb { 0.0f };
+            /** The pitch the drum rings on after the stroke, and how much of it
+                the kit wants taken out. One loud ringing partial on a snare
+                reads as a bell bolted to the drum - which is why a drummer
+                tapes the head before a take. */
+            std::atomic<float> ringHz    { 0.0f };
+            std::atomic<float> ringCutDb { 0.0f };
         };
         std::array<KitVoicing, NumLanes> kitVoicing {};
         void clearKitVoicing();

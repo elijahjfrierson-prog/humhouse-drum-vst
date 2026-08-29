@@ -605,12 +605,27 @@ int main (int argc, char** argv)
                 sum += h.velocity;
             return hits.empty() ? 0.0 : sum / (double) hits.size();
         };
+        // The part is which drum is struck when. Which stroke that drum is
+        // played with belongs to how hard the section is hit, so the skeleton is
+        // read in pieces rather than in articulations.
+        const auto piece = [] (int lane)
+        {
+            if (lane == hhx::LaneSnare || lane == hhx::LaneSnareRim
+                || lane == hhx::LaneSideStick || lane == hhx::LaneSnareGhost)
+                return 1;
+            if (lane >= hhx::LaneHatClosed && lane <= hhx::LaneHatBell
+                && lane != hhx::LaneHatPedal)
+                return 2;
+            if (lane >= hhx::LaneRideBow && lane <= hhx::LaneRideEdge)
+                return 3;
+            return 100 + lane;
+        };
         const auto skeleton = [&] (const std::vector<hhx::Hit>& hits)
         {
             std::vector<std::string> out;
             for (const auto& h : hits)
                 if (! isCrash (h.lane))
-                    out.push_back (std::to_string (h.lane) + "@"
+                    out.push_back (std::to_string (piece (h.lane)) + "@"
                                    + std::to_string ((int) (h.beat * 480.0f)));
             return out;
         };
@@ -625,6 +640,20 @@ int main (int argc, char** argv)
                "the block's Intensity knob plays the section harder");
         check (skeleton (quietHits) == skeleton (loudHits),
                "Intensity moves dynamics only, it never re-picks the take");
+
+        // And hard is a different noise, not the same noise turned up: the quiet
+        // end of the knob is played on the rim, the loud end is rimshots.
+        const auto countLane = [] (const std::vector<hhx::Hit>& hits, int lane)
+        {
+            return std::count_if (hits.begin(), hits.end(),
+                                  [lane] (const hhx::Hit& h) { return h.lane == lane; });
+        };
+        check (countLane (quietHits, hhx::LaneSideStick)
+               > countLane (quietHits, hhx::LaneSnareRim),
+               "played soft, the snare is a rim tap");
+        check (countLane (loudHits, hhx::LaneSnareRim) > 0
+               && countLane (loudHits, hhx::LaneSideStick) == 0,
+               "played flat out, the backbeat is a rimshot");
 
         // The pad, by contrast, is a take chooser.
         auto padUp = s;
@@ -771,6 +800,29 @@ int main (int argc, char** argv)
         // Four limbs at once is a crash accent resolving a fill; anything
         // beyond that, or more than a couple per 16 bars, is a pile-up.
         check (widest <= 4 && stacked <= 2, "no instant piles up strikes");
+
+        // Busy has to still be a part, not a rolling fill: wide open, every bar
+        // keeps a backbeat, and every bar that is not turning a phrase keeps
+        // cymbal time - that is what tells a groove from fill material, however
+        // many strokes are in it.
+        int withBackbeat = 0, withTime = 0;
+        for (int bar = 0; bar < 16; ++bar)
+        {
+            int snare = 0, cymbal = 0;
+            for (const auto& h : hits)
+                if (h.beat >= bar * 4.0f - 0.01f && h.beat < (bar + 1) * 4.0f)
+                {
+                    if (hhx::isSnareLane (h.lane))
+                        ++snare;
+                    if ((h.lane >= hhx::LaneHatClosed && h.lane <= hhx::LaneRideCrash)
+                        || hhx::isCymbalLane (h.lane))
+                        ++cymbal;
+                }
+            withBackbeat += snare > 0 ? 1 : 0;
+            withTime     += cymbal >= 4 ? 1 : 0;
+        }
+        check (withBackbeat >= 15 && withTime >= 12,
+               "the busiest pad position still plays a groove, not a fill");
     }
 
     // 15d-ii. Humanize at zero means dead tight: every strike lands on the

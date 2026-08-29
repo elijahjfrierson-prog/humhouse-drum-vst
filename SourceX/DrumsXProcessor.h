@@ -67,6 +67,9 @@ namespace hhx
         juce::String laneTune (int lane);
         juce::String laneDamp (int lane);
         juce::String laneComp (int lane);
+        juce::String laneEqLow (int lane);
+        juce::String laneEqMid (int lane);
+        juce::String laneEqHigh (int lane);
         juce::String laneSend (int lane);
     }
 

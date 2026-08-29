@@ -262,15 +262,15 @@ namespace hhx
         // The library is a practice-room recording session: its busiest bars
         // run past thirty hits, which is nobody's idea of a rock groove. The
         // pad is curved so its whole travel stays inside the range a song is
-        // actually played in, and the top of the travel is a hard, busy take
-        // rather than a drum solo.
+        // actually played in, and the busiest end of the travel is still a
+        // groove rather than a drum solo.
         // Loudness is played, not just turned up: a section hit hard is busier
         // than the same section played quietly, so the height of the pad lifts
         // the complexity it asks the library for as well.
         const float x = std::clamp (s.complexity, 0.0f, 1.0f);
         const float y = std::clamp (s.intensity,  0.0f, 1.0f);
         complexity = std::clamp (0.05f + 0.62f * x * x + 0.15f * x + 0.16f * y * y,
-                                 0.0f, 0.84f);
+                                 0.0f, 0.78f);
         intensity  = std::clamp (0.06f + 0.78f * y, 0.0f, 1.0f);
     }
 
@@ -1416,6 +1416,77 @@ namespace hhx
                 h.velocity = (std::uint8_t) std::max (1, (int) h.velocity / 3);
     }
 
+    void PerformanceEngine::voiceForEnergy (const PerformanceSettings& sec,
+                                            float energy,
+                                            float dstBar,
+                                            std::uint64_t seed,
+                                            std::vector<Hit>& out) const
+    {
+        const auto on = [&sec] (int lane)
+        {
+            return (sec.laneMask & (1u << lane)) != 0;
+        };
+        const auto louder = [] (Hit& h, float by)
+        {
+            h.velocity = (std::uint8_t) std::clamp ((int) std::lround ((float) h.velocity * by),
+                                                    1, 127);
+        };
+
+        for (std::size_t i = 0; i < out.size(); ++i)
+        {
+            Hit& h = out[i];
+            const int   lane  = (int) h.lane;
+            const float inBar = h.beat - std::floor (h.beat / dstBar) * dstBar;
+            const int   eighth = (int) std::lround (inBar * 2.0f);
+            const bool  onGrid = std::abs (inBar * 2.0f - (float) eighth) < 0.04f;
+            const bool  onBeat = onGrid && (eighth % 2) == 0;
+            const bool  offBeat = onGrid && (eighth % 2) != 0;
+
+            // The snare. Played light it is the rim - the tap a drummer keeps a
+            // quiet verse on - and driven flat out it is a rimshot, which is the
+            // crack a chorus backbeat is actually played with, not the same
+            // stroke turned up.
+            if (lane == LaneSnare)
+            {
+                if (energy < 0.20f && on (LaneSideStick))
+                {
+                    h.lane = (std::uint8_t) LaneSideStick;
+                    louder (h, 0.82f);
+                }
+                else if (energy > 0.80f && onBeat && on (LaneSnareRim))
+                {
+                    h.lane = (std::uint8_t) LaneSnareRim;
+                    louder (h, 1.06f);
+                }
+            }
+            // The hat. Held down it is shut tight; driven, the foot comes off it
+            // on the beats between the backbeats and it barks open.
+            else if (lane == LaneHatClosed)
+            {
+                if (energy < 0.22f && on (LaneHatTight))
+                    h.lane = (std::uint8_t) LaneHatTight;
+                // Unless the hat has been asked to stay shut, in which case a
+                // hard part is a hard closed hat.
+                else if (energy > 0.76f && sec.hatOpenness > 0.1f
+                         && on (LaneHatOpen1) && offBeat
+                         && rand01 (seed, i, 0x4Fu) < (energy - 0.70f) * 2.0f)
+                {
+                    h.lane = (std::uint8_t) LaneHatOpen1;
+                    louder (h, 1.08f);
+                }
+            }
+            // The ride. Quiet work is on the bow; a section played up moves onto
+            // the bell for the beats it is counting.
+            else if (lane == LaneRideBow && energy > 0.78f && onBeat
+                     && on (LaneRideBell)
+                     && rand01 (seed, i, 0x7Bu) < (energy - 0.72f) * 1.8f)
+            {
+                h.lane = (std::uint8_t) LaneRideBell;
+                louder (h, 1.05f);
+            }
+        }
+    }
+
     void PerformanceEngine::collapseDoubledCymbals (std::vector<Hit>& out)
     {
         // A hand plays one cymbal at a time. Two time-keeping strokes a few
@@ -1752,9 +1823,10 @@ namespace hhx
         const float swingShift = s.swing * gridUnit * 0.34f;
         const float feelShift  = (s.feel - 0.5f) * 0.05f;      // +/-25 ms at 120 bpm
 
-        // Dynamics come from the block's own Intensity knob. The pad decides
-        // which take is played; this decides how hard it is played, and the
-        // two are deliberately independent.
+        // How hard the kit is hit. This is the pad's height and the block's own
+        // Loud knob, and it is not what decides which strokes are played: the
+        // top of the pad is the same part hit flat out, so a chorus is loud
+        // rather than busy.
         const float energy  = std::clamp (sec.sectionVelocity, 0.0f, 1.0f);
         const float velGain = 0.62f + 0.78f * energy;
 
@@ -1935,6 +2007,12 @@ namespace hhx
                              (std::uint8_t) variant });
         }
 
+        // How hard it is hit decides what it sounds like, not only how loud it
+        // is: rim taps at the bottom of the range, rimshots and open hats at the
+        // top. This runs before the crashes so a crash still lands on the
+        // downbeat it marks.
+        voiceForEnergy (sec, energy, dstBar, seed, out);
+
         addCrashes (s, sec, phraseIndex, bars, dstBar, seed, out);
 
         std::stable_sort (out.begin(), out.end(),
@@ -1993,6 +2071,48 @@ namespace hhx
                 for (const auto i : drop)
                     out.erase (out.begin() + (std::ptrdiff_t) i);
             }
+        }
+
+        // A drummer has four limbs. Wherever the take, its ornaments and the
+        // crashes have stacked more than four strikes onto one instant, the
+        // quietest of them are the ones nobody played, so they go - clutter on
+        // a single instant is what reads as slop rather than as a busy groove.
+        {
+            std::vector<std::size_t> drop;
+            for (std::size_t i = 0; i < out.size();)
+            {
+                std::size_t j = i;
+                while (j < out.size() && out[j].beat - out[i].beat < 0.03f)
+                    ++j;
+
+                // Three limbs is a groove stroke; the fourth is only there when
+                // a crash is being caught with the kick and the backbeat, which
+                // is an accent, not clutter.
+                std::size_t allowed = 3;
+                for (std::size_t k = i; k < j; ++k)
+                    if (out[k].lane == LaneCrashL || out[k].lane == LaneCrashR
+                        || out[k].lane == LaneCrash3)
+                        allowed = 4;
+
+                if (j - i > allowed)
+                {
+                    std::vector<std::size_t> here;
+                    for (std::size_t k = i; k < j; ++k)
+                        here.push_back (k);
+                    std::stable_sort (here.begin(), here.end(),
+                                      [&] (std::size_t a, std::size_t b)
+                                      {
+                                          return out[a].velocity < out[b].velocity;
+                                      });
+                    for (std::size_t k = 0; k + allowed < j - i; ++k)
+                        drop.push_back (here[k]);
+                }
+                i = j;
+            }
+
+            std::sort (drop.begin(), drop.end(), std::greater<std::size_t>());
+            for (const auto i : drop)
+                out.erase (out.begin() + (std::ptrdiff_t) i);
         }
 
         // The one is the one. A bar that starts with no kick under it has no

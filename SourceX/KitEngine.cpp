@@ -419,6 +419,8 @@ namespace hhx
             v.tune.store (0.0f);
             v.damp.store (0.0f);
             v.gainDb.store (0.0f);
+            v.ringHz.store (0.0f);
+            v.ringCutDb.store (0.0f);
         }
     }
 
@@ -472,6 +474,10 @@ namespace hhx
                     v.damp.store (juce::jlimit (0.0f, 1.0f, (float) (double) entry["damp"]));
                 if (entry.hasProperty ("gain"))
                     v.gainDb.store (juce::jlimit (-24.0f, 12.0f, (float) (double) entry["gain"]));
+                if (entry.hasProperty ("ringHz"))
+                    v.ringHz.store (juce::jlimit (20.0f, 12000.0f, (float) (double) entry["ringHz"]));
+                if (entry.hasProperty ("ringCut"))
+                    v.ringCutDb.store (juce::jlimit (-24.0f, 0.0f, (float) (double) entry["ringCut"]));
             }
         }
 
@@ -495,12 +501,18 @@ namespace hhx
             p.variant = entry.hasProperty ("variant") ? std::max (0, (int) entry["variant"] - 1) : 0;
             p.mic     = micNameToIndex (entry["mic"].toString());
 
+            // A kit that borrows another's recordings can still bring its own:
+            // its folder is looked in first, so a voicing can replace the one
+            // drum that has to be different - a snare, usually - without
+            // copying the whole library.
             const auto name = entry["file"].toString();
-            const auto file = sampleFolder.getChildFile (name);
+            auto file = folder.getChildFile (name);
+            if (! file.existsAsFile())
+                file = sampleFolder.getChildFile (name);
             if (! file.existsAsFile())
                 continue;
 
-            auto& cached = decoded[name];
+            auto& cached = decoded[file.getFullPathName()];
             if (cached == nullptr)
                 cached = readSample (new juce::FileInputStream (file));
 
@@ -656,6 +668,39 @@ namespace hhx
         return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].compression.load() : 0.0f;
     }
 
+    void KitEngine::setLaneEqLowDb (int lane, float db)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].eqLowDb.store (juce::jlimit (-18.0f, 18.0f, db));
+    }
+
+    void KitEngine::setLaneEqMidDb (int lane, float db)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].eqMidDb.store (juce::jlimit (-18.0f, 18.0f, db));
+    }
+
+    void KitEngine::setLaneEqHighDb (int lane, float db)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].eqHighDb.store (juce::jlimit (-18.0f, 18.0f, db));
+    }
+
+    float KitEngine::getLaneEqLowDb (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].eqLowDb.load() : 0.0f;
+    }
+
+    float KitEngine::getLaneEqMidDb (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].eqMidDb.load() : 0.0f;
+    }
+
+    float KitEngine::getLaneEqHighDb (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].eqHighDb.load() : 0.0f;
+    }
+
     void KitEngine::setLaneReverbSend (int lane, float amount01)
     {
         if (lane >= 0 && lane < NumLanes)
@@ -773,7 +818,67 @@ namespace hhx
         const auto  v       = voicingForLane (lane, voicing);
         const float amount  = punch.load();
 
-        if (voicing == MixRaw || numSamples <= 0)
+        if (numSamples <= 0)
+            return;
+
+        const bool stereo = busR != nullptr;
+
+        // The drum's own ring, taken out where the kit asks for it: a bandpass
+        // at the pitch it rings on, subtracted from the signal. That is a notch
+        // with the width of the resonance rather than of an EQ band, so the
+        // stroke keeps its body and only the tone goes.
+        const auto& kv = kitVoicing[(std::size_t) lane];
+        const float ringHz = kv.ringHz.load(), ringCutDb = kv.ringCutDb.load();
+        if (ringHz > 20.0f && ringCutDb < -0.1f)
+        {
+            const float f = 2.0f * std::sin (juce::MathConstants<float>::pi
+                                             * ringHz / (float) currentRate);
+            const float q = 0.18f;   // narrow: one partial, not the whole mid
+            const float depth = 1.0f - juce::Decibels::decibelsToGain (ringCutDb);
+
+            for (int i = 0; i < numSamples; ++i)
+                for (int ch = 0; ch < (stereo ? 2 : 1); ++ch)
+                {
+                    float* bus = ch == 0 ? busL : busR;
+                    slot.ringLp[ch] += f * slot.ringBp[ch];
+                    const float hp = bus[i] - slot.ringLp[ch] - q * slot.ringBp[ch];
+                    slot.ringBp[ch] += f * hp;
+                    bus[i] -= depth * q * slot.ringBp[ch];
+                }
+        }
+
+        // The instrument's three-band EQ: body below 180 Hz, tone up to 3 kHz,
+        // stick above it, each band scaled and summed back so the three controls
+        // leave the signal alone when they are all flat.
+        const float lowDb  = slot.eqLowDb.load();
+        const float midDb  = slot.eqMidDb.load();
+        const float highDb = slot.eqHighDb.load();
+        if (std::abs (lowDb) + std::abs (midDb) + std::abs (highDb) > 0.01f)
+        {
+            const float lowCoeff  = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                                     * 180.0f / (float) currentRate);
+            const float midCoeff  = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                                     * 3000.0f / (float) currentRate);
+            const float lowGain   = juce::Decibels::decibelsToGain (lowDb);
+            const float midGain   = juce::Decibels::decibelsToGain (midDb);
+            const float highGain  = juce::Decibels::decibelsToGain (highDb);
+
+            for (int i = 0; i < numSamples; ++i)
+                for (int ch = 0; ch < (stereo ? 2 : 1); ++ch)
+                {
+                    float* bus = ch == 0 ? busL : busR;
+                    const float x = bus[i];
+                    slot.eqLowState[ch]  += lowCoeff * (x - slot.eqLowState[ch]);
+                    slot.eqLowState2[ch] += lowCoeff * (slot.eqLowState[ch] - slot.eqLowState2[ch]);
+                    slot.eqMidState[ch]  += midCoeff * (x - slot.eqMidState[ch]);
+                    const float body  = slot.eqLowState2[ch];
+                    const float tone  = slot.eqMidState[ch] - body;
+                    const float stick = x - slot.eqMidState[ch];
+                    bus[i] = body * lowGain + tone * midGain + stick * highGain;
+                }
+        }
+
+        if (voicing == MixRaw)
             return;
 
         if (v.highPassHz > 1.0f)
@@ -1208,8 +1313,11 @@ namespace hhx
         const bool  shutHat = lane == LaneHatClosed || lane == LaneHatTight;
         const bool  openHat = lane >= LaneHatOpen1 && lane <= LaneHatOpen4;
         // And the kick is the floor of a rock record: it comes up so the
-        // downbeat lands under the kit rather than beside it.
+        // downbeat lands under the kit rather than beside it. The snare is the
+        // other half of that: at close-mic level it disappears behind the toms
+        // and the room, so the backbeat comes up with the kick.
         const float tingTrimDb = lane == LaneKick ? 2.0f
+                               : isSnareLane (lane) ? 2.0f
                                : isRideLane (lane) ? -5.5f
                                : shutHat           ? -3.0f
                                : openHat           ? -0.5f

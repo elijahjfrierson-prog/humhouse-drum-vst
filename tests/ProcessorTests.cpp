@@ -865,6 +865,134 @@ int main()
 
         root.deleteRecursively();
     }
+
+    // 8. The snare is the drum a kit is recognised by, so no two kits may be
+    //    playing the same recording of one, and the tone a snare rings on after
+    //    the stroke - which is heard as a bell bolted to the drum - has to be
+    //    measured and taken out per kit.
+    {
+        const juce::File kits = juce::File (HHX_SHIPPED_KIT_DIR).getParentDirectory();
+
+        juce::StringArray snareSources;
+        int withNotch = 0, kitsSeen = 0;
+        for (const auto& entry : juce::RangedDirectoryIterator (kits, false, "*",
+                                                                juce::File::findDirectories))
+        {
+            const auto manifestFile = entry.getFile().getChildFile ("kit.json");
+            if (! manifestFile.existsAsFile())
+                continue;
+            ++kitsSeen;
+
+            const auto manifest = juce::JSON::parse (manifestFile);
+            juce::File snareFile;
+            if (const auto* pieces = manifest["pieces"].getArray())
+                for (const auto& piece : *pieces)
+                    if (piece["piece"].toString() == "snare"
+                        && piece["mic"].toString() == "close")
+                    {
+                        // Resolved the way the engine resolves it: the kit's own
+                        // folder first, then whatever library it borrows.
+                        const auto name = piece["file"].toString();
+                        snareFile = entry.getFile().getChildFile (name);
+                        if (! snareFile.existsAsFile())
+                            snareFile = entry.getFile()
+                                            .getChildFile (manifest["samples"].toString())
+                                            .getChildFile (name);
+                        break;
+                    }
+
+            check (snareFile.existsAsFile(),
+                   entry.getFile().getFileName() + " has a snare on disk");
+            juce::MemoryBlock raw;
+            snareFile.loadFileAsData (raw);
+            snareSources.add (juce::String (snareFile.getSize()) + ":"
+                              + juce::String::toHexString (
+                                    (int) juce::DefaultHashFunctions::generateHash (
+                                        raw.toBase64Encoding(), 0x7fffffff)));
+
+            if (const auto* voicings = manifest["voicing"].getArray())
+                for (const auto& voicing : *voicings)
+                    if (voicing["piece"].toString() == "snare"
+                        && (double) voicing["ringHz"] > 20.0
+                        && (double) voicing["ringCut"] < -0.1)
+                        ++withNotch;
+        }
+
+        check (kitsSeen >= 4, "the content tree ships its kits");
+        snareSources.removeDuplicates (false);
+        check (snareSources.size() == kitsSeen,
+               "every kit plays its own snare recording, not one drum re-tuned");
+        check (withNotch == kitsSeen, "every kit's snare ring is measured and notched");
+    }
+
+    // 9. Per-instrument EQ and the ring notch belong to the drum, not to the
+    //    production chain: they shape one lane's bus and leave the rest of the
+    //    kit where it was, and they work with the chain switched off.
+    {
+        const juce::File shipped (HHX_SHIPPED_KIT_DIR);
+        hhx::KitEngine kit;
+        kit.prepare (48000.0, 512);
+        kit.setMixVoicing (hhx::KitEngine::MixRaw);
+        check (kit.loadKitFolder (shipped) > 0, "the kit under test loads");
+
+        // Energy above 3 kHz - the stick - and below 180 Hz - the body - so a
+        // band control can be read off the rendered audio. A drum answers with
+        // a different round robin every stroke, so a reading is the mean of a
+        // full turn of the wheel and does not move on its own.
+        const auto bands = [&kit] (int lane)
+        {
+            const int n = 24000;
+            double low = 0.0, high = 0.0;
+            for (int take = 0; take < 4; ++take)
+            {
+                juce::AudioBuffer<float> buf (2, n);
+                buf.clear();
+                kit.allNotesOff();
+                kit.noteOn (lane, 0.9f);
+                for (int i = 0; i < n; i += 512)
+                    kit.renderNextBlock (buf, i, std::min (512, n - i));
+
+                // Six poles at 90 Hz, so the body reading really is the note of
+                // the drum: the shell and the stick above the crossover are
+                // 80 dB down and cannot hide what the control did.
+                double lp[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }, mid = 0.0;
+                for (int i = 0; i < n; ++i)
+                {
+                    const double x = 0.5 * (buf.getSample (0, i) + buf.getSample (1, i));
+                    lp[0] += 0.01175 * (x - lp[0]);
+                    for (int b = 1; b < 6; ++b)
+                        lp[b] += 0.01175 * (lp[b - 1] - lp[b]);
+                    mid  += 0.3286 * (x - mid);   // ~3 kHz
+                    low  += lp[5] * lp[5];
+                    high += (x - mid) * (x - mid);
+                }
+            }
+            kit.allNotesOff();
+            return std::make_pair (low, high);
+        };
+
+        const auto flatSnare = bands (hhx::LaneSnare);
+        const auto flatKick  = bands (hhx::LaneKick);
+
+        kit.setLaneEqHighDb (hhx::LaneSnare, 12.0f);
+        const auto brightSnare = bands (hhx::LaneSnare);
+        const auto sameKick    = bands (hhx::LaneKick);
+        check (brightSnare.second > flatSnare.second * 4.0,
+               "the snare's high band lifts the stick");
+        check (std::abs (sameKick.second - flatKick.second) < flatKick.second * 0.25
+               && std::abs (sameKick.first - flatKick.first) < flatKick.first * 0.25,
+               "and the kick on the next lane does not move with it");
+
+        kit.setLaneEqHighDb (hhx::LaneSnare, 0.0f);
+        kit.setLaneEqLowDb (hhx::LaneKick, -18.0f);
+        const auto thinKick = bands (hhx::LaneKick);
+        check (thinKick.first < flatKick.first * 0.25,
+               "the kick's low band takes the body out");
+        check (kit.getLaneEqLowDb (hhx::LaneKick) < -17.9f
+               && kit.getLaneEqMidDb (hhx::LaneKick) == 0.0f,
+               "the engine reports back the EQ it was given");
+        kit.setLaneEqLowDb (hhx::LaneKick, 0.0f);
+    }
    #endif
 
     std::printf ("\n%s\n", failures == 0 ? "All processor tests passed."
