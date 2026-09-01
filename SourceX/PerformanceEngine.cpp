@@ -1387,37 +1387,67 @@ namespace hhx
                              ? ((float) bars - std::max (0.5f, sec.fillLengthBars)) * dstBar - 0.01f
                              : std::numeric_limits<float>::max();
 
-        std::vector<float> beats;
+        // What a crash costs a drummer is a hand, so the pattern is written as
+        // sticking rather than as notes: the right hand comes off the time for
+        // the ride-side crash, both hands come down together on the accents a
+        // section turns over on, and the left hand reaches across in between.
+        enum Hands { Both, Right, Left };
+        std::vector<std::pair<float, Hands>> beats;
 
-        // Every phrase gets its downbeat marked. A crash is how a drummer says
-        // "here": played only when the section is loud, sections drift into each
-        // other instead of starting.
-        beats.push_back (0.0f);
+        const auto mark = [&beats] (float beat, Hands hands)
+        {
+            for (auto& marked : beats)
+                if (std::abs (marked.first - beat) < 0.01f)
+                {
+                    if (hands == Both)
+                        marked.second = Both;
+                    return;
+                }
+            beats.push_back ({ beat, hands });
+        };
 
-        // Sections played up mark the half-way bar as well, which is what makes
-        // a chorus sound like a chorus instead of a louder verse.
-        if (energy > 0.45f && bars >= 2)
-            beats.push_back ((float) (bars / 2) * dstBar);
+        // Every phrase turns over on both hands. A crash is how a drummer says
+        // "here", and one cymbal alone does not say it loudly enough.
+        mark (0.0f, Both);
 
-        // A big chorus: every bar gets marked.
+        // The half-way bar is caught on both hands too - a phrase turns over
+        // there whether it is a verse or a chorus. How hard it is caught is
+        // what tells them apart, so this is placed off the form and not off
+        // the level: how hard a section is played never rewrites which strokes
+        // it has.
+        if (bars >= 2)
+            mark ((float) (bars / 2) * dstBar, Both);
+
+        // A big chorus: the right hand marks every bar, the way it would be
+        // riding the crash instead of the hat.
         if (energy > 0.62f)
             for (int bar = 0; bar < bars; ++bar)
-                beats.push_back ((float) bar * dstBar);
+                mark ((float) bar * dstBar, Right);
 
-        // Flat out, the halves of every bar are marked too - the wall of
-        // crashes a heavy chorus is actually played with, alternating left and
-        // right so it stays playable.
+        // Flat out the left hand fills the halves of every bar, so the pattern
+        // reads as sticking - both, right, left, right - rather than one crash
+        // per landmark.
         if (energy > 0.78f)
             for (int bar = 0; bar < bars; ++bar)
-                beats.push_back (((float) bar + 0.5f) * dstBar);
+                mark (((float) bar + 0.5f) * dstBar, Left);
 
-        std::sort (beats.begin(), beats.end());
-        beats.erase (std::unique (beats.begin(), beats.end()), beats.end());
+        // And at that level the hand that is already up takes a second stroke
+        // off the back of the accent.
+        if (energy > 0.86f)
+            for (int bar = 0; bar < bars; bar += 2)
+                if (rand01 (seed, (std::uint64_t) bar, 0x5Au) > 0.45f)
+                    mark (((float) bar + 0.25f) * dstBar, Right);
+
+        std::sort (beats.begin(), beats.end(),
+                   [] (const auto& a, const auto& b) { return a.first < b.first; });
 
         int index = 0;
-        std::vector<float> struck;
-        for (const float beat : beats)
+        std::vector<float> struck, twoHanded;
+        for (const auto& marked : beats)
         {
+            const float beat  = marked.first;
+            const Hands hands = marked.second;
+
             const bool taken = std::any_of (out.begin(), out.end(),
                                             [beat] (const Hit& h)
                                             {
@@ -1431,15 +1461,33 @@ namespace hhx
                 continue;
             }
 
-            const bool useRight = haveRight && (! haveLeft || (index % 2) == 0);
-            const int  lane     = useRight ? LaneCrashR : LaneCrashL;
-            const float level   = 0.62f + 0.30f * energy
-                                + 0.05f * (rand01 (seed, (std::uint64_t) index, 0xC7u) - 0.5f);
+            const float level = 0.62f + 0.30f * energy
+                              + 0.05f * (rand01 (seed, (std::uint64_t) index, 0xC7u) - 0.5f);
+            const float at    = std::max (0.0f, beat);
 
-            out.push_back ({ std::max (0.0f, beat), (std::uint8_t) lane,
-                             (std::uint8_t) std::clamp ((int) std::lround (level * 127.0f), 1, 127),
-                             (std::uint8_t) (index % kRoundRobins) });
-            struck.push_back (std::max (0.0f, beat));
+            const auto strike = [&] (int lane, float scale)
+            {
+                out.push_back ({ at, (std::uint8_t) lane,
+                                 (std::uint8_t) std::clamp ((int) std::lround (level * scale * 127.0f),
+                                                            1, 127),
+                                 (std::uint8_t) (index % kRoundRobins) });
+            };
+
+            if (hands == Both && haveRight && haveLeft)
+            {
+                // Two cymbals caught together are never caught dead level: the
+                // strong hand leads and the other fills underneath it.
+                strike (LaneCrashR, 1.0f);
+                strike (LaneCrashL, 0.88f);
+                twoHanded.push_back (at);
+            }
+            else
+            {
+                const bool right = hands == Left ? ! haveLeft : haveRight;
+                strike (right ? LaneCrashR : LaneCrashL, 1.0f);
+            }
+
+            struck.push_back (at);
             ++index;
 
             // A crash is kicked, not floated: the foot goes down with the hand
@@ -1460,13 +1508,35 @@ namespace hhx
             }
         }
 
-        // The crash is played with the hand that was keeping time, so the hat
-        // stroke underneath it drops right back: two cymbals sounding equally
-        // on one beat is the give-away that a machine placed them.
+        // Both hands on the crashes means neither is on the hat: the stroke
+        // that would have kept time there is simply not played. A part that
+        // keeps it is a part with three hands in it.
+        const auto near = [] (const std::vector<float>& beats, float beat, float window)
+        {
+            return std::any_of (beats.begin(), beats.end(),
+                                [&] (const float b) { return std::abs (b - beat) < window; });
+        };
+
+        // Anything the corpus itself caught on both crashes counts the same way.
+        for (const Hit& h : out)
+            if (h.lane == LaneCrashR
+                && std::any_of (out.begin(), out.end(), [&] (const Hit& o)
+                   {
+                       return o.lane == LaneCrashL && std::abs (o.beat - h.beat) < 0.03f;
+                   })
+                && ! near (twoHanded, h.beat, 0.03f))
+                twoHanded.push_back (h.beat);
+
+        out.erase (std::remove_if (out.begin(), out.end(), [&] (const Hit& h)
+                   {
+                       return isOrnamentLane (h.lane) && near (twoHanded, h.beat, 0.04f);
+                   }),
+                   out.end());
+
+        // Where one hand crashes, the other is still keeping time, but the
+        // crash is what is heard: the stroke underneath it drops right back.
         for (Hit& h : out)
-            if (isOrnamentLane (h.lane)
-                && std::any_of (struck.begin(), struck.end(),
-                                [&] (const float beat) { return std::abs (h.beat - beat) < 0.06f; }))
+            if (isOrnamentLane (h.lane) && near (struck, h.beat, 0.06f))
                 h.velocity = (std::uint8_t) std::max (1, (int) h.velocity / 3);
     }
 

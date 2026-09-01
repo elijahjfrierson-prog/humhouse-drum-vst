@@ -543,6 +543,8 @@ namespace hhx
             // is only the fallback for a plug-in running without content.
             if (const auto* kits = manifest["kits"].getArray())
             {
+                int preferredKit = -1;
+
                 for (const auto& entry : *kits)
                 {
                     // A manifest only names kits inside its own content tree, so
@@ -555,9 +557,22 @@ namespace hhx
                     auto name = entry["name"].toString();
                     kitNames.add (name.isNotEmpty() ? name : folder.getFileName());
                     kitFolders.push_back (folder);
+
+                    // The kit the manifest calls the default is the one a new
+                    // session opens on; the rest are tried in order behind it.
+                    if ((bool) entry.getProperty ("default", false)
+                        && preferredKit < 0)
+                        preferredKit = (int) kitFolders.size() - 1;
                 }
 
+                std::vector<int> order;
+                if (preferredKit >= 0)
+                    order.push_back (preferredKit);
                 for (int i = 0; i < (int) kitFolders.size(); ++i)
+                    if (i != preferredKit)
+                        order.push_back (i);
+
+                for (const int i : order)
                 {
                     if (kit.loadKitFolder (kitFolders[(std::size_t) i]) <= 0)
                         continue;

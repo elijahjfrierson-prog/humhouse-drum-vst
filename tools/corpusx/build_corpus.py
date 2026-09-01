@@ -858,6 +858,123 @@ def crash_time(phrases: list[Phrase]) -> list[Phrase]:
     return phrases + added
 
 
+# Crash sticking figures, one bar, in eighths. Each entry is (beat, hands),
+# where hands is "b" for both arms landing together on the two crashes, "r"
+# for the lead hand coming off the time and "l" for the off hand reaching
+# across. Transcribed off the reference takes: the accents land on 1 and 3 as
+# a two-armed hit, the lead hand keeps the eighths between them and the off
+# hand answers on the ands, which is what makes a crash-ridden chorus travel
+# instead of sounding like one cymbal being retriggered.
+CRASH_STICKINGS = [
+    # 1 and 3 accented with both arms, lead hand riding the eighths
+    [(0.0, "b"), (0.5, "r"), (1.0, "r"), (1.5, "l"),
+     (2.0, "b"), (2.5, "r"), (3.0, "r"), (3.5, "l")],
+    # quarter-note crash time, the off hand only answering the ands of 2 and 4
+    [(0.0, "b"), (1.0, "r"), (1.5, "l"), (2.0, "r"), (3.0, "r"), (3.5, "l")],
+    # driving: lead hand on every quarter, both arms turning the bar over
+    [(0.0, "b"), (1.0, "r"), (2.0, "r"), (3.0, "r")],
+    # the figure that answers itself: pairs of strokes across the two crashes
+    [(0.0, "b"), (0.5, "l"), (1.5, "r"), (2.0, "b"), (2.5, "l"), (3.5, "r")],
+]
+
+# The kick and snare underneath, written as (beat, lane) at one bar. These are
+# the figures the loud end of the pad was short of: the pad used to reach 90%
+# by adding strokes to a verse take rather than by playing a chorus part.
+CRASH_GROOVE_BEDS = [
+    # straight rock chorus, kick answering the backbeat
+    [(0.0, L.KICK), (0.75, L.KICK), (1.0, L.SNARE), (2.0, L.KICK),
+     (2.5, L.KICK), (3.0, L.SNARE), (3.5, L.KICK)],
+    # punk drive: eighth-note kick under the crashes
+    [(0.0, L.KICK), (0.5, L.KICK), (1.0, L.SNARE), (1.5, L.KICK),
+     (2.0, L.KICK), (2.5, L.KICK), (3.0, L.SNARE), (3.5, L.KICK)],
+    # half-time heavy: the backbeat waits for 3
+    [(0.0, L.KICK), (0.5, L.KICK), (1.5, L.KICK), (2.0, L.SNARE),
+     (2.75, L.KICK), (3.5, L.KICK)],
+    # the one that drives into the next bar off a snare pickup
+    [(0.0, L.KICK), (1.0, L.SNARE), (1.75, L.KICK), (2.0, L.KICK),
+     (3.0, L.SNARE), (3.75, L.SNARE)],
+]
+
+
+def crash_grooves(phrases: list[Phrase]) -> list[Phrase]:
+    """The chorus parts at the top of the pad: crash sticking over a written
+    kick and snare figure.
+
+    Everything else in the corpus is a real take, re-voiced. The loudest corner
+    of the pad had nothing to draw on but verse takes hit harder, which is why
+    it read as clutter rather than as a chorus. These are whole parts - the
+    crash pattern and the groove under it - placed on the grid, taking their
+    tempo, their velocity spread and their distance from the grid from the
+    drummer whose take they sit next to.
+    """
+    added: list[Phrase] = []
+    sources = [p for p in phrases
+               if p.kind == KIND_BEAT and not p.derived
+               and p.intensity >= 0.6 and p.sig_den == 4 and p.sig_num == 4
+               and 84 <= p.bpm <= 200
+               and any(p.style.startswith(s) for s in ("rock", "punk"))]
+    sources.sort(key=lambda p: (-p.intensity, -p.complexity))
+    sources = sources[:80]
+
+    for index, base in enumerate(sources):
+        played = [n for n in base.notes if n.lane in (L.KICK, L.SNARE)]
+        if len(played) < 4:
+            continue
+        # the drummer's own weight and their own distance from the grid
+        vels = {L.KICK: [n.velocity for n in played if n.lane == L.KICK] or [110],
+                L.SNARE: [n.velocity for n in played if n.lane == L.SNARE] or [112]}
+        devs = [n.beat - round(n.beat * 4.0) / 4.0 for n in played] or [0.0]
+
+        for which in range(len(CRASH_STICKINGS)):
+            sticking = CRASH_STICKINGS[(index + which) % len(CRASH_STICKINGS)]
+            bed = CRASH_GROOVE_BEDS[(index + which) % len(CRASH_GROOVE_BEDS)]
+
+            # A crash needs room to open: at chorus tempo the off-hand answers
+            # on the ands are dropped rather than choked.
+            figure = [(b, h) for b, h in sticking
+                      if base.bpm <= 158 or abs(b - round(b)) < 0.01]
+
+            notes: list[Note] = []
+            step = 0
+            for bar in range(base.bars):
+                offset = bar * BEATS_PER_BAR
+                for beat, hands in figure:
+                    at = offset + beat
+                    kicked = any(abs(b - beat) < 0.02 and lane == L.KICK
+                                 for b, lane in bed)
+                    accent = 6 if kicked else 0
+                    dev = devs[step % len(devs)]
+                    if hands == "b":
+                        notes.append(Note(L.CRASH_R, max(0.0, at + dev),
+                                          min(127, 120 + accent)))
+                        notes.append(Note(L.CRASH_L, max(0.0, at + dev * 1.3),
+                                          min(127, 112 + accent)))
+                    else:
+                        lane = L.CRASH_R if hands == "r" else L.CRASH_L
+                        notes.append(Note(lane,
+                                          max(0.0, at + dev * (1.0 if hands == "r" else 1.4)),
+                                          min(127, (110 if hands == "r" else 102) + accent)))
+                    step += 1
+
+                for beat, lane in bed:
+                    at = offset + beat
+                    v = vels[lane][step % len(vels[lane])]
+                    # a chorus is played at the top of the drummer's range
+                    v = int(round(v * 1.06)) if beat in (0.0, 1.0, 2.0, 3.0) else v
+                    notes.append(Note(lane, max(0.0, at + devs[step % len(devs)]),
+                                      max(1, min(127, v))))
+                    step += 1
+
+            notes.sort(key=lambda n: n.beat)
+            for row in (0.90, 0.95, 1.0):
+                p = derive(base, notes, row)
+                p.section = SEC_CHORUS
+                p.char_mask = (base.char_mask & (LOUD_MASK | CRASH_MASK)) \
+                              or (LOUD_MASK | CRASH_MASK)
+                added.append(p)
+    return phrases + added
+
+
 def double_snare(phrases: list[Phrase]) -> list[Phrase]:
     """Two-snare backbeats: the driving figure the corpus is thin on.
 
@@ -1183,6 +1300,7 @@ def main() -> None:
     calibrate(phrases)
     phrases = double_kick(phrases)
     phrases = crash_time(phrases)
+    phrases = crash_grooves(phrases)
     phrases = double_snare(phrases)
     phrases = half_time_recast(phrases)
     phrases = densify(phrases)

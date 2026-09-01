@@ -6309,12 +6309,31 @@
   {
    "piece": "snare",
    "ringHz": 265.4,
-   "ringCut": -5.1
+   "ringCut": -9.0
   },
   {
    "piece": "snare_rim",
    "ringHz": 328.8,
-   "ringCut": -4.1
+   "ringCut": -9.0
+  },
+  {
+   "piece": "kick",
+   "ringHz": 263.5,
+   "ringCut": -9.0
+  },
+  {
+   "piece": "tom_1"
+  },
+  {
+   "piece": "tom_2"
+  },
+  {
+   "piece": "tom_3",
+   "ringHz": 319.2,
+   "ringCut": -4.5
+  },
+  {
+   "piece": "tom_4"
   }
  ]
 }

@@ -279,6 +279,66 @@ namespace hhx
         }
 
         dropRinglessShutHat();
+        restoreDynamicLadder();
+    }
+
+    void KitEngine::restoreDynamicLadder()
+    {
+        // Measured off a live multi-velocity session (light through heaviest, one
+        // player, one room): how many dB a piece actually travels between its
+        // softest and hardest stroke. Cymbals travel furthest, the kick least.
+        // Libraries that level-matched their layers read as plastic because a
+        // light stroke arrives at the weight of a hard one.
+        const auto spreadDb = [] (int lane) -> float
+        {
+            if (lane == LaneKick)          return 18.0f;
+            if (isSnareLane (lane))        return 21.0f;
+            if (isTomLane (lane))          return 15.0f;
+            if (isRideLane (lane))         return 24.0f;
+            if (lane >= LaneCrashL && lane <= LaneSplash) return 17.0f;
+            if (isHatLane (lane))          return 20.0f;
+            return 16.0f;
+        };
+
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            auto& slot = lanes[(std::size_t) lane];
+            const int numLayers = (int) slot.layers.size();
+
+            for (auto& layer : slot.layers)
+                layer.ladder = 1.0f;
+
+            if (numLayers < 2)
+                continue;
+
+            const auto peakOf = [] (const Layer& l)
+            {
+                float peak = 0.0f;
+                for (const auto& v : l.variants)
+                    if (const auto& s = v.mics[MicClose])
+                        peak = std::max (peak, s->peak);
+                return peak;
+            };
+
+            const float hardest = peakOf (slot.layers.back());
+            const float softest = peakOf (slot.layers.front());
+            if (hardest <= 1.0e-5f || softest <= 1.0e-5f)
+                continue;
+
+            const float target  = spreadDb (lane);
+            const float carried = 20.0f * std::log10 (hardest / softest);
+            if (carried >= target * 0.8f)
+                continue;   // the recordings already play their own dynamics
+
+            for (int i = 0; i < numLayers; ++i)
+            {
+                const float step = 1.0f - (float) i / (float) (numLayers - 1);
+                const float want = -target * step * step;   // convex: the soft end travels most
+                const float have = 20.0f * std::log10 (std::max (1.0e-5f, peakOf (slot.layers[(std::size_t) i]) / hardest));
+                slot.layers[(std::size_t) i].ladder
+                    = juce::Decibels::decibelsToGain (juce::jlimit (-14.0f, 0.0f, want - have));
+            }
+        }
     }
 
     float KitEngine::laneRingRatio (int lane) const
@@ -1416,7 +1476,13 @@ namespace hhx
                                : shutHat           ? -1.5f
                                : openHat           ? -0.5f
                                : (ting ? -3.5f : 0.0f);
-        const float gain = velGain * trim
+        // Where the chosen layer sits on the dynamic ladder a live session
+        // plays. A library that level-matched its layers has its soft ones
+        // brought down here, so a light stroke arrives light instead of
+        // arriving as a hard stroke at a lower fader.
+        const float ladderGain = slot.layers[(std::size_t) layerIndex].ladder;
+
+        const float gain = velGain * trim * ladderGain
                          * juce::Decibels::decibelsToGain (slot.gainDb.load()
                                                            + kv.gainDb.load()
                                                            + kitTrimDb.load()

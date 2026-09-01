@@ -214,6 +214,11 @@ namespace hhx
         struct Layer
         {
             std::vector<Variant> variants;
+
+            /** Linear gain that puts this layer back on the dynamic ladder a live
+                session plays: a library that level-matched its layers has the
+                soft ones brought down so a light stroke is a light stroke. */
+            float ladder = 1.0f;
         };
 
         struct LaneSlot
@@ -318,6 +323,12 @@ namespace hhx
             layers keep the order they declared; kits that do not (loose files)
             are ordered by how loud they are. */
         void finaliseKit (bool sortByLoudness);
+
+        /** Measures how much level a lane's layers actually travel and, where a
+            library flattened them, restores the spread measured off a live
+            multi-velocity session. Never boosts: the hardest layer stays where
+            it was recorded and the softer ones come down to meet the ladder. */
+        void restoreDynamicLadder();
 
         /** How much of a lane's loudest recording is ring rather than stroke:
             the energy left after the attack against the attack's own. */

@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""Find the tone each kit's snare rings on and write the notch into its kit.json.
+"""Find the tone each kit's drums ring on and write the notch into its kit.json.
 
-A snare with one loud partial left ringing after the stroke does not read as a
-snare with character: it reads as a bell bolted to the drum, which is why a
+A drum with one loud partial left ringing after the stroke does not read as a
+drum with character: it reads as a bell bolted to the shell, which is why a
 drummer tapes the head or drops a wallet on it before a take. This measures the
 ring of the loudest strokes - the spectrum of the tail, with the body of the
 drum ignored - and writes the strongest partial plus how much of it to take out
-as ``ringHz`` / ``ringCut`` in the kit's snare voicing. The KitEngine applies it
-as a narrow notch on the snare's own bus.
+as ``ringHz`` / ``ringCut`` in the kit's voicing. The KitEngine applies it as a
+narrow notch on that piece's own bus.
+
+What counts as too much ring is not a guess: the live Nu Rock session is the
+reference, and its tails are what the kit should sound like. Its snare stands
+10x over the rest of its tail and reads as a snare with tone and a tail behind
+it, so a partial is only notched down to about that, and only when it is well
+over it. Cymbals are left alone entirely - their ring is the instrument.
 
     ./voice_snares.py content/Kits
 """
@@ -26,17 +32,21 @@ TAIL_FROM, TAIL_TO = 0.08, 0.60
 # thin snare, so only what rings above it counts as a tone.
 MIN_HZ, MAX_HZ = 250.0, 1200.0
 
-# How much louder than the rest of the tail a partial has to be before it is a
-# ring rather than the drum's timbre, and the deepest cut we will write.
-PROMINENCE = 8.0
-MAX_CUT_DB = -6.0
+# How far a partial stands over the rest of the tail on the live session: a drum
+# that rings this much rings the way a real one does and is left alone.
+REFERENCE = 12.0
 
-# A partial this high is not the note of the drum any more, it is the bell tone
-# a drummer tapes out, so it is allowed a deeper cut than a shell note.
-BELL_HZ = 500.0
-BELL_CUT_DB = -10.0
+# Only a partial half again over the reference is worth touching, and never by
+# more than this: a deep narrow notch takes the shell out with the ring.
+TRIGGER = 1.5
+MAX_CUT_DB = -9.0
 
-SNARE_PIECES = ("snare", "snare_rim")
+# The session everything else is measured against: its drums are left exactly
+# as they were recorded.
+REFERENCE_KIT = "NuRock"
+
+PIECES = ("snare", "snare_rim", "kick",
+          "tom_1", "tom_2", "tom_3", "tom_4")
 
 
 def ring(paths):
@@ -87,11 +97,13 @@ def main():
         manifest_path = os.path.join(kit, "kit.json")
         if not os.path.isfile(manifest_path):
             continue
+        if os.path.basename(kit) == REFERENCE_KIT:
+            continue
         with open(manifest_path) as f:
             manifest = json.load(f)
 
         voicing = {entry["piece"]: entry for entry in manifest.get("voicing", [])}
-        for piece in SNARE_PIECES:
+        for piece in PIECES:
             files = loudest(kit, piece)
             if not files:
                 continue
@@ -100,22 +112,18 @@ def main():
                 continue
             hertz, prominence = found
             entry = voicing.setdefault(piece, dict(piece=piece))
-            if prominence < PROMINENCE:
+            if prominence < REFERENCE * TRIGGER:
                 entry.pop("ringHz", None)
                 entry.pop("ringCut", None)
                 print(f"{os.path.basename(kit):16} {piece:10} "
-                      f"tail is noise ({prominence:.1f}x at {hertz:.0f} Hz)")
+                      f"tail rings like the session ({prominence:.1f}x "
+                      f"at {hertz:.0f} Hz)")
                 continue
 
-            # Deeper cut the more the partial stands over the tail, by doubling
-            # rather than by ratio, and floored so the drum keeps the tone that
-            # makes it that drum.
-            if hertz >= BELL_HZ:
-                cut = max(BELL_CUT_DB,
-                          -5.0 - 1.6 * np.log2(prominence / PROMINENCE))
-            else:
-                cut = max(MAX_CUT_DB,
-                          -2.0 - 0.8 * np.log2(prominence / PROMINENCE))
+            # Take the partial down to where the live session's drums sit, and
+            # no further: the drum keeps the tone that makes it that drum.
+            cut = max(MAX_CUT_DB,
+                      -20.0 * float(np.log10(prominence / REFERENCE)))
             entry["ringHz"] = round(hertz, 1)
             entry["ringCut"] = round(cut, 1)
             print(f"{os.path.basename(kit):16} {piece:10} "

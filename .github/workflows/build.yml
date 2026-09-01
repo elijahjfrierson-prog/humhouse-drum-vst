@@ -151,7 +151,7 @@ jobs:
           foreach ($p in @("$stale\stale.flac", $staleVst3)) {
             if (Test-Path -LiteralPath $p) { throw "upgrade left the old version behind: $p" }
           }
-          foreach ($kit in @('NakedRock', 'DRSRock', 'MuldjordMetal', 'SludgeNuMetal')) {
+          foreach ($kit in @('NuRock', 'NakedRock', 'DRSRock', 'MuldjordMetal', 'SludgeNuMetal')) {
             $path = "$env:ProgramData\HumHouse\Drums X\Content\Kits\$kit\kit.json"
             if (-not (Test-Path -LiteralPath $path)) { throw "$kit was not installed" }
           }
@@ -188,7 +188,7 @@ jobs:
           if [ -e "/Library/Application Support/HumHouse/Drums X/Content/Kits/OldKit/stale.flac" ]; then
             echo "upgrade left the old content behind"; exit 1
           fi
-          for kit in NakedRock DRSRock MuldjordMetal SludgeNuMetal; do
+          for kit in NuRock NakedRock DRSRock MuldjordMetal SludgeNuMetal; do
             test -f "/Library/Application Support/HumHouse/Drums X/Content/Kits/$kit/kit.json" \
               || { echo "$kit was not installed"; exit 1; }
           done

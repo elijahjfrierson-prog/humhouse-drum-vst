@@ -17,14 +17,14 @@
    "damp": 0.12,
    "gain": 1.0,
    "ringHz": 263.5,
-   "ringCut": -5.8
+   "ringCut": -9.0
   },
   {
    "piece": "snare_rim",
    "tune": -0.5,
    "damp": 0.12,
    "ringHz": 267.3,
-   "ringCut": -5.3
+   "ringCut": -9.0
   },
   {
    "piece": "sidestick",
