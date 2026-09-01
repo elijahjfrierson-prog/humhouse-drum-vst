@@ -83,6 +83,16 @@ namespace hhx
         void  setLaneCompression (int lane, float amount01);
         float getLaneCompression (int lane) const;
 
+        /** The instrument's own low / mid / high EQ in dB, on its lane bus, so a
+            snare can lose its ring or a kick gain its knock without the rest of
+            the kit moving with it. */
+        void  setLaneEqLowDb (int lane, float db);
+        void  setLaneEqMidDb (int lane, float db);
+        void  setLaneEqHighDb (int lane, float db);
+        float getLaneEqLowDb (int lane) const;
+        float getLaneEqMidDb (int lane) const;
+        float getLaneEqHighDb (int lane) const;
+
         /** How much of the lane goes to the shared room reverb. */
         void  setLaneReverbSend (int lane, float amount01);
         float getLaneReverbSend (int lane) const;
@@ -161,6 +171,13 @@ namespace hhx
         void  setSqueezeGlow (int glow);
         int   getSqueezeGlow() const;
 
+        /** The master stage the kit leaves through: three bands of compression
+            into a limiter, the way a mastering maximiser is used on a drum bus.
+            It is on by default, because a kit that arrives already glued and
+            loud is what makes the plugin sound finished in the host. */
+        void  setMaster (float amount01);
+        float getMaster() const;
+
         /** `variant` is the round-robin slot the performance engine chose, so
             two consecutive strokes on a lane never fire the same sample. */
         void noteOn (int lane, float velocity01, int variant = 0);
@@ -197,6 +214,11 @@ namespace hhx
         struct Layer
         {
             std::vector<Variant> variants;
+
+            /** Linear gain that puts this layer back on the dynamic ladder a live
+                session plays: a library that level-matched its layers has the
+                soft ones brought down so a light stroke is a light stroke. */
+            float ladder = 1.0f;
         };
 
         struct LaneSlot
@@ -213,8 +235,19 @@ namespace hhx
             std::atomic<int>   roundRobin { 0 };
             float              compEnv { 0.0f };   // audio thread only
 
+            // The instrument's own three-band EQ, in dB: the low is the body,
+            // the mid the tone the shell rings at, the high the stick.
+            std::atomic<float> eqLowDb  { 0.0f };
+            std::atomic<float> eqMidDb  { 0.0f };
+            std::atomic<float> eqHighDb { 0.0f };
+
             // Mix state, audio thread only.
             float hpState[2] { 0.0f, 0.0f };   // high-pass integrator per side
+            float eqLowState[2] { 0.0f, 0.0f };   // three-band splitter
+            float eqLowState2[2] { 0.0f, 0.0f };  // second pole on the body band
+            float eqMidState[2] { 0.0f, 0.0f };
+            float ringLp[2] { 0.0f, 0.0f };       // the notch's bandpass
+            float ringBp[2] { 0.0f, 0.0f };
             float fastEnv { 0.0f };            // transient design: stick
             float slowEnv { 0.0f };            //                   shell
         };
@@ -241,6 +274,7 @@ namespace hhx
 
         /** Four-band spectral compression plus the glow stage. */
         void processSqueeze (float* outL, float* outR, int numSamples);
+        void processMaster (float* outL, float* outR, int numSamples);
 
         struct Voice
         {
@@ -281,6 +315,7 @@ namespace hhx
         /** Lets ringing voices go over a few milliseconds instead of cutting them
             dead, which is what made chokes and stolen voices sound gated. */
         void chokeArticulations (int articulation);
+        void addShutHatRing (float gainL, float gainR, float cents, float velocity01);
         float releaseCoefficient (float seconds) const;
         void place (const Placement& p, std::shared_ptr<Sample> s);
 
@@ -288,6 +323,12 @@ namespace hhx
             layers keep the order they declared; kits that do not (loose files)
             are ordered by how loud they are. */
         void finaliseKit (bool sortByLoudness);
+
+        /** Measures how much level a lane's layers actually travel and, where a
+            library flattened them, restores the spread measured off a live
+            multi-velocity session. Never boosts: the hardest layer stays where
+            it was recorded and the softer ones come down to meet the ladder. */
+        void restoreDynamicLadder();
 
         /** How much of a lane's loudest recording is ring rather than stroke:
             the energy left after the attack against the attack's own. */
@@ -311,7 +352,7 @@ namespace hhx
         /** Three mics per stroke and cymbals that ring for seconds mean a busy
             bar needs far more voices than it has notes; too few and the engine
             steals tails mid-ring, which reads as a one-shot cutting off. */
-        static constexpr int kMaxVoices  = 384;
+        static constexpr int kMaxVoices  = 768;
         static constexpr int kBleedDelay = 512;   // samples, ~11 ms at 48 kHz
 
         std::array<LaneSlot, NumLanes> lanes;
@@ -336,6 +377,12 @@ namespace hhx
             std::atomic<float> tune { 0.0f };     // semitones
             std::atomic<float> damp { 0.0f };     // added to the lane's damp
             std::atomic<float> gainDb { 0.0f };
+            /** The pitch the drum rings on after the stroke, and how much of it
+                the kit wants taken out. One loud ringing partial on a snare
+                reads as a bell bolted to the drum - which is why a drummer
+                tapes the head before a take. */
+            std::atomic<float> ringHz    { 0.0f };
+            std::atomic<float> ringCutDb { 0.0f };
         };
         std::array<KitVoicing, NumLanes> kitVoicing {};
         void clearKitVoicing();
@@ -381,6 +428,14 @@ namespace hhx
         float squeezeLp[3][2] {};
         float squeezeEnv[kSqueezeBands] {};
         float squeezeGain[kSqueezeBands] { 1.0f, 1.0f, 1.0f, 1.0f };
+
+        // Master stage state, audio thread only.
+        static constexpr int kMasterBands = 3;
+        std::atomic<float> master { 0.6f };
+        float masterLp[2][2] {};
+        float masterEnv[kMasterBands] {};
+        float masterGain[kMasterBands] { 1.0f, 1.0f, 1.0f };
+        float masterCeiling { 1.0f };
 
         // Kit bus state, audio thread only.
         float busCompEnv = 0.0f;

@@ -1,20 +1,20 @@
 {
   "corpus": "rock_corpus.hhc",
   "format_version": 4,
-  "phrases": 12575,
-  "beats": 11832,
+  "phrases": 13484,
+  "beats": 12741,
   "fills": 743,
-  "derived": 7734,
+  "derived": 8729,
   "characters": {
-    "Half Time": 1186,
-    "Hard Rock": 1932,
-    "Metal": 1697,
+    "Half Time": 1154,
+    "Hard Rock": 2492,
+    "Metal": 1977,
     "Metal 2x Kick": 4430,
-    "Pop Rock": 215,
-    "Prog": 1114,
-    "Punk": 2178,
-    "Rock": 1379,
-    "Roots Rock": 568,
+    "Pop Rock": 204,
+    "Prog": 1091,
+    "Punk": 2681,
+    "Rock": 1350,
+    "Roots Rock": 567,
     "Shuffle": 446
   },
   "articulations": 30,
@@ -38,6 +38,12 @@
       "credit": "MuldjordKit by Lars Muldjord, recorded for DrumGizmo"
     },
     {
+      "name": "Nu Rock live session",
+      "source": "supplied by the user",
+      "license": "licensed to HumHouse by the recordist",
+      "credit": "Recorded for HumHouse: kick, snare, toms, ride and both crashes at light through heaviest"
+    },
+    {
       "name": "DRSKit",
       "source": "https://www.drumgizmo.org/wiki/doku.php?id=kits:drskit",
       "license": "CC-BY 4.0",
@@ -46,9 +52,14 @@
   ],
   "kits": [
     {
+      "name": "Nu Rock",
+      "folder": "Kits/NuRock",
+      "default": true
+    },
+    {
       "name": "Naked Rock",
       "folder": "Kits/NakedRock",
-      "default": true
+      "default": false
     },
     {
       "name": "Muldjord Metal",

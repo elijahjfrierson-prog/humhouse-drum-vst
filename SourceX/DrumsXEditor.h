@@ -218,11 +218,13 @@ namespace hhx
             std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enableAttach;
         };
 
-        /** One instrument's channel strip on the MIX page: the tune and damp
-            from the kit page plus its own compressor and room send. */
+        /** One instrument's channel strip on the MIX page: its own three-band
+            EQ, the tune and damp from the kit page, a compressor and a room
+            send - so one drum can be shaped without the kit moving with it. */
         struct MixRow
         {
             std::unique_ptr<juce::Label>  name;
+            std::unique_ptr<juce::Slider> eqLow, eqMid, eqHigh;
             std::unique_ptr<juce::Slider> comp, send, tune, damp;
         };
 
@@ -292,7 +294,7 @@ namespace hhx
         std::unique_ptr<LabelledKnob> roomSizeKnob, roomDampKnob, roomMixKnob, roomDuckKnob;
         juce::ComboBox roomSpaceBox;
         juce::Label    roomSpaceLabel { {}, "SPACE" };
-        std::unique_ptr<LabelledKnob> punchKnob, glueKnob, driveKnob, squeezeKnob;
+        std::unique_ptr<LabelledKnob> punchKnob, glueKnob, driveKnob, squeezeKnob, masterKnob;
         juce::ComboBox mixVoicingBox;
         juce::Label    mixVoicingLabel { {}, "PRODUCTION" };
         juce::ComboBox squeezeGlowBox;

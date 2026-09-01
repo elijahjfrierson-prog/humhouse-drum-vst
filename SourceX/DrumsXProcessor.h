@@ -58,6 +58,7 @@ namespace hhx
         inline constexpr const char* drive          = "drive";
         inline constexpr const char* squeeze        = "squeeze";
         inline constexpr const char* squeezeGlow    = "squeezeGlow";
+        inline constexpr const char* master         = "master";
 
         juce::String laneEnable (int lane);
         juce::String laneGhost (int lane);
@@ -67,6 +68,9 @@ namespace hhx
         juce::String laneTune (int lane);
         juce::String laneDamp (int lane);
         juce::String laneComp (int lane);
+        juce::String laneEqLow (int lane);
+        juce::String laneEqMid (int lane);
+        juce::String laneEqHigh (int lane);
         juce::String laneSend (int lane);
     }
 

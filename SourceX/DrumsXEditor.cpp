@@ -77,7 +77,7 @@ namespace hhx
     {
         const auto& state = proc.getAPVTS();
         const float x = state.getRawParameterValue (pid::complexity)->load();
-        const float y = state.getRawParameterValue (pid::intensity)->load();
+        const float y = state.getRawParameterValue (pid::sectionLevel)->load();
         if (! juce::approximatelyEqual (x, lastX) || ! juce::approximatelyEqual (y, lastY))
         {
             lastX = x;
@@ -92,18 +92,21 @@ namespace hhx
         const float x = juce::jlimit (0.0f, 1.0f, (p.x - r.getX()) / juce::jmax (1.0f, r.getWidth()));
         const float y = juce::jlimit (0.0f, 1.0f, 1.0f - (p.y - r.getY()) / juce::jmax (1.0f, r.getHeight()));
 
+        // Across picks the part, up decides how hard it is hit. Height never
+        // touches the take, so moving the pad up is the same groove played flat
+        // out rather than a different, busier one.
         if (auto* cp = proc.getAPVTS().getParameter (pid::complexity))
             cp->setValueNotifyingHost (x);
-        if (auto* ip = proc.getAPVTS().getParameter (pid::intensity))
-            ip->setValueNotifyingHost (y);
+        if (auto* lp = proc.getAPVTS().getParameter (pid::sectionLevel))
+            lp->setValueNotifyingHost (y);
         repaint();
     }
 
     void PerformancePad::mouseDown (const juce::MouseEvent& e)
     {
         dragging = true;
-        if (auto* cp = proc.getAPVTS().getParameter (pid::complexity)) cp->beginChangeGesture();
-        if (auto* ip = proc.getAPVTS().getParameter (pid::intensity))  ip->beginChangeGesture();
+        if (auto* cp = proc.getAPVTS().getParameter (pid::complexity))   cp->beginChangeGesture();
+        if (auto* lp = proc.getAPVTS().getParameter (pid::sectionLevel)) lp->beginChangeGesture();
         moveTo (e.position, true);
     }
 
@@ -115,8 +118,8 @@ namespace hhx
     void PerformancePad::mouseUp (const juce::MouseEvent&)
     {
         dragging = false;
-        if (auto* cp = proc.getAPVTS().getParameter (pid::complexity)) cp->endChangeGesture();
-        if (auto* ip = proc.getAPVTS().getParameter (pid::intensity))  ip->endChangeGesture();
+        if (auto* cp = proc.getAPVTS().getParameter (pid::complexity))   cp->endChangeGesture();
+        if (auto* lp = proc.getAPVTS().getParameter (pid::sectionLevel)) lp->endChangeGesture();
     }
 
     void PerformancePad::paint (juce::Graphics& g)
@@ -144,8 +147,9 @@ namespace hhx
             }
         }
 
-        // Landing zone: the real takes the engine would actually reach for from
-        // here, so the pad never promises a position the corpus cannot play.
+        // Landing zone: the real takes the engine would reach for, marked where
+        // they sit across the pad. Only the width chooses a take, so each one is
+        // a column playable at any loudness rather than a dot in a corner.
         for (const auto index : proc.getLandingZone (12))
         {
             if (index < 0 || index >= proc.getCorpus().numBeats())
@@ -153,13 +157,12 @@ namespace hhx
 
             const auto& phrase = proc.getCorpus().beat (index);
             const float px = r.getX() + juce::jlimit (0.0f, 1.0f, phrase.complexity) * r.getWidth();
-            const float py = r.getBottom() - juce::jlimit (0.0f, 1.0f, phrase.intensity) * r.getHeight();
-            g.setColour (DrumsXLookAndFeel::accent().withAlpha (0.45f));
-            g.drawEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ px, py }), 1.2f);
+            g.setColour (DrumsXLookAndFeel::accent().withAlpha (0.22f));
+            g.drawLine (px, r.getY(), px, r.getBottom(), 1.0f);
         }
 
         const float x = proc.getAPVTS().getRawParameterValue (pid::complexity)->load();
-        const float y = proc.getAPVTS().getRawParameterValue (pid::intensity)->load();
+        const float y = proc.getAPVTS().getRawParameterValue (pid::sectionLevel)->load();
         const juce::Point<float> puck { r.getX() + x * r.getWidth(),
                                         r.getBottom() - y * r.getHeight() };
 
@@ -1089,18 +1092,23 @@ namespace hhx
         addAndMakeVisible (arrangementView);
 
         complexityKnob   = std::make_unique<LabelledKnob> (state, pid::complexity,   "Complexity");
-        intensityKnob    = std::make_unique<LabelledKnob> (state, pid::intensity,    "Loud");
-        // The block's own dynamics, deliberately its own control: the pad
-        // chooses the take, this decides how hard the section is played.
-        sectionLevelKnob = std::make_unique<LabelledKnob> (state, pid::sectionLevel, "Intensity");
+        // Which take at this density gets played: the pad's width picks the
+        // family, this picks inside it, and neither of them is a level.
+        intensityKnob    = std::make_unique<LabelledKnob> (state, pid::intensity,    "Take");
+        // How hard the block is hit, which is the pad's height: the level and the
+        // stroke itself, from rim taps up to rimshots.
+        sectionLevelKnob = std::make_unique<LabelledKnob> (state, pid::sectionLevel, "Loud");
         fillsKnob        = std::make_unique<LabelledKnob> (state, pid::fillAmount,   "Fills");
         swingKnob        = std::make_unique<LabelledKnob> (state, pid::swing,        "Swing");
         for (auto* k : { complexityKnob.get(), intensityKnob.get(), sectionLevelKnob.get(),
                          fillsKnob.get(), swingKnob.get() })
             addAndMakeVisible (*k);
 
-        sectionLevelKnob->slider.setTooltip ("How hard this arrangement block is played. "
-                                             "Independent of the performance pad.");
+        sectionLevelKnob->slider.setTooltip ("How hard this block is hit - the pad's up-down axis. "
+                                             "Changes the stroke as well as the level, and never "
+                                             "changes which pattern is played.");
+        intensityKnob->slider.setTooltip ("Which take is played at this density. "
+                                          "Move it for a different pattern.");
 
         // Variation buttons: two rows of four, kick/snare on top, cymbals below.
         for (int group = 0; group < 2; ++group)
@@ -1345,6 +1353,9 @@ namespace hhx
                         state, paramID, *slider));
             };
 
+            knob (row.eqLow,  pid::laneEqLow (lane));
+            knob (row.eqMid,  pid::laneEqMid (lane));
+            knob (row.eqHigh, pid::laneEqHigh (lane));
             knob (row.comp, pid::laneComp (lane));
             knob (row.send, pid::laneSend (lane));
             knob (row.tune, pid::laneTune (lane));
@@ -1374,7 +1385,12 @@ namespace hhx
         squeezeKnob = std::make_unique<LabelledKnob> (state, pid::squeeze, "Squeeze");
         squeezeKnob->slider.setTooltip ("Spectral compression: levels the kit band by band, so the boxy "
                                         "mids and a harsh stick are pulled in and a shy band is lifted");
-        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get() })
+        masterKnob = std::make_unique<LabelledKnob> (state, pid::master, "Master");
+        masterKnob->slider.setTooltip ("The master stage the kit leaves through: three bands of "
+                                       "compression into a limiter, so the kit is glued and loud "
+                                       "before it reaches the host. Turn it down to hear the kit flat");
+        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get(),
+                         masterKnob.get() })
             addAndMakeVisible (*k);
 
         squeezeGlowBox.addItemList ({ "Off", "Clean", "Tube", "Tape", "Transformer" }, 1);
@@ -1508,6 +1524,9 @@ namespace hhx
         for (auto& row : mixRows)
         {
             row.name->setVisible (mixp);
+            row.eqLow->setVisible (mixp);
+            row.eqMid->setVisible (mixp);
+            row.eqHigh->setVisible (mixp);
             row.comp->setVisible (mixp);
             row.send->setVisible (mixp);
             row.tune->setVisible (mixp);
@@ -1517,7 +1536,8 @@ namespace hhx
             k->setVisible (mixp);
         roomSpaceBox.setVisible (mixp);
         roomSpaceLabel.setVisible (mixp);
-        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get() })
+        for (auto* k : { punchKnob.get(), glueKnob.get(), driveKnob.get(), squeezeKnob.get(),
+                         masterKnob.get() })
             k->setVisible (mixp);
         mixVoicingBox.setVisible (mixp);
         mixVoicingLabel.setVisible (mixp);
@@ -1686,10 +1706,13 @@ namespace hhx
             g.setColour (DrumsXLookAndFeel::textDim());
             g.setFont (uiFont (10.5f, true));
             g.drawText ("PIECE", juce::Rectangle<int> (48,  96, 90, 14), juce::Justification::centredLeft);
-            g.drawText ("COMP",  juce::Rectangle<int> (170, 96, 60, 14), juce::Justification::centredLeft);
-            g.drawText ("ROOM",  juce::Rectangle<int> (240, 96, 60, 14), juce::Justification::centredLeft);
-            g.drawText ("TUNE",  juce::Rectangle<int> (310, 96, 60, 14), juce::Justification::centredLeft);
-            g.drawText ("DAMP",  juce::Rectangle<int> (380, 96, 60, 14), juce::Justification::centredLeft);
+            g.drawText ("LO",    juce::Rectangle<int> (150, 96, 36, 14), juce::Justification::centredLeft);
+            g.drawText ("MID",   juce::Rectangle<int> (186, 96, 36, 14), juce::Justification::centredLeft);
+            g.drawText ("HI",    juce::Rectangle<int> (222, 96, 36, 14), juce::Justification::centredLeft);
+            g.drawText ("COMP",  juce::Rectangle<int> (264, 96, 42, 14), juce::Justification::centredLeft);
+            g.drawText ("ROOM",  juce::Rectangle<int> (306, 96, 42, 14), juce::Justification::centredLeft);
+            g.drawText ("TUNE",  juce::Rectangle<int> (348, 96, 42, 14), juce::Justification::centredLeft);
+            g.drawText ("DAMP",  juce::Rectangle<int> (390, 96, 42, 14), juce::Justification::centredLeft);
         }
         else
         {
@@ -1891,11 +1914,14 @@ namespace hhx
         for (int lane = 0; lane < NumLanes; ++lane)
         {
             auto& row = mixRows[(std::size_t) lane];
-            row.name->setBounds (24, y, 120, rowH);
-            row.comp->setBounds (150, y + 2, 26, 26);
-            row.send->setBounds (220, y + 2, 26, 26);
-            row.tune->setBounds (290, y + 2, 26, 26);
-            row.damp->setBounds (360, y + 2, 26, 26);
+            row.name->setBounds (24, y, 100, rowH);
+            row.eqLow->setBounds  (126, y + 2, 26, 26);
+            row.eqMid->setBounds  (162, y + 2, 26, 26);
+            row.eqHigh->setBounds (198, y + 2, 26, 26);
+            row.comp->setBounds (240, y + 2, 26, 26);
+            row.send->setBounds (282, y + 2, 26, 26);
+            row.tune->setBounds (324, y + 2, 26, 26);
+            row.damp->setBounds (366, y + 2, 26, 26);
             y += rowH;
         }
 
@@ -1916,5 +1942,6 @@ namespace hhx
         glueKnob->setBounds    (620, 444, 112, 112);
         driveKnob->setBounds   (740, 444, 112, 112);
         squeezeKnob->setBounds (860, 444, 112, 112);
+        masterKnob->setBounds  (768, 274, 112, 112);
     }
 }

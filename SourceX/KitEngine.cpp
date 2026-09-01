@@ -279,6 +279,66 @@ namespace hhx
         }
 
         dropRinglessShutHat();
+        restoreDynamicLadder();
+    }
+
+    void KitEngine::restoreDynamicLadder()
+    {
+        // Measured off a live multi-velocity session (light through heaviest, one
+        // player, one room): how many dB a piece actually travels between its
+        // softest and hardest stroke. Cymbals travel furthest, the kick least.
+        // Libraries that level-matched their layers read as plastic because a
+        // light stroke arrives at the weight of a hard one.
+        const auto spreadDb = [] (int lane) -> float
+        {
+            if (lane == LaneKick)          return 18.0f;
+            if (isSnareLane (lane))        return 21.0f;
+            if (isTomLane (lane))          return 15.0f;
+            if (isRideLane (lane))         return 24.0f;
+            if (lane >= LaneCrashL && lane <= LaneSplash) return 17.0f;
+            if (isHatLane (lane))          return 20.0f;
+            return 16.0f;
+        };
+
+        for (int lane = 0; lane < NumLanes; ++lane)
+        {
+            auto& slot = lanes[(std::size_t) lane];
+            const int numLayers = (int) slot.layers.size();
+
+            for (auto& layer : slot.layers)
+                layer.ladder = 1.0f;
+
+            if (numLayers < 2)
+                continue;
+
+            const auto peakOf = [] (const Layer& l)
+            {
+                float peak = 0.0f;
+                for (const auto& v : l.variants)
+                    if (const auto& s = v.mics[MicClose])
+                        peak = std::max (peak, s->peak);
+                return peak;
+            };
+
+            const float hardest = peakOf (slot.layers.back());
+            const float softest = peakOf (slot.layers.front());
+            if (hardest <= 1.0e-5f || softest <= 1.0e-5f)
+                continue;
+
+            const float target  = spreadDb (lane);
+            const float carried = 20.0f * std::log10 (hardest / softest);
+            if (carried >= target * 0.8f)
+                continue;   // the recordings already play their own dynamics
+
+            for (int i = 0; i < numLayers; ++i)
+            {
+                const float step = 1.0f - (float) i / (float) (numLayers - 1);
+                const float want = -target * step * step;   // convex: the soft end travels most
+                const float have = 20.0f * std::log10 (std::max (1.0e-5f, peakOf (slot.layers[(std::size_t) i]) / hardest));
+                slot.layers[(std::size_t) i].ladder
+                    = juce::Decibels::decibelsToGain (juce::jlimit (-14.0f, 0.0f, want - have));
+            }
+        }
     }
 
     float KitEngine::laneRingRatio (int lane) const
@@ -419,6 +479,8 @@ namespace hhx
             v.tune.store (0.0f);
             v.damp.store (0.0f);
             v.gainDb.store (0.0f);
+            v.ringHz.store (0.0f);
+            v.ringCutDb.store (0.0f);
         }
     }
 
@@ -472,6 +534,10 @@ namespace hhx
                     v.damp.store (juce::jlimit (0.0f, 1.0f, (float) (double) entry["damp"]));
                 if (entry.hasProperty ("gain"))
                     v.gainDb.store (juce::jlimit (-24.0f, 12.0f, (float) (double) entry["gain"]));
+                if (entry.hasProperty ("ringHz"))
+                    v.ringHz.store (juce::jlimit (20.0f, 12000.0f, (float) (double) entry["ringHz"]));
+                if (entry.hasProperty ("ringCut"))
+                    v.ringCutDb.store (juce::jlimit (-24.0f, 0.0f, (float) (double) entry["ringCut"]));
             }
         }
 
@@ -495,12 +561,18 @@ namespace hhx
             p.variant = entry.hasProperty ("variant") ? std::max (0, (int) entry["variant"] - 1) : 0;
             p.mic     = micNameToIndex (entry["mic"].toString());
 
+            // A kit that borrows another's recordings can still bring its own:
+            // its folder is looked in first, so a voicing can replace the one
+            // drum that has to be different - a snare, usually - without
+            // copying the whole library.
             const auto name = entry["file"].toString();
-            const auto file = sampleFolder.getChildFile (name);
+            auto file = folder.getChildFile (name);
+            if (! file.existsAsFile())
+                file = sampleFolder.getChildFile (name);
             if (! file.existsAsFile())
                 continue;
 
-            auto& cached = decoded[name];
+            auto& cached = decoded[file.getFullPathName()];
             if (cached == nullptr)
                 cached = readSample (new juce::FileInputStream (file));
 
@@ -656,6 +728,39 @@ namespace hhx
         return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].compression.load() : 0.0f;
     }
 
+    void KitEngine::setLaneEqLowDb (int lane, float db)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].eqLowDb.store (juce::jlimit (-18.0f, 18.0f, db));
+    }
+
+    void KitEngine::setLaneEqMidDb (int lane, float db)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].eqMidDb.store (juce::jlimit (-18.0f, 18.0f, db));
+    }
+
+    void KitEngine::setLaneEqHighDb (int lane, float db)
+    {
+        if (lane >= 0 && lane < NumLanes)
+            lanes[(std::size_t) lane].eqHighDb.store (juce::jlimit (-18.0f, 18.0f, db));
+    }
+
+    float KitEngine::getLaneEqLowDb (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].eqLowDb.load() : 0.0f;
+    }
+
+    float KitEngine::getLaneEqMidDb (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].eqMidDb.load() : 0.0f;
+    }
+
+    float KitEngine::getLaneEqHighDb (int lane) const
+    {
+        return (lane >= 0 && lane < NumLanes) ? lanes[(std::size_t) lane].eqHighDb.load() : 0.0f;
+    }
+
     void KitEngine::setLaneReverbSend (int lane, float amount01)
     {
         if (lane >= 0 && lane < NumLanes)
@@ -773,7 +878,67 @@ namespace hhx
         const auto  v       = voicingForLane (lane, voicing);
         const float amount  = punch.load();
 
-        if (voicing == MixRaw || numSamples <= 0)
+        if (numSamples <= 0)
+            return;
+
+        const bool stereo = busR != nullptr;
+
+        // The drum's own ring, taken out where the kit asks for it: a bandpass
+        // at the pitch it rings on, subtracted from the signal. That is a notch
+        // with the width of the resonance rather than of an EQ band, so the
+        // stroke keeps its body and only the tone goes.
+        const auto& kv = kitVoicing[(std::size_t) lane];
+        const float ringHz = kv.ringHz.load(), ringCutDb = kv.ringCutDb.load();
+        if (ringHz > 20.0f && ringCutDb < -0.1f)
+        {
+            const float f = 2.0f * std::sin (juce::MathConstants<float>::pi
+                                             * ringHz / (float) currentRate);
+            const float q = 0.18f;   // narrow: one partial, not the whole mid
+            const float depth = 1.0f - juce::Decibels::decibelsToGain (ringCutDb);
+
+            for (int i = 0; i < numSamples; ++i)
+                for (int ch = 0; ch < (stereo ? 2 : 1); ++ch)
+                {
+                    float* bus = ch == 0 ? busL : busR;
+                    slot.ringLp[ch] += f * slot.ringBp[ch];
+                    const float hp = bus[i] - slot.ringLp[ch] - q * slot.ringBp[ch];
+                    slot.ringBp[ch] += f * hp;
+                    bus[i] -= depth * q * slot.ringBp[ch];
+                }
+        }
+
+        // The instrument's three-band EQ: body below 180 Hz, tone up to 3 kHz,
+        // stick above it, each band scaled and summed back so the three controls
+        // leave the signal alone when they are all flat.
+        const float lowDb  = slot.eqLowDb.load();
+        const float midDb  = slot.eqMidDb.load();
+        const float highDb = slot.eqHighDb.load();
+        if (std::abs (lowDb) + std::abs (midDb) + std::abs (highDb) > 0.01f)
+        {
+            const float lowCoeff  = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                                     * 180.0f / (float) currentRate);
+            const float midCoeff  = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                                     * 3000.0f / (float) currentRate);
+            const float lowGain   = juce::Decibels::decibelsToGain (lowDb);
+            const float midGain   = juce::Decibels::decibelsToGain (midDb);
+            const float highGain  = juce::Decibels::decibelsToGain (highDb);
+
+            for (int i = 0; i < numSamples; ++i)
+                for (int ch = 0; ch < (stereo ? 2 : 1); ++ch)
+                {
+                    float* bus = ch == 0 ? busL : busR;
+                    const float x = bus[i];
+                    slot.eqLowState[ch]  += lowCoeff * (x - slot.eqLowState[ch]);
+                    slot.eqLowState2[ch] += lowCoeff * (slot.eqLowState[ch] - slot.eqLowState2[ch]);
+                    slot.eqMidState[ch]  += midCoeff * (x - slot.eqMidState[ch]);
+                    const float body  = slot.eqLowState2[ch];
+                    const float tone  = slot.eqMidState[ch] - body;
+                    const float stick = x - slot.eqMidState[ch];
+                    bus[i] = body * lowGain + tone * midGain + stick * highGain;
+                }
+        }
+
+        if (voicing == MixRaw)
             return;
 
         if (v.highPassHz > 1.0f)
@@ -962,6 +1127,7 @@ namespace hhx
             // The squeeze is a mix tool in its own right, so it still works on
             // a raw kit - it is the one stage Raw does not bypass.
             processSqueeze (outL, outR, numSamples);
+            processMaster (outL, outR, numSamples);
             return;
         }
 
@@ -1051,6 +1217,94 @@ namespace hhx
             outL[i] *= busCeiling;
             if (outR != nullptr)
                 outR[i] *= busCeiling;
+        }
+
+        processMaster (outL, outR, numSamples);
+    }
+
+    void KitEngine::setMaster (float amount01) { master.store (juce::jlimit (0.0f, 1.0f, amount01)); }
+    float KitEngine::getMaster() const         { return master.load(); }
+
+    void KitEngine::processMaster (float* outL, float* outR, int numSamples)
+    {
+        // A mastering maximiser on a drum bus: the kit is split in three, each
+        // band is compressed towards the same level, the whole thing is driven
+        // into a limiter and the loss is given back as make-up. That is what
+        // makes a kit sound finished the moment it is loaded rather than after
+        // an hour on the master chain.
+        const float amount = master.load();
+        if (amount <= 0.001f || numSamples <= 0)
+            return;
+
+        static constexpr float kSplitHz[2]  { 140.0f, 2500.0f };
+        static constexpr float kThreshDb[3] { -18.0f, -22.0f, -24.0f };
+        static constexpr float kRatio[3]    {   3.0f,   4.0f,   3.0f };
+
+        float coeff[2];
+        for (int b = 0; b < 2; ++b)
+            coeff[b] = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                        * kSplitHz[b] / (float) currentRate);
+
+        const float attack  = 1.0f - std::exp (-1.0f / (0.003f * (float) currentRate));
+        const float release = 1.0f - std::exp (-1.0f / (0.180f * (float) currentRate));
+        const float smooth  = 1.0f - std::exp (-1.0f / (0.008f * (float) currentRate));
+        const float recover = 1.0f - std::exp (-1.0f / (0.060f * (float) currentRate));
+
+        const float ceiling = juce::Decibels::decibelsToGain (-0.3f);
+        const float makeUp  = juce::Decibels::decibelsToGain (5.0f * amount);
+        const bool  stereo  = outR != nullptr;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float in[2] { outL[i], stereo ? outR[i] : 0.0f };
+            const int channels = stereo ? 2 : 1;
+
+            float band[kMasterBands][2] {};
+            for (int ch = 0; ch < channels; ++ch)
+            {
+                float remaining = in[ch];
+                for (int b = 0; b < 2; ++b)
+                {
+                    masterLp[b][ch] += coeff[b] * (remaining - masterLp[b][ch]);
+                    band[b][ch] = masterLp[b][ch];
+                    remaining  -= masterLp[b][ch];
+                }
+                band[2][ch] = remaining;
+            }
+
+            float sum[2] { 0.0f, 0.0f };
+            for (int b = 0; b < kMasterBands; ++b)
+            {
+                float peak = std::abs (band[b][0]);
+                if (stereo)
+                    peak = juce::jmax (peak, std::abs (band[b][1]));
+
+                masterEnv[b] += (peak > masterEnv[b] ? attack : release) * (peak - masterEnv[b]);
+
+                const float envDb = juce::Decibels::gainToDecibels (
+                                        juce::jmax (1.0e-6f, masterEnv[b]));
+                const float moveDb = envDb > kThreshDb[b]
+                                   ? (kThreshDb[b] - envDb) * (1.0f - 1.0f / kRatio[b])
+                                   : 0.0f;
+                const float target = juce::Decibels::decibelsToGain (moveDb * amount);
+                masterGain[b] += smooth * (target - masterGain[b]);
+
+                for (int ch = 0; ch < channels; ++ch)
+                    sum[ch] += band[b][ch] * masterGain[b];
+            }
+
+            for (int ch = 0; ch < channels; ++ch)
+                sum[ch] *= makeUp;
+
+            const float peak = juce::jmax (std::abs (sum[0]), stereo ? std::abs (sum[1]) : 0.0f);
+            const float needed = peak > ceiling ? ceiling / peak : 1.0f;
+            masterCeiling = needed < masterCeiling
+                          ? needed
+                          : masterCeiling + recover * (needed - masterCeiling);
+
+            outL[i] = sum[0] * masterCeiling;
+            if (stereo)
+                outR[i] = sum[1] * masterCeiling;
         }
     }
 
@@ -1181,7 +1435,12 @@ namespace hhx
         // Micro-variation: a few cents and a fraction of a dB per hit keeps
         // repeated notes from phase-cancelling into an obvious loop.
         const auto& kv = kitVoicing[(std::size_t) lane];
+        // The two hands do not land in the same place on the head either, so
+        // the off hand speaks a little darker and a shade flatter: that, more
+        // than the level, is what tells a listener a roll has two hands in it.
+        const float handCents = stickLane ? ((variant & 1) != 0 ? -11.0f : 7.0f) : 0.0f;
         const float cents = (dither (2) - 0.5f) * (ting ? 34.0f : 22.0f)
+                          + handCents
                           + (slot.tune.load() + kv.tune.load()) * 100.0f;
         const float trim  = juce::Decibels::decibelsToGain (
                                 (dither (3) - 0.5f) * (ting ? 2.2f : 1.3f));
@@ -1207,11 +1466,23 @@ namespace hhx
         // with the time-keeping cymbals.
         const bool  shutHat = lane == LaneHatClosed || lane == LaneHatTight;
         const bool  openHat = lane >= LaneHatOpen1 && lane <= LaneHatOpen4;
-        const float tingTrimDb = isRideLane (lane) ? -5.5f
-                               : shutHat           ? -3.0f
+        // And the kick is the floor of a rock record: it comes up so the
+        // downbeat lands under the kit rather than beside it. The snare is the
+        // other half of that: at close-mic level it disappears behind the toms
+        // and the room, so the backbeat comes up with the kick.
+        const float tingTrimDb = lane == LaneKick ? 2.0f
+                               : isSnareLane (lane) ? 2.0f
+                               : isRideLane (lane) ? -5.5f
+                               : shutHat           ? -1.5f
                                : openHat           ? -0.5f
                                : (ting ? -3.5f : 0.0f);
-        const float gain = velGain * trim
+        // Where the chosen layer sits on the dynamic ladder a live session
+        // plays. A library that level-matched its layers has its soft ones
+        // brought down here, so a light stroke arrives light instead of
+        // arriving as a hard stroke at a lower fader.
+        const float ladderGain = slot.layers[(std::size_t) layerIndex].ladder;
+
+        const float gain = velGain * trim * ladderGain
                          * juce::Decibels::decibelsToGain (slot.gainDb.load()
                                                            + kv.gainDb.load()
                                                            + kitTrimDb.load()
@@ -1220,7 +1491,7 @@ namespace hhx
         // sticks, odd round-robin slots being the off hand. The two hands do not
         // strike from the same place, so they do not sit in quite the same spot
         // in the image either - which is what makes a roll travel.
-        const float handPan = stickLane ? ((variant & 1) != 0 ? -0.05f : 0.05f)
+        const float handPan = stickLane ? ((variant & 1) != 0 ? -0.14f : 0.14f)
                                         : 0.0f;
         const float pan  = juce::jlimit (-1.0f, 1.0f,
                                          slot.pan.load() + handPan
@@ -1244,7 +1515,7 @@ namespace hhx
         // Rolling that octave off leaves the stick and the body of the cymbal.
         const float dark  = (1.0f - std::pow (vel, 0.8f)) * reach
                           + (ting ? 0.16f : 0.0f)     // takes the wire off the top
-                          + (shutHat ? 0.24f : 0.0f); // and the click off a shut hat
+                          + (shutHat ? 0.14f : 0.0f); // and the click off a shut hat
         const float cutoff = 20000.0f * std::exp (-3.1f * dark);
         const float tone = dark < 0.02f
                          ? 1.0f
@@ -1274,7 +1545,46 @@ namespace hhx
                         envDecay, tone);
         }
 
+        // A closed hat is a stick on two heavy cymbals, not a tick: it rings
+        // for a fraction of a second under the next stroke, and a close mic on
+        // a tightly shut hat records almost none of that. What is missing is
+        // taken from the open hat of the same kit, laid under the stroke well
+        // below it and damped out inside a quarter of a second, so the part
+        // reads as a hat being ridden rather than as a sample being retriggered.
+        if (shutHat)
+            addShutHatRing (gl, gr, cents, vel);
+
         slot.activity.store (1.0f);
+    }
+
+    void KitEngine::addShutHatRing (float gainL, float gainR, float cents, float velocity01)
+    {
+        // The ring comes from the openest hat the kit actually shipped: that
+        // recording is the same two cymbals, so it rings in the same metal.
+        for (const int source : { LaneHatOpen1, LaneHatOpen2, LaneHatOpen3, LaneHatOpen4 })
+        {
+            const auto& open = lanes[(std::size_t) source];
+            if (open.layers.empty() || open.layers.front().variants.empty())
+                continue;
+
+            const auto& sample = open.layers.front().variants.front().mics[MicClose];
+            if (sample == nullptr)
+                continue;
+
+            // Under the stroke, never beside it: the stick is the closed hat's
+            // and only the tail of the cymbal is borrowed. Harder strokes ring
+            // longer, the way a cymbal does.
+            const float ring = juce::Decibels::decibelsToGain (-15.0f)
+                             * (0.5f + 0.5f * velocity01);
+            const float decay = (float) std::pow (0.001,
+                                                  1.0 / (juce::jmap (velocity01, 0.11f, 0.26f)
+                                                         * currentRate));
+            const double increment = (sample->sourceRate / currentRate)
+                                   * std::pow (2.0, cents / 1200.0);
+            startVoice (sample, LaneHatClosed, LaneHatClosed, MicClose,
+                        gainL * ring, gainR * ring, increment, decay, 1.0f);
+            return;
+        }
     }
 
     void KitEngine::chokeArticulations (int articulation)
@@ -1294,19 +1604,18 @@ namespace hhx
         if (articulation == LaneHatClosed || articulation == LaneHatTight
             || articulation == LaneHatPedal)
         {
-            killIf (0.085f, [] (int a) { return a >= LaneHatOpen1 && a <= LaneHatOpen4; });
+            // The foot really has come down, so the open cymbal really does
+            // stop - but it stops the way a cymbal caught between two felts
+            // stops, not the way a gate does.
+            killIf (0.14f, [] (int a) { return a >= LaneHatOpen1 && a <= LaneHatOpen4; });
         }
         else if (articulation >= LaneHatOpen1 && articulation <= LaneHatOpen4)
         {
-            // A wider hat replaces a narrower one rather than stacking, but the
-            // foot has not come down: the cymbal it replaces washes out under
-            // the new stroke instead of being shut off.
-            killIf (0.16f, [articulation] (int a)
-                    { return a >= LaneHatOpen1 && a <= LaneHatOpen4 && a != articulation; });
-        }
-        else if (articulation == LaneChina || articulation == LaneSplash)
-        {
-            killIf (0.085f, [articulation] (int a) { return a == articulation; });
+            // Nothing here is choked. Striking a cymbal that is already ringing
+            // does not silence it, and the openness ladder is one pair of hats
+            // played at different gaps - so an open stroke over an open stroke
+            // washes rather than cutting, which is what used to make a hat or
+            // ride damp out for no reason in the middle of a groove.
         }
     }
 

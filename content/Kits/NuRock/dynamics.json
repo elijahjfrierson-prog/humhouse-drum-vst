@@ -1,0 +1,142 @@
+{
+ "kick": [
+  {
+   "take": "light",
+   "layer": 1,
+   "peak_db": -19.5,
+   "seconds": 2.34
+  },
+  {
+   "take": "medium",
+   "layer": 2,
+   "peak_db": -8.37,
+   "seconds": 1.93
+  },
+  {
+   "take": "heavy",
+   "layer": 3,
+   "peak_db": -6.87,
+   "seconds": 2.09
+  }
+ ],
+ "left_crash": [
+  {
+   "take": "light",
+   "layer": 1,
+   "peak_db": -33.49,
+   "seconds": 4.49
+  },
+  {
+   "take": "medium",
+   "layer": 2,
+   "peak_db": -20.08,
+   "seconds": 4.76
+  },
+  {
+   "take": "heavy",
+   "layer": 3,
+   "peak_db": -14.38,
+   "seconds": 4.7
+  }
+ ],
+ "ride": [
+  {
+   "take": "light",
+   "layer": 1,
+   "peak_db": -38.77,
+   "seconds": 3.6
+  },
+  {
+   "take": "medium",
+   "layer": 2,
+   "peak_db": -26.37,
+   "seconds": 4.06
+  },
+  {
+   "take": "heavy",
+   "layer": 3,
+   "peak_db": -14.67,
+   "seconds": 4.79
+  }
+ ],
+ "right_crash": [
+  {
+   "take": "light",
+   "layer": 1,
+   "peak_db": -33.51,
+   "seconds": 4.89
+  },
+  {
+   "take": "medium",
+   "layer": 2,
+   "peak_db": -23.43,
+   "seconds": 6.84
+  },
+  {
+   "take": "heavy",
+   "layer": 3,
+   "peak_db": -16.21,
+   "seconds": 4.65
+  }
+ ],
+ "snare": [
+  {
+   "take": "light",
+   "layer": 1,
+   "peak_db": -28.45,
+   "seconds": 1.2
+  },
+  {
+   "take": "light medium",
+   "layer": 2,
+   "peak_db": -14.27,
+   "seconds": 1.15
+  },
+  {
+   "take": "medium",
+   "layer": 3,
+   "peak_db": -12.77,
+   "seconds": 1.32
+  },
+  {
+   "take": "heavy",
+   "layer": 4,
+   "peak_db": -2.5,
+   "seconds": 1.57
+  },
+  {
+   "take": "heaviest",
+   "layer": 5,
+   "peak_db": -1.0,
+   "seconds": 1.41
+  }
+ ],
+ "tom_1": [
+  {
+   "take": "heavy",
+   "layer": 1,
+   "peak_db": -24.43,
+   "seconds": 1.94
+  },
+  {
+   "take": "heavy",
+   "layer": 2,
+   "peak_db": -10.68,
+   "seconds": 2.38
+  }
+ ],
+ "tom_3": [
+  {
+   "take": "light",
+   "layer": 1,
+   "peak_db": -22.25,
+   "seconds": 3.86
+  },
+  {
+   "take": "heavy",
+   "layer": 2,
+   "peak_db": -7.72,
+   "seconds": 3.69
+  }
+ ]
+}

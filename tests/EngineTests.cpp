@@ -605,12 +605,27 @@ int main (int argc, char** argv)
                 sum += h.velocity;
             return hits.empty() ? 0.0 : sum / (double) hits.size();
         };
+        // The part is which drum is struck when. Which stroke that drum is
+        // played with belongs to how hard the section is hit, so the skeleton is
+        // read in pieces rather than in articulations.
+        const auto piece = [] (int lane)
+        {
+            if (lane == hhx::LaneSnare || lane == hhx::LaneSnareRim
+                || lane == hhx::LaneSideStick || lane == hhx::LaneSnareGhost)
+                return 1;
+            if (lane >= hhx::LaneHatClosed && lane <= hhx::LaneHatBell
+                && lane != hhx::LaneHatPedal)
+                return 2;
+            if (lane >= hhx::LaneRideBow && lane <= hhx::LaneRideEdge)
+                return 3;
+            return 100 + lane;
+        };
         const auto skeleton = [&] (const std::vector<hhx::Hit>& hits)
         {
             std::vector<std::string> out;
             for (const auto& h : hits)
                 if (! isCrash (h.lane))
-                    out.push_back (std::to_string (h.lane) + "@"
+                    out.push_back (std::to_string (piece (h.lane)) + "@"
                                    + std::to_string ((int) (h.beat * 480.0f)));
             return out;
         };
@@ -625,6 +640,23 @@ int main (int argc, char** argv)
                "the block's Intensity knob plays the section harder");
         check (skeleton (quietHits) == skeleton (loudHits),
                "Intensity moves dynamics only, it never re-picks the take");
+
+        // And hard is a different noise, not the same noise turned up: the quiet
+        // end of the knob is played on the rim, the loud end is rimshots.
+        const auto countLane = [] (const std::vector<hhx::Hit>& hits, int lane)
+        {
+            return std::count_if (hits.begin(), hits.end(),
+                                  [lane] (const hhx::Hit& h) { return h.lane == lane; });
+        };
+        // A quiet part is still played on the head, only softer: the
+        // cross-stick is a click rather than a snare and is not what a rock
+        // drummer reaches for by default.
+        check (countLane (quietHits, hhx::LaneSnare) > 0
+               && countLane (quietHits, hhx::LaneSideStick) == 0,
+               "played soft, the snare is still a snare");
+        check (countLane (loudHits, hhx::LaneSnareRim) > 0
+               && countLane (loudHits, hhx::LaneSideStick) == 0,
+               "played flat out, the backbeat is a rimshot");
 
         // The pad, by contrast, is a take chooser.
         auto padUp = s;
@@ -771,6 +803,29 @@ int main (int argc, char** argv)
         // Four limbs at once is a crash accent resolving a fill; anything
         // beyond that, or more than a couple per 16 bars, is a pile-up.
         check (widest <= 4 && stacked <= 2, "no instant piles up strikes");
+
+        // Busy has to still be a part, not a rolling fill: wide open, every bar
+        // keeps a backbeat, and every bar that is not turning a phrase keeps
+        // cymbal time - that is what tells a groove from fill material, however
+        // many strokes are in it.
+        int withBackbeat = 0, withTime = 0;
+        for (int bar = 0; bar < 16; ++bar)
+        {
+            int snare = 0, cymbal = 0;
+            for (const auto& h : hits)
+                if (h.beat >= bar * 4.0f - 0.01f && h.beat < (bar + 1) * 4.0f)
+                {
+                    if (hhx::isSnareLane (h.lane))
+                        ++snare;
+                    if ((h.lane >= hhx::LaneHatClosed && h.lane <= hhx::LaneRideCrash)
+                        || hhx::isCymbalLane (h.lane))
+                        ++cymbal;
+                }
+            withBackbeat += snare > 0 ? 1 : 0;
+            withTime     += cymbal >= 4 ? 1 : 0;
+        }
+        check (withBackbeat >= 15 && withTime >= 12,
+               "the busiest pad position still plays a groove, not a fill");
     }
 
     // 15d-ii. Humanize at zero means dead tight: every strike lands on the
@@ -900,6 +955,47 @@ int main (int argc, char** argv)
         for (int phrase = 0; phrase < 8; ++phrase)
             stillFilled += engine.phraseEndsWithFill (none, phrase) ? 1 : 0;
         check (stillFilled == 0, "Fills at zero really means no fills");
+    }
+
+    // 15f-1. The Fills knob is a gesture, not a count: turned up a fill swells
+    // into the downbeat, turned down the drummer eases out of the bar. Measured
+    // as how the second half of a fill is played against its first half.
+    {
+        const auto shape = [&] (float amount)
+        {
+            auto t = s;
+            t.phraseBars = 2;
+            t.fillAmount = amount;
+            t.humanize   = 0.0f;
+            t.swing      = 0.0f;
+
+            double head = 0.0, tail = 0.0;
+            int    nHead = 0, nTail = 0;
+            for (int phrase = 0; phrase < 16; ++phrase)
+            {
+                if (! engine.phraseEndsWithFill (t, phrase))
+                    continue;
+
+                const int  bar   = phrase * t.phraseBars + t.phraseBars - 1;
+                const auto hits  = engine.renderBars (t, bar, 1);
+                const float base = (float) bar * 4.0f;
+                for (const auto& h : hits)
+                {
+                    const float in = h.beat - base;
+                    if (in < 2.0f)      { head += h.velocity; ++nHead; }
+                    else if (in < 4.0f) { tail += h.velocity; ++nTail; }
+                }
+            }
+            return (nHead > 0 && nTail > 0)
+                 ? (tail / (double) nTail) / (head / (double) nHead)
+                 : 1.0;
+        };
+
+        const double hot  = shape (0.95f);
+        const double cool = shape (0.12f);
+        check (hot > cool + 0.03,
+               "a fill played at full swells harder into the downbeat than a quiet one");
+        check (hot > 1.0, "at full the fill arrives above the groove it came out of");
     }
 
     // 15f-2. A fill glues the arrangement together, so it is played to the
@@ -1223,6 +1319,54 @@ int main (int argc, char** argv)
             check (doubled == 0, "no doubled cymbal strokes (open "
                                  + std::to_string ((int) (openness * 100)) + ")");
         }
+    }
+
+    // 17f. Every bar that is not handing over to a fill starts on a kick: a
+    //      chorus or a verse opening without one lands with nothing under it.
+    {
+        for (const float cx : { 0.2f, 0.5f, 0.85f })
+        {
+            auto t = s;
+            t.complexity = cx;
+            t.fillAmount = 0.0f;
+            const auto hits = engine.renderBars (t, 0, 16);
+            int missing = 0;
+            for (int bar = 0; bar < 16; ++bar)
+            {
+                const float downbeat = (float) bar * t.beatsPerBar;
+                bool kick = false;
+                for (const auto& h : hits)
+                    if (h.lane == hhx::LaneKick
+                        && std::abs (h.beat - downbeat) < 0.06f)
+                        kick = true;
+                if (! kick)
+                    ++missing;
+            }
+            check (missing == 0, "a kick lands on the one of every bar (cx "
+                                 + std::to_string ((int) (cx * 100)) + ")");
+        }
+    }
+
+    // 17g. Straight is straight: with Swing at zero nothing - groove or fill -
+    //      may be played off the straight grid, which is the shuffle that used
+    //      to creep into the metal characters.
+    {
+        auto t = s;
+        t.swing = 0.0f;
+        t.fillAmount = 1.0f;
+        const auto hits = engine.renderBars (t, 0, 32);
+        // A triplet sixteenth sits a third or two thirds of the way through a
+        // sixteenth; the straight grid only reaches the halfway point, so a
+        // stroke near those thirds was played in triplets, not pushed by feel.
+        int off = 0;
+        for (const auto& h : hits)
+        {
+            const float in16 = h.beat * 4.0f - std::floor (h.beat * 4.0f);
+            if (std::min (std::abs (in16 - 1.0f / 3.0f),
+                          std::abs (in16 - 2.0f / 3.0f)) < 0.1f)
+                ++off;
+        }
+        check (off == 0, "a straight song has no triplet strokes in it");
     }
 
     // 18. Load time: the corpus is parsed well inside the 150 ms budget.

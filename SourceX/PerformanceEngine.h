@@ -214,6 +214,18 @@ namespace hhx
                          std::uint64_t seed,
                          std::vector<Hit>& out) const;
 
+        /** Plays the kit the way the section is being hit, rather than only as
+            loud. A drum makes a different noise at each end of its range: a
+            snare answers a light hand with the rim and a hard one with a
+            rimshot, a hat is closed tight when a part is held down and barks
+            open when it is driven, and a ride moves from the bow to the bell.
+            Substitutions only ever land on a piece the block has switched on. */
+        void voiceForEnergy (const PerformanceSettings& sec,
+                             float energy,
+                             float dstBar,
+                             std::uint64_t seed,
+                             std::vector<Hit>& out) const;
+
         /** Collapses two cymbal strokes that land within a few milliseconds of
             each other - a closed and an open hat on the same eighth, or a
             phrase boundary landing on top of the phrase before it - into the

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace hhx
 {
@@ -104,6 +105,19 @@ namespace hhx
             return 3;                               // quarters
         }
 
+        /** What a fill is allowed to be played on. Switching the toms or the
+            crash out of a block is about what the groove sits on; a drummer
+            still comes off the hats and down the toms to turn the corner, and
+            a fill left with only a kick and a snare is the same figure every
+            time. So the pieces a fill is made of are back in for the fill bar
+            and nowhere else. */
+        std::uint32_t fillLanes (std::uint32_t laneMask)
+        {
+            return laneMask | (1u << LaneTom1)   | (1u << LaneTom2)
+                            | (1u << LaneTom3)   | (1u << LaneTom4)
+                            | (1u << LaneCrashL) | (1u << LaneCrashR);
+        }
+
         /** Lanes struck by hand and so played with alternating sticking: the
             snare family and the toms. The feet and the time-keeping cymbal
             stay on their own limb. */
@@ -127,6 +141,22 @@ namespace hhx
         int wrap (int value, int size)
         {
             return size <= 0 ? 0 : ((value % size) + size) % size;
+        }
+
+        /** How much of a take was played in triplets. Corpus positions are in
+            1/48 of a beat, so a straight grid - down to thirty-seconds - lands
+            on multiples of six and a triplet subdivision does not. A metal or
+            punk part with a third of its strokes off the straight grid is a
+            shuffle, however tightly it is quantised. */
+        float tripletShare (const Phrase& p)
+        {
+            if (p.hits.empty())
+                return 0.0f;
+            int off = 0;
+            for (const auto& h : p.hits)
+                if ((h.grid % 6u) != 0u)
+                    ++off;
+            return (float) off / (float) p.hits.size();
         }
 
         /** The seed a block renders from: the song seed folded with the block's
@@ -192,7 +222,14 @@ namespace hhx
         }
 
         PerformanceSettings out = base;
-        out.complexity      = found->complexity;
+        // How busy a block is may only step a few percent away from the song's
+        // own setting. A chorus is the verse played harder and wider open, not
+        // a different part: letting each block address its own density is what
+        // made an intro, a verse and a chorus sound like three songs. Loudness
+        // is left free, because that is the thing a section really does change.
+        out.complexity      = std::clamp (found->complexity,
+                                          base.complexity - 0.05f,
+                                          base.complexity + 0.05f);
         out.intensity       = found->intensity;
         out.sectionVelocity = found->velocity;
         out.fillAmount      = found->fillAmount;
@@ -246,15 +283,15 @@ namespace hhx
         // The library is a practice-room recording session: its busiest bars
         // run past thirty hits, which is nobody's idea of a rock groove. The
         // pad is curved so its whole travel stays inside the range a song is
-        // actually played in, and the top of the travel is a hard, busy take
-        // rather than a drum solo.
+        // actually played in, and the busiest end of the travel is still a
+        // groove rather than a drum solo.
         // Loudness is played, not just turned up: a section hit hard is busier
         // than the same section played quietly, so the height of the pad lifts
         // the complexity it asks the library for as well.
         const float x = std::clamp (s.complexity, 0.0f, 1.0f);
         const float y = std::clamp (s.intensity,  0.0f, 1.0f);
         complexity = std::clamp (0.05f + 0.62f * x * x + 0.15f * x + 0.16f * y * y,
-                                 0.0f, 0.84f);
+                                 0.0f, 0.78f);
         intensity  = std::clamp (0.06f + 0.78f * y, 0.0f, 1.0f);
     }
 
@@ -354,10 +391,30 @@ namespace hhx
             return (float) p.hits.size() / (float) std::max<int> (1, p.bars);
         };
 
+        // A straight feel is played straight. A take whose own eighths were
+        // recorded shuffled reads as a swing however tight the grid is, and in
+        // metal or punk that is not a feel, it is a mistake - so those takes are
+        // not candidates unless Swing is actually asked for.
+        std::vector<int> straight;
+        if (s.swing < 0.12f)
+        {
+            for (const int i : ranked)
+            {
+                const auto& p = corpus->beat (i);
+                if (p.swing <= 0.18f && tripletShare (p) <= 0.08f)
+                    straight.push_back (i);
+            }
+        }
+        // With the Swing knob at zero the song is not "mostly straight", it is
+        // straight: one shuffled take is enough to make a metal part sound
+        // wrong, so a single straight candidate beats a wide shuffled choice.
+        const std::size_t needed = song.swing <= 0.02f ? 1u : 4u;
+        const auto& feelPool = straight.size() >= needed ? straight : ranked;
+
         std::vector<int> dense;
         {
             const float floorPerBar = 0.55f * densityCap (song);
-            for (const int i : ranked)
+            for (const int i : feelPool)
                 if (perBar (i) >= floorPerBar)
                     dense.push_back (i);
 
@@ -366,7 +423,7 @@ namespace hhx
             // shortlist has.
             if (dense.size() < 4)
             {
-                dense = ranked;
+                dense = feelPool;
                 std::stable_sort (dense.begin(), dense.end(),
                                   [&] (int a, int b)
                                   {
@@ -376,7 +433,7 @@ namespace hhx
                 dense.resize (std::min<std::size_t> (6, dense.size()));
             }
         }
-        const auto& pool = dense.empty() ? ranked : dense;
+        const auto& pool = dense.empty() ? feelPool : dense;
 
         // Seeded weighted choice over the k nearest takes: the closest are the
         // most likely, but a held XY position still breathes between real
@@ -543,6 +600,12 @@ namespace hhx
         if (strict && typical * secPerBeat > 0.46f)
             return false;
 
+        // A shuffled fill over a straight groove is the single most amateur
+        // thing a session player can do, so it is not offered when the song is
+        // straight.
+        if (strict && s.swing < 0.12f && (f.swing > 0.30f || tripletShare (f) > 0.12f))
+            return false;
+
         // Half time is played half as busy: at this feel the groove is moving
         // at half rate, so a fill of thirty-second notes over it reads as a
         // different drummer barging in.
@@ -572,7 +635,8 @@ namespace hhx
             const std::uint64_t seed = mix (blockSeed (s) ^ mix ((std::uint64_t) idx + 1));
             return corpus->pickFill (s.fillComplexity, s.intensity, bars,
                                      (int) (mix (seed ^ 0xF111ull) % 16u), avoid,
-                                     s.fillLaneMask & s.laneMask, s.fillStyleMask,
+                                     s.fillLaneMask & fillLanes (s.laneMask),
+                                     s.fillStyleMask,
                                      s.timeSigNum, s.timeSigDen,
                                      characterMask (s));
         };
@@ -643,25 +707,6 @@ namespace hhx
         const float srcSkip  = halfFill ? kSourceBar * 0.5f : 0.0f;
         const float scale    = dstBar / kSourceBar;
 
-        // Where every stroke of the take lands once it has been stretched, so a
-        // stroke can be told whether it is part of a run or standing on its own.
-        std::vector<float> placed;
-        placed.reserve (f.hits.size());
-        for (const auto& h : f.hits)
-            if (h.gridBeat() >= srcSkip)
-                placed.push_back ((h.gridBeat() - srcSkip) * scale);
-        std::sort (placed.begin(), placed.end());
-
-        const auto inARun = [&placed] (float rel)
-        {
-            // A neighbour within a sixteenth means the stroke is one of a run,
-            // where the drummer's own push and drag is the point of the take.
-            for (const float other : placed)
-                if (std::abs (other - rel) > 0.01f && std::abs (other - rel) < 0.26f)
-                    return true;
-            return false;
-        };
-
         for (const auto& h : f.hits)
         {
             const float src = h.gridBeat();
@@ -673,27 +718,20 @@ namespace hhx
             // lands its hits between subdivisions, and those are pulled back
             // onto the nearest subdivision the take was played at, a thirty
             // second or a triplet sixteenth, so a roll keeps all its strokes.
-            // The take's own micro-timing then rides on top, but only as far
-            // as Humanize asks.
             const float rel  = (src - srcSkip) * scale;
             const float q32  = std::round (rel * 8.0f) / 8.0f;
             const float q24  = std::round (rel * 6.0f) / 6.0f;
-            const float snap = std::abs (rel - q32) <= std::abs (rel - q24) ? q32 : q24;
+            // Triplets are only an option when the figure was played in them.
+            // Snapping a straight roll to the nearest triplet is where a metal
+            // fill picks up a shuffle it was never played with.
+            const bool  triplets = f.swing > 0.30f || s.swing > 0.12f;
+            const float snap = (! triplets || std::abs (rel - q32) <= std::abs (rel - q24))
+                             ? q32 : q24;
 
-            // An isolated stroke is played dead on the grid. Micro-timing is
-            // heard as feel inside a run, but a lone hit nudged off the beat is
-            // heard as a mistake - which is what a one-note fill with the
-            // drummer's deviation on it sounds like.
-            // Micro-timing inside a fill is a fraction of what it is under a
-            // groove: a run of sixteenths is where a shifted stroke is heard
-            // most plainly, so the deviation is scaled right down and capped at
-            // well under a thirty-second either way.
-            const float dev = inARun (rel)
-                            ? std::clamp (h.devBeats() * scale * 0.08f
-                                              * std::clamp (s.humanize, 0.0f, 1.0f),
-                                          -0.03f, 0.03f)
-                            : 0.0f;
-            const float beat = fillStartBeat + snap + dev;
+            // And it is played to that grid, full stop: a fill is the one place
+            // a listener is counting, so the drummer's own push and drag -
+            // which is feel under a groove - reads here as being out of time.
+            const float beat = fillStartBeat + snap;
             if (beat < fillStartBeat - 0.02f || beat >= phraseBeats - 0.005f)
                 continue;
 
@@ -708,7 +746,15 @@ namespace hhx
             const float through = std::clamp ((beat - fillStartBeat)
                                                   / std::max (0.25f, phraseBeats - fillStartBeat),
                                               0.0f, 1.0f);
-            vel *= 0.86f + 0.26f * through;
+            // How much of a gesture it is follows the Fills knob. Turned down,
+            // the drummer eases out of the bar and hands it over quietly;
+            // turned up, the fill swells the whole way and arrives on top of
+            // the downbeat. The same figure either builds or cools off, which
+            // is what makes the knob felt rather than just counted.
+            const float drive = std::clamp (s.fillAmount, 0.0f, 1.0f);
+            const float start = 1.02f - 0.30f * drive;
+            const float end   = 0.88f + 0.32f * drive;
+            vel *= start + (end - start) * through;
             const Raw hit { beat, 0.0f, h.lane,
                             (std::uint8_t) std::clamp ((int) std::lround (vel), 1, 127),
                             true };
@@ -726,6 +772,58 @@ namespace hhx
                 continue;
             }
             raw.push_back (hit);
+        }
+
+        // How busy the fill is allowed to be, measured against the groove it
+        // interrupts. In the modern rock records this is cut against, the last
+        // bar of a phrase carries between one and a half and two times the
+        // strokes of the bars around it - not four times, which is what reads
+        // as an endless roll rather than as a fill. Anything past that is
+        // thinned off the thirty-seconds first, so what is left is the same
+        // figure played in sixteenths.
+        {
+            const float window = std::max (0.25f, phraseBeats - fillStartBeat);
+            int groove = 0, strokes = 0;
+            for (const auto& r : raw)
+                (r.fill ? strokes : groove)++;
+
+            const float grooveBar = phraseBeats > window
+                                  ? (float) groove * dstBar / (phraseBeats - window)
+                                  : 12.0f;
+            const int ceiling = std::clamp ((int) std::lround (grooveBar * 2.0f * window / dstBar),
+                                            5, 24);
+
+            if (strokes > ceiling)
+            {
+                std::vector<std::size_t> fine;
+                for (std::size_t i = 0; i < raw.size(); ++i)
+                    if (raw[i].fill)
+                    {
+                        const float rel = (raw[i].beat - fillStartBeat) * 4.0f;
+                        if (std::abs (rel - std::round (rel)) > 0.05f)
+                            fine.push_back (i);
+                    }
+                std::sort (fine.begin(), fine.end(), [&] (std::size_t a, std::size_t b)
+                           { return raw[a].beat < raw[b].beat; });
+
+                // Taken at an even stride, so thinning a run leaves a slower
+                // run rather than a hole at the front of the bar.
+                const int over = std::min ((int) fine.size(), strokes - ceiling);
+                std::vector<bool> drop (raw.size(), false);
+                if (over > 0)
+                {
+                    const double stride = (double) fine.size() / (double) over;
+                    for (int k = 0; k < over; ++k)
+                        drop[fine[std::min (fine.size() - 1,
+                                            (std::size_t) ((double) k * stride))]] = true;
+                }
+
+                std::size_t write = 0;
+                for (std::size_t i = 0; i < raw.size(); ++i)
+                    if (! drop[i])
+                        raw[write++] = raw[i];
+                raw.resize (write);
+            }
         }
 
         // At half time the groove moves at half rate, so the fill is played at
@@ -761,7 +859,7 @@ namespace hhx
         {
             std::vector<float> beats;
             for (const auto& r : raw)
-                if (r.fill && (s.laneMask & (1u << r.lane)) != 0)
+                if (r.fill && (fillLanes (s.laneMask) & (1u << r.lane)) != 0)
                     beats.push_back (r.beat);
             std::sort (beats.begin(), beats.end());
 
@@ -824,7 +922,10 @@ namespace hhx
         if (window < 0.4f)
             return;
 
-        const auto on = [&s] (int lane) { return (s.laneMask & (1u << lane)) != 0; };
+        const auto on = [&s] (int lane)
+        {
+            return (fillLanes (s.laneMask) & (1u << lane)) != 0;
+        };
         const auto firstOn = [&on] (std::initializer_list<int> preference)
         {
             for (const int lane : preference)
@@ -878,7 +979,12 @@ namespace hhx
             if (tomLed && (i % 2) == 0 && i < n - 1)
                 lane = LaneKick;
 
-            const int vel = (int) std::lround (86.0f + 36.0f * where);
+            // Same gesture as a played fill: the Fills knob decides whether it
+            // builds into the downbeat or eases out of the bar.
+            const float drive = std::clamp (s.fillAmount, 0.0f, 1.0f);
+            const float head  = 96.0f - 22.0f * drive;
+            const float tail  = 96.0f + 26.0f * drive;
+            const int vel = (int) std::lround (head + (tail - head) * where);
             raw.push_back (Raw { fillStartBeat + step * (float) i, 0.0f,
                                  (std::uint8_t) lane,
                                  (std::uint8_t) std::clamp (vel, 1, 127), true });
@@ -1273,46 +1379,75 @@ namespace hhx
         if (! haveRight && ! haveLeft)
             return;
 
-        const float energy  = std::clamp (sec.sectionVelocity, 0.0f, 1.0f);
-        const int   section = sectionAtBar (base, phraseIndex * bars);
-        const bool  blockTop = phraseIndex == 0
-                             || blockIndexForBar (base, phraseIndex * bars)
-                                    != blockIndexForBar (base, (phraseIndex - 1) * bars);
-        const bool  afterFill = phraseIndex > 0 && phraseEndsWithFill (base, phraseIndex - 1);
+        const float energy = std::clamp (sec.sectionVelocity, 0.0f, 1.0f);
 
-        std::vector<float> beats;
+        // The fill owns the end of the phrase: a crash dropped into it is a
+        // stroke the drummer's hands are not free to play.
+        const float fillFrom = phraseEndsWithFill (base, phraseIndex)
+                             ? ((float) bars - std::max (0.5f, sec.fillLengthBars)) * dstBar - 0.01f
+                             : std::numeric_limits<float>::max();
 
-        // The top of the phrase: always after a fill, always at the top of a
-        // section, and from moderate energy up, every phrase. A drummer marks
-        // the downbeat he has just filled into whatever the genre is, so this
-        // is deliberately easy to reach rather than a metal-only behaviour.
-        if (afterFill || blockTop || energy > 0.42f || section == SectionChorus)
-            beats.push_back (0.0f);
+        // What a crash costs a drummer is a hand, so the pattern is written as
+        // sticking rather than as notes: the right hand comes off the time for
+        // the ride-side crash, both hands come down together on the accents a
+        // section turns over on, and the left hand reaches across in between.
+        enum Hands { Both, Right, Left };
+        std::vector<std::pair<float, Hands>> beats;
 
-        // Sections played up mark the half-way bar as well, which is what makes
-        // a chorus sound like a chorus instead of a louder verse.
-        if (energy > 0.55f && bars >= 2)
-            beats.push_back ((float) (bars / 2) * dstBar);
+        const auto mark = [&beats] (float beat, Hands hands)
+        {
+            for (auto& marked : beats)
+                if (std::abs (marked.first - beat) < 0.01f)
+                {
+                    if (hands == Both)
+                        marked.second = Both;
+                    return;
+                }
+            beats.push_back ({ beat, hands });
+        };
 
-        // A big chorus: every bar gets marked.
-        if (energy > 0.7f)
+        // Every phrase turns over on both hands. A crash is how a drummer says
+        // "here", and one cymbal alone does not say it loudly enough.
+        mark (0.0f, Both);
+
+        // The half-way bar is caught on both hands too - a phrase turns over
+        // there whether it is a verse or a chorus. How hard it is caught is
+        // what tells them apart, so this is placed off the form and not off
+        // the level: how hard a section is played never rewrites which strokes
+        // it has.
+        if (bars >= 2)
+            mark ((float) (bars / 2) * dstBar, Both);
+
+        // A big chorus: the right hand marks every bar, the way it would be
+        // riding the crash instead of the hat.
+        if (energy > 0.62f)
             for (int bar = 0; bar < bars; ++bar)
-                beats.push_back ((float) bar * dstBar);
+                mark ((float) bar * dstBar, Right);
 
-        // Flat out, the halves of every bar are marked too - the wall of
-        // crashes a heavy chorus is actually played with, alternating left and
-        // right so it stays playable.
-        if (energy > 0.84f)
+        // Flat out the left hand fills the halves of every bar, so the pattern
+        // reads as sticking - both, right, left, right - rather than one crash
+        // per landmark.
+        if (energy > 0.78f)
             for (int bar = 0; bar < bars; ++bar)
-                beats.push_back (((float) bar + 0.5f) * dstBar);
+                mark (((float) bar + 0.5f) * dstBar, Left);
 
-        std::sort (beats.begin(), beats.end());
-        beats.erase (std::unique (beats.begin(), beats.end()), beats.end());
+        // And at that level the hand that is already up takes a second stroke
+        // off the back of the accent.
+        if (energy > 0.86f)
+            for (int bar = 0; bar < bars; bar += 2)
+                if (rand01 (seed, (std::uint64_t) bar, 0x5Au) > 0.45f)
+                    mark (((float) bar + 0.25f) * dstBar, Right);
+
+        std::sort (beats.begin(), beats.end(),
+                   [] (const auto& a, const auto& b) { return a.first < b.first; });
 
         int index = 0;
-        std::vector<float> struck;
-        for (const float beat : beats)
+        std::vector<float> struck, twoHanded;
+        for (const auto& marked : beats)
         {
+            const float beat  = marked.first;
+            const Hands hands = marked.second;
+
             const bool taken = std::any_of (out.begin(), out.end(),
                                             [beat] (const Hit& h)
                                             {
@@ -1320,32 +1455,168 @@ namespace hhx
                                                     && ! isHatLane (h.lane)
                                                     && std::abs (h.beat - beat) < 0.12f;
                                             });
-            if (taken)
+            if (taken || (beat > 0.01f && beat >= fillFrom))
             {
                 ++index;
                 continue;
             }
 
-            const bool useRight = haveRight && (! haveLeft || (index % 2) == 0);
-            const int  lane     = useRight ? LaneCrashR : LaneCrashL;
-            const float level   = 0.62f + 0.30f * energy
-                                + 0.05f * (rand01 (seed, (std::uint64_t) index, 0xC7u) - 0.5f);
+            const float level = 0.62f + 0.30f * energy
+                              + 0.05f * (rand01 (seed, (std::uint64_t) index, 0xC7u) - 0.5f);
+            const float at    = std::max (0.0f, beat);
 
-            out.push_back ({ std::max (0.0f, beat), (std::uint8_t) lane,
-                             (std::uint8_t) std::clamp ((int) std::lround (level * 127.0f), 1, 127),
-                             (std::uint8_t) (index % kRoundRobins) });
-            struck.push_back (std::max (0.0f, beat));
+            const auto strike = [&] (int lane, float scale)
+            {
+                out.push_back ({ at, (std::uint8_t) lane,
+                                 (std::uint8_t) std::clamp ((int) std::lround (level * scale * 127.0f),
+                                                            1, 127),
+                                 (std::uint8_t) (index % kRoundRobins) });
+            };
+
+            if (hands == Both && haveRight && haveLeft)
+            {
+                // Two cymbals caught together are never caught dead level: the
+                // strong hand leads and the other fills underneath it.
+                strike (LaneCrashR, 1.0f);
+                strike (LaneCrashL, 0.88f);
+                twoHanded.push_back (at);
+            }
+            else
+            {
+                const bool right = hands == Left ? ! haveLeft : haveRight;
+                strike (right ? LaneCrashR : LaneCrashL, 1.0f);
+            }
+
+            struck.push_back (at);
             ++index;
+
+            // A crash is kicked, not floated: the foot goes down with the hand
+            // on the downbeat the phrase turns over on. Only there, because how
+            // hard a section is played must not rewrite which strokes it has.
+            if (beat < 0.01f && (sec.laneMask & (1u << LaneKick)) != 0)
+            {
+                const float at = std::max (0.0f, beat);
+                const bool kicked = std::any_of (out.begin(), out.end(), [at] (const Hit& h)
+                {
+                    return h.lane == LaneKick && std::abs (h.beat - at) < 0.06f;
+                });
+                if (! kicked)
+                    out.push_back ({ at, (std::uint8_t) LaneKick,
+                                     (std::uint8_t) std::clamp ((int) std::lround (
+                                         (0.70f + 0.25f * energy) * 127.0f), 1, 127),
+                                     (std::uint8_t) (index % kRoundRobins) });
+            }
         }
 
-        // The crash is played with the hand that was keeping time, so the hat
-        // stroke underneath it drops right back: two cymbals sounding equally
-        // on one beat is the give-away that a machine placed them.
+        // Both hands on the crashes means neither is on the hat: the stroke
+        // that would have kept time there is simply not played. A part that
+        // keeps it is a part with three hands in it.
+        const auto near = [] (const std::vector<float>& beats, float beat, float window)
+        {
+            return std::any_of (beats.begin(), beats.end(),
+                                [&] (const float b) { return std::abs (b - beat) < window; });
+        };
+
+        // Anything the corpus itself caught on both crashes counts the same way.
+        for (const Hit& h : out)
+            if (h.lane == LaneCrashR
+                && std::any_of (out.begin(), out.end(), [&] (const Hit& o)
+                   {
+                       return o.lane == LaneCrashL && std::abs (o.beat - h.beat) < 0.03f;
+                   })
+                && ! near (twoHanded, h.beat, 0.03f))
+                twoHanded.push_back (h.beat);
+
+        out.erase (std::remove_if (out.begin(), out.end(), [&] (const Hit& h)
+                   {
+                       return isOrnamentLane (h.lane) && near (twoHanded, h.beat, 0.04f);
+                   }),
+                   out.end());
+
+        // Where one hand crashes, the other is still keeping time, but the
+        // crash is what is heard: the stroke underneath it drops right back.
         for (Hit& h : out)
-            if (isOrnamentLane (h.lane)
-                && std::any_of (struck.begin(), struck.end(),
-                                [&] (const float beat) { return std::abs (h.beat - beat) < 0.06f; }))
+            if (isOrnamentLane (h.lane) && near (struck, h.beat, 0.06f))
                 h.velocity = (std::uint8_t) std::max (1, (int) h.velocity / 3);
+    }
+
+    void PerformanceEngine::voiceForEnergy (const PerformanceSettings& sec,
+                                            float energy,
+                                            float dstBar,
+                                            std::uint64_t seed,
+                                            std::vector<Hit>& out) const
+    {
+        const auto on = [&sec] (int lane)
+        {
+            return (sec.laneMask & (1u << lane)) != 0;
+        };
+        const auto louder = [] (Hit& h, float by)
+        {
+            h.velocity = (std::uint8_t) std::clamp ((int) std::lround ((float) h.velocity * by),
+                                                    1, 127);
+        };
+
+        for (std::size_t i = 0; i < out.size(); ++i)
+        {
+            Hit& h = out[i];
+            const int   lane  = (int) h.lane;
+            const float inBar = h.beat - std::floor (h.beat / dstBar) * dstBar;
+            const int   eighth = (int) std::lround (inBar * 2.0f);
+            const bool  onGrid = std::abs (inBar * 2.0f - (float) eighth) < 0.04f;
+            const bool  onBeat = onGrid && (eighth % 2) == 0;
+            const bool  offBeat = onGrid && (eighth % 2) != 0;
+
+            // The snare. This is a rock kit, so even the quiet end of it is a
+            // stick on the head, played softer - the cross-stick is the one
+            // stroke on the kit that stops sounding like the snare at all, so
+            // it is kept for the backbeats of a genuinely held-back part and
+            // never reached for by default. Driven flat out the backbeat is a
+            // rimshot, which is the crack a chorus is played with rather than
+            // the same stroke turned up.
+            if (lane == LaneSnare)
+            {
+                if (energy < 0.10f && onBeat && on (LaneSideStick)
+                    && sec.ghostAmount > 0.6f)
+                {
+                    h.lane = (std::uint8_t) LaneSideStick;
+                    louder (h, 0.9f);
+                }
+                else if (energy < 0.30f)
+                {
+                    louder (h, 0.80f + 0.60f * energy);
+                }
+                else if (energy > 0.80f && onBeat && on (LaneSnareRim))
+                {
+                    h.lane = (std::uint8_t) LaneSnareRim;
+                    louder (h, 1.06f);
+                }
+            }
+            // The hat. Held down it is shut tight; driven, the foot comes off it
+            // on the beats between the backbeats and it barks open.
+            else if (lane == LaneHatClosed)
+            {
+                if (energy < 0.22f && on (LaneHatTight))
+                    h.lane = (std::uint8_t) LaneHatTight;
+                // Unless the hat has been asked to stay shut, in which case a
+                // hard part is a hard closed hat.
+                else if (energy > 0.76f && sec.hatOpenness > 0.1f
+                         && on (LaneHatOpen1) && offBeat
+                         && rand01 (seed, i, 0x4Fu) < (energy - 0.70f) * 2.0f)
+                {
+                    h.lane = (std::uint8_t) LaneHatOpen1;
+                    louder (h, 1.08f);
+                }
+            }
+            // The ride. Quiet work is on the bow; a section played up moves onto
+            // the bell for the beats it is counting.
+            else if (lane == LaneRideBow && energy > 0.78f && onBeat
+                     && on (LaneRideBell)
+                     && rand01 (seed, i, 0x7Bu) < (energy - 0.72f) * 1.8f)
+            {
+                h.lane = (std::uint8_t) LaneRideBell;
+                louder (h, 1.05f);
+            }
+        }
     }
 
     void PerformanceEngine::collapseDoubledCymbals (std::vector<Hit>& out)
@@ -1668,7 +1939,11 @@ namespace hhx
         }
 
         raw.erase (std::remove_if (raw.begin(), raw.end(), [&] (const Raw& h)
-                   { return (s.laneMask & (1u << h.lane)) == 0; }), raw.end());
+                   {
+                       const std::uint32_t mask = h.fill ? fillLanes (s.laneMask)
+                                                         : s.laneMask;
+                       return (mask & (1u << h.lane)) == 0;
+                   }), raw.end());
 
         std::sort (raw.begin(), raw.end(),
                    [] (const Raw& a, const Raw& b)
@@ -1684,11 +1959,12 @@ namespace hhx
         const float swingShift = s.swing * gridUnit * 0.34f;
         const float feelShift  = (s.feel - 0.5f) * 0.05f;      // +/-25 ms at 120 bpm
 
-        // Dynamics come from the block's own Intensity knob. The pad decides
-        // which take is played; this decides how hard it is played, and the
-        // two are deliberately independent.
+        // How hard the kit is hit. This is the pad's height and the block's own
+        // Loud knob, and it is not what decides which strokes are played: the
+        // top of the pad is the same part hit flat out, so a chorus is loud
+        // rather than busy.
         const float energy  = std::clamp (sec.sectionVelocity, 0.0f, 1.0f);
-        const float velGain = 0.62f + 0.78f * energy;
+        const float velGain = 0.55f + 1.00f * energy;
 
         // Slow phrase breathing over eight bars, so bar 3 does not sit exactly
         // where bar 1 sat.
@@ -1842,8 +2118,12 @@ namespace hhx
             if (isHandLane (lane))
             {
                 hand ^= 1;
+                // The off hand is genuinely weaker than the lead one - that
+                // difference is the whole reason a roll sounds like a person
+                // playing rather than one sample retriggered - so it is worth
+                // a couple of dB, not a percent nobody can hear.
                 if (hand != 0)
-                    vel *= 0.94f;
+                    vel *= 0.84f;
 
                 const int pairs = std::max (1, slots / 2);
                 const int pair  = std::min (pairs - 1,
@@ -1866,6 +2146,12 @@ namespace hhx
                              (std::uint8_t) std::clamp ((int) std::lround (vel), 1, 127),
                              (std::uint8_t) variant });
         }
+
+        // How hard it is hit decides what it sounds like, not only how loud it
+        // is: rim taps at the bottom of the range, rimshots and open hats at the
+        // top. This runs before the crashes so a crash still lands on the
+        // downbeat it marks.
+        voiceForEnergy (sec, energy, dstBar, seed, out);
 
         addCrashes (s, sec, phraseIndex, bars, dstBar, seed, out);
 
@@ -1925,6 +2211,96 @@ namespace hhx
                 for (const auto i : drop)
                     out.erase (out.begin() + (std::ptrdiff_t) i);
             }
+        }
+
+        // A drummer has four limbs. Wherever the take, its ornaments and the
+        // crashes have stacked more than four strikes onto one instant, the
+        // quietest of them are the ones nobody played, so they go - clutter on
+        // a single instant is what reads as slop rather than as a busy groove.
+        {
+            std::vector<std::size_t> drop;
+            for (std::size_t i = 0; i < out.size();)
+            {
+                std::size_t j = i;
+                while (j < out.size() && out[j].beat - out[i].beat < 0.03f)
+                    ++j;
+
+                // Three limbs is a groove stroke; the fourth is only there when
+                // a crash is being caught with the kick and the backbeat, which
+                // is an accent, not clutter.
+                std::size_t allowed = 3;
+                for (std::size_t k = i; k < j; ++k)
+                    if (out[k].lane == LaneCrashL || out[k].lane == LaneCrashR
+                        || out[k].lane == LaneCrash3)
+                        allowed = 4;
+
+                if (j - i > allowed)
+                {
+                    std::vector<std::size_t> here;
+                    for (std::size_t k = i; k < j; ++k)
+                        here.push_back (k);
+                    std::stable_sort (here.begin(), here.end(),
+                                      [&] (std::size_t a, std::size_t b)
+                                      {
+                                          return out[a].velocity < out[b].velocity;
+                                      });
+                    for (std::size_t k = 0; k + allowed < j - i; ++k)
+                        drop.push_back (here[k]);
+                }
+                i = j;
+            }
+
+            std::sort (drop.begin(), drop.end(), std::greater<std::size_t>());
+            for (const auto i : drop)
+                out.erase (out.begin() + (std::ptrdiff_t) i);
+        }
+
+        // The one is the one. A bar that starts with no kick under it has no
+        // floor when a chorus or a second verse comes in, so wherever the kick
+        // is in the kit, the downbeat gets it - unless the take deliberately
+        // marks that downbeat with the snare instead, which is a figure, not an
+        // accident - and not where a fill is already turning the corner, since
+        // there the figure is the bar.
+        if ((s.laneMask & (1u << LaneKick)) != 0)
+        {
+            const float fillFrom = includeFill
+                                 ? phraseBeats - std::min (phraseBeats,
+                                                           dstBar * std::max (0.5f, s.fillLengthBars))
+                                 : phraseBeats;
+
+            float kickVel = 0.0f;
+            int   kicks   = 0;
+            for (const auto& h : out)
+                if (h.lane == LaneKick) { kickVel += (float) h.velocity; ++kicks; }
+            const float typical = kicks > 0 ? kickVel / (float) kicks
+                                            : 96.0f * velGain;
+
+            for (int bar = 0; bar < bars; ++bar)
+            {
+                const float downbeat = (float) bar * dstBar;
+                if (downbeat >= fillFrom - 0.02f)
+                    continue;
+
+                bool marked = false, snareOn1 = false;
+                for (const auto& h : out)
+                {
+                    if (std::abs (h.beat - downbeat) > 0.06f)
+                        continue;
+                    if (h.lane == LaneKick)                   marked   = true;
+                    if (isSnareLane (h.lane) && h.velocity > 60) snareOn1 = true;
+                }
+
+                if (marked || (bar > 0 && snareOn1))
+                    continue;
+
+                out.push_back ({ downbeat, (std::uint8_t) LaneKick,
+                                 (std::uint8_t) std::clamp ((int) std::lround (typical * 1.04f),
+                                                            1, 127),
+                                 (std::uint8_t) (bar % kRoundRobins) });
+            }
+
+            std::stable_sort (out.begin(), out.end(),
+                              [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
         }
         return out;
     }

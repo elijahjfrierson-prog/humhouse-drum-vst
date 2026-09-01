@@ -107,6 +107,25 @@ PROFILES = {
         },
         license="LICENSE-DRSKit.txt",
     ),
+    # Only the snare: it is the drum the Sludge kit cannot share with the metal
+    # kit, because a snare is what tells two kits apart. Fetched by
+    # fetch_crocell_snare.py, which pulls the strokes out of the 5.6 GB archive
+    # rather than the archive itself.
+    "crocell-snare": dict(
+        name="Crocell Snare",
+        folder="",
+        source="CrocellKit by the DrumGizmo team, sampled by Lars Muldjord, CC-BY 4.0",
+        pieces=[
+            ("snare",     ["Snare"]),
+            ("snare_rim", ["SnareRim"]),
+            ("sidestick", ["SnareRest"]),
+        ],
+        close={
+            "Snare": "Snare_top", "SnareRim": "Snare_top",
+            "SnareRest": "Snare_top",
+        },
+        license="LICENSE-CrocellKit.txt",
+    ),
 }
 
 # Velocity layers and round robins per layer. Cymbals ring for seconds, so they
@@ -274,8 +293,10 @@ def main():
                     source=profile["source"], pieces=entries)
     with open(os.path.join(args.out, "kit.json"), "w") as f:
         json.dump(manifest, f, indent=1)
-    shutil.copyfile(os.path.join(args.repo, "LICENSE"),
-                    os.path.join(args.out, profile["license"]))
+    licence = os.path.join(args.repo, "LICENSE")
+    if not os.path.exists(licence):
+        licence = os.path.join(args.repo, profile["license"])
+    shutil.copyfile(licence, os.path.join(args.out, profile["license"]))
     print(f"{total / 1e6:.0f} MB written to {args.out}, "
           f"{len(entries)} kit.json entries")
 

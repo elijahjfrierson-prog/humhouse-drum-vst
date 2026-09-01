@@ -9,6 +9,8 @@
 #endif
 
 #include <cmath>
+#include <map>
+#include <utility>
 
 namespace hhx
 {
@@ -20,6 +22,9 @@ namespace hhx
     juce::String pid::laneTune (int lane)   { return "lane" + juce::String (lane) + "Tune"; }
     juce::String pid::laneDamp (int lane)   { return "lane" + juce::String (lane) + "Damp"; }
     juce::String pid::laneComp (int lane)   { return "lane" + juce::String (lane) + "Comp"; }
+    juce::String pid::laneEqLow (int lane)  { return "lane" + juce::String (lane) + "EqLo"; }
+    juce::String pid::laneEqMid (int lane)  { return "lane" + juce::String (lane) + "EqMd"; }
+    juce::String pid::laneEqHigh (int lane) { return "lane" + juce::String (lane) + "EqHi"; }
     juce::String pid::laneSend (int lane)   { return "lane" + juce::String (lane) + "Send"; }
 
     /** How much of each piece the room hears by default. A kit in a room is not
@@ -91,6 +96,43 @@ namespace hhx
         int laneToMidiNote (int lane) { return laneToNote (lane); }
 
         const char* prettyLaneName (int lane) { return laneName (lane); }
+
+        /** Where a piece sits when you are sat behind the kit: kick and snare
+            under you, hats out to the left hand, ride and china over the right,
+            and the toms travelling across the front from rack to floor.
+        */
+        float seatPan (int lane)
+        {
+            switch (lane)
+            {
+                case LaneKick:                                          return  0.00f;
+                case LaneSnare: case LaneSnareRim: case LaneSideStick:
+                case LaneSnareGhost: case LaneSnareFlam:
+                case LaneSnareRoll:                                     return -0.08f;
+
+                case LaneHatClosed: case LaneHatTight:  case LaneHatOpen1:
+                case LaneHatOpen2:  case LaneHatOpen3:  case LaneHatOpen4:
+                case LaneHatPedal:  case LaneHatSplash: case LaneHatBell:
+                                                                        return -0.38f;
+
+                case LaneRideBow: case LaneRideBell:
+                case LaneRideEdge: case LaneRideCrash:                  return  0.42f;
+
+                case LaneCrashL:                                        return -0.62f;
+                case LaneCrashR:                                        return  0.62f;
+                case LaneCrash3:                                        return  0.30f;
+                case LaneChina:                                         return  0.70f;
+                case LaneSplash:                                        return -0.30f;
+
+                case LaneTom1:                                          return -0.22f;
+                case LaneTom2:                                          return  0.02f;
+                case LaneTom3:                                          return  0.30f;
+                case LaneTom4:                                          return  0.52f;
+
+                case LanePerc:                                          return  0.45f;
+                default:                                                return  0.0f;
+            }
+        }
     }
 
     const char* drumsXLaneName (int lane) { return prettyLaneName (lane); }
@@ -121,7 +163,10 @@ namespace hhx
                                                            "Complexity", NormalisableRange<float> (0.0f, 1.0f), 0.28f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::intensity, 1 },
-                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.62f,
+                                                           // Which take gets played, not a level: it opens low, on
+                                                           // the plain readings of a groove, so a song starts on
+                                                           // the part a drummer would play it with.
+                                                           "Loud", NormalisableRange<float> (0.0f, 1.0f), 0.25f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::sectionLevel, 1 },
                                                            "Section Intensity", NormalisableRange<float> (0.0f, 1.0f), 0.55f,
@@ -237,6 +282,14 @@ namespace hhx
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::squeeze, 1 }, "Squeeze",
                                                            NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
                                                            AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid::master, 1 }, "Master",
+                                                           // On by default, and far enough up to be
+                                                           // heard: the kit should arrive glued and
+                                                           // loud rather than needing a master chain
+                                                           // built around it before it sounds like a
+                                                           // record.
+                                                           NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.6f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
         layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid::squeezeGlow, 1 }, "Glow",
                                                            StringArray { "Off", "Clean", "Tube", "Tape", "Transformer" },
                                                            KitEngine::GlowClean));
@@ -256,7 +309,7 @@ namespace hhx
                 AudioParameterFloatAttributes().withStringFromValueFunction (dbStr)));
             layout.add (std::make_unique<AudioParameterFloat> (
                 ParameterID { pid::lanePan (lane), 1 }, n + " Pan",
-                NormalisableRange<float> (-1.0f, 1.0f, 0.01f), 0.0f));
+                NormalisableRange<float> (-1.0f, 1.0f, 0.01f), seatPan (lane)));
             layout.add (std::make_unique<AudioParameterFloat> (
                 ParameterID { pid::laneTune (lane), 1 }, n + " Tune",
                 NormalisableRange<float> (-6.0f, 6.0f, 0.01f), 0.0f,
@@ -269,6 +322,18 @@ namespace hhx
                 ParameterID { pid::laneComp (lane), 1 }, n + " Comp",
                 NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
                 AudioParameterFloatAttributes().withStringFromValueFunction (pct)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneEqLow (lane), 1 }, n + " Low",
+                NormalisableRange<float> (-18.0f, 18.0f, 0.1f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (dbStr)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneEqMid (lane), 1 }, n + " Mid",
+                NormalisableRange<float> (-18.0f, 18.0f, 0.1f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (dbStr)));
+            layout.add (std::make_unique<AudioParameterFloat> (
+                ParameterID { pid::laneEqHigh (lane), 1 }, n + " High",
+                NormalisableRange<float> (-18.0f, 18.0f, 0.1f), 0.0f,
+                AudioParameterFloatAttributes().withStringFromValueFunction (dbStr)));
             layout.add (std::make_unique<AudioParameterFloat> (
                 ParameterID { pid::laneSend (lane), 1 }, n + " Room Send",
                 NormalisableRange<float> (0.0f, 1.0f, 0.01f), defaultRoomSend (lane),
@@ -329,6 +394,9 @@ namespace hhx
             else if (id == pid::laneTune (lane)) kit.setLaneTune (lane, value);
             else if (id == pid::laneDamp (lane)) kit.setLaneDamp (lane, value);
             else if (id == pid::laneComp (lane)) kit.setLaneCompression (lane, value);
+            else if (id == pid::laneEqLow (lane)) kit.setLaneEqLowDb (lane, value);
+            else if (id == pid::laneEqMid (lane)) kit.setLaneEqMidDb (lane, value);
+            else if (id == pid::laneEqHigh (lane)) kit.setLaneEqHighDb (lane, value);
             else if (id == pid::laneSend (lane)) kit.setLaneReverbSend (lane, value);
         }
 
@@ -339,7 +407,8 @@ namespace hhx
                  || id == pid::roomSpace || id == pid::roomDuck)
             pushRoomParameters();
         else if (id == pid::mixVoicing || id == pid::punch || id == pid::glue
-                 || id == pid::drive || id == pid::squeeze || id == pid::squeezeGlow)
+                 || id == pid::drive || id == pid::squeeze || id == pid::squeezeGlow
+                 || id == pid::master)
             pushMixParameters();
 
         // A performance knob edits the block that is selected, and only that
@@ -474,6 +543,8 @@ namespace hhx
             // is only the fallback for a plug-in running without content.
             if (const auto* kits = manifest["kits"].getArray())
             {
+                int preferredKit = -1;
+
                 for (const auto& entry : *kits)
                 {
                     // A manifest only names kits inside its own content tree, so
@@ -486,9 +557,22 @@ namespace hhx
                     auto name = entry["name"].toString();
                     kitNames.add (name.isNotEmpty() ? name : folder.getFileName());
                     kitFolders.push_back (folder);
+
+                    // The kit the manifest calls the default is the one a new
+                    // session opens on; the rest are tried in order behind it.
+                    if ((bool) entry.getProperty ("default", false)
+                        && preferredKit < 0)
+                        preferredKit = (int) kitFolders.size() - 1;
                 }
 
+                std::vector<int> order;
+                if (preferredKit >= 0)
+                    order.push_back (preferredKit);
                 for (int i = 0; i < (int) kitFolders.size(); ++i)
+                    if (i != preferredKit)
+                        order.push_back (i);
+
+                for (const int i : order)
                 {
                     if (kit.loadKitFolder (kitFolders[(std::size_t) i]) <= 0)
                         continue;
@@ -550,6 +634,9 @@ namespace hhx
             kit.setLaneTune (lane, load (pid::laneTune (lane)));
             kit.setLaneDamp (lane, load (pid::laneDamp (lane)));
             kit.setLaneCompression (lane, load (pid::laneComp (lane)));
+            kit.setLaneEqLowDb (lane, load (pid::laneEqLow (lane)));
+            kit.setLaneEqMidDb (lane, load (pid::laneEqMid (lane)));
+            kit.setLaneEqHighDb (lane, load (pid::laneEqHigh (lane)));
             kit.setLaneReverbSend (lane, load (pid::laneSend (lane)));
         }
     }
@@ -581,6 +668,7 @@ namespace hhx
         kit.setDrive (load (pid::drive));
         kit.setSqueeze (load (pid::squeeze));
         kit.setSqueezeGlow ((int) std::lround (load (pid::squeezeGlow)));
+        kit.setMaster (load (pid::master));
     }
 
     void DrumsXProcessor::rebuildTimeline()
@@ -1037,24 +1125,28 @@ namespace hhx
                     sec.laneMask   = kickMask() | snareMask() | rideMask() | tomMask();
                     sec.velocity   = 0.7f;
                     sec.intensity  = 0.6f;
-                    sec.complexity = 0.55f;
-                    sec.fillAmount = 0.5f;
+                    sec.complexity = 0.45f;
+                    sec.fillAmount = 0.35f;
                     break;
                 case BlockPreset::chorus:
                     sec.section    = SectionChorus;
                     sec.laneMask   = everything;
+                    // A chorus is the verse hit harder with the kit wide
+                    // open, not a busier part and not a bar of fills: the
+                    // density stays where the song's is and the loudness is
+                    // what moves.
                     sec.velocity   = 0.85f;
                     sec.intensity  = 0.8f;
-                    sec.complexity = 0.6f;
-                    sec.fillAmount = 0.55f;
+                    sec.complexity = 0.45f;
+                    sec.fillAmount = 0.3f;
                     break;
                 case BlockPreset::crashChorus:
                     sec.section    = SectionChorus;
                     sec.laneMask   = everything;
                     sec.velocity   = 1.0f;
                     sec.intensity  = 1.0f;
-                    sec.complexity = 0.75f;
-                    sec.fillAmount = 0.8f;
+                    sec.complexity = 0.5f;
+                    sec.fillAmount = 0.4f;
                     break;
                 case BlockPreset::wholeKit:
                     sec.laneMask   = everything;
@@ -1167,6 +1259,14 @@ namespace hhx
             const std::lock_guard<std::mutex> lock (manualMutex);
             manualGrid[(std::size_t) lane][(std::size_t) step] = juce::jlimit (0.0f, 1.0f, velocity01);
         }
+
+        // Writing a note means playing it: the first stroke put in the grid
+        // switches manual mode on, the same way a dropped file does, so one
+        // note is enough to hear the drummer build a groove around it.
+        if (velocity01 > 0.0f && ! isManualMode())
+            if (auto* p = apvts.getParameter (pid::manualMode))
+                p->setValueNotifyingHost (1.0f);
+
         triggerAsyncUpdate();
     }
 
@@ -1337,11 +1437,45 @@ namespace hhx
         // a drummer would rather than looping it: the notes are theirs, while
         // the fills at the phrase ends, the piece switches of the block and its
         // section loudness come from the arrangement. Nothing is added inside
-        // the bar, so what is written is what is heard.
+        // the bar on a piece the player has written, so what is written is
+        // what is heard - while a piece they have not written at all is played
+        // by the drummer, which is what makes one note read as a groove.
         std::vector<Hit> out;
         const int patternBars = manualBars();
         const std::lock_guard<std::mutex> lock (manualMutex);
         const int phraseBars = juce::jmax (1, s.phraseBars);
+
+        // Which part of the kit the player has actually written. A drum machine
+        // plays back what is on the grid and nothing else, which is why one
+        // written kick is one written kick; a session drummer hearing that kick
+        // plays a groove around it. So the pieces the player has said nothing
+        // about are played by the drummer, and the ones they have written are
+        // theirs alone.
+        const auto family = [] (int lane)
+        {
+            if (lane == LaneKick)        return 0;
+            if (isSnareLane (lane))      return 1;
+            if (isHatLane (lane))        return 2;
+            if (isRideLane (lane))       return 3;
+            if (isTomLane (lane))        return 4;
+            if (isCymbalLane (lane))     return 5;
+            return 6;
+        };
+
+        unsigned written = 0;
+        for (int lane = 0; lane < NumLanes; ++lane)
+            for (int step = 0; step < patternBars * 16; ++step)
+                if (manualGrid[(std::size_t) lane][(std::size_t) step] > 0.0f)
+                {
+                    written |= 1u << family (lane);
+                    break;
+                }
+
+        std::vector<Hit> band;
+        if (written != 0)
+            for (const auto& h : engine.renderBars (s, startBar, numBars))
+                if ((written & (1u << family (h.lane))) == 0)
+                    band.push_back (h);
 
         for (int bar = 0; bar < numBars; ++bar)
         {
@@ -1383,6 +1517,19 @@ namespace hhx
 
             for (const auto& h : fill)
                 out.push_back ({ barStart + fillStart + h.beat, h.lane, h.velocity });
+
+            // The rest of the kit is played around the written part, and it
+            // stays out of the handover for the same reason the written part
+            // does: the fill is the whole bar's figure, not a layer over it.
+            for (const auto& h : band)
+            {
+                const float inBar = h.beat - barStart;
+                if (inBar < -0.01f || inBar >= s.beatsPerBar)
+                    continue;
+                if (! fill.empty() && inBar >= fillStart - 0.01f)
+                    continue;
+                out.push_back (h);
+            }
         }
         std::sort (out.begin(), out.end(), [] (const Hit& a, const Hit& b) { return a.beat < b.beat; });
         return out;
@@ -1689,14 +1836,26 @@ namespace hhx
         const auto s = buildSettings();
         const auto hits = renderBars (0, numBars);
 
+        // Two lanes can share a note number - the rim and the stick land on 40 -
+        // and a second note-on at the same tick leaves the first one hanging for
+        // whatever imports the file, so only the loudest of them is written.
+        std::map<std::pair<long long, int>, int> struck;
+
         for (const auto& h : hits)
         {
             if (laneFilter >= 0 && h.lane != laneFilter)
                 continue;
-            const int note = laneToMidiNote (h.lane);
-            const double tick = (double) h.beat * kTicksPerQuarter;
-            seq.addEvent (juce::MidiMessage::noteOn (10, note, (juce::uint8) h.velocity), tick);
-            seq.addEvent (juce::MidiMessage::noteOff (10, note), tick + kNoteTicks);
+            const auto key = std::pair { (long long) std::llround ((double) h.beat * kTicksPerQuarter),
+                                         laneToMidiNote (h.lane) };
+            auto& loudest = struck[key];
+            loudest = std::max (loudest, (int) h.velocity);
+        }
+
+        for (const auto& [key, velocity] : struck)
+        {
+            const auto tick = (double) key.first;
+            seq.addEvent (juce::MidiMessage::noteOn (10, key.second, (juce::uint8) velocity), tick);
+            seq.addEvent (juce::MidiMessage::noteOff (10, key.second), tick + kNoteTicks);
         }
         seq.updateMatchedPairs();
         juce::ignoreUnused (s);
@@ -1901,6 +2060,9 @@ namespace hhx
             kit.setLaneTune (lane, load (pid::laneTune (lane)));
             kit.setLaneDamp (lane, load (pid::laneDamp (lane)));
             kit.setLaneCompression (lane, load (pid::laneComp (lane)));
+            kit.setLaneEqLowDb (lane, load (pid::laneEqLow (lane)));
+            kit.setLaneEqMidDb (lane, load (pid::laneEqMid (lane)));
+            kit.setLaneEqHighDb (lane, load (pid::laneEqHigh (lane)));
             kit.setLaneReverbSend (lane, load (pid::laneSend (lane)));
         }
 
